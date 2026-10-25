@@ -114,7 +114,7 @@ test('the tab type is additive: own id, own kind, own guide card', () => {
   assert.equal(tab.guide[0].title(), '内置浏览器')
   assert.equal(typeof tab.title, 'function')
   assert.equal(tab.title(), '内置浏览器')
-  assert.equal(tab.multiple, true)
+  assert.equal(tab.multiple, false)
 })
 
 function scene({ openTab, openTabIn } = {}) {

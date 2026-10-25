@@ -650,9 +650,18 @@ window.__ModuleLoader__.load({
               scope.layout.openRightbar(true, false) // ui-copy-ignore
               reveal = () => {
                 try {
-                  scope.layout?.openRightbar?.(true, false)
+                  scope.layout.openRightbar(true, false) // ui-copy-ignore
                 } catch {
-                  /* nothing to reveal without a right pane */
+                  /* nothing to open without a right pane */
+                }
+                try {
+                  /* A kept-mounted tab stays hidden behind the pane's active tab;
+                     opening this kind brings it forward. */
+                  const strip = scope.sidebarRight
+                  if (typeof strip?.openTab === 'function') strip.openTab(KIND, {}) // ui-copy-ignore
+                  else if (typeof strip?.openTabIn === 'function') strip.openTabIn(currentSession, KIND, {}) // ui-copy-ignore
+                } catch {
+                  /* the capture reports the geometry it saw */
                 }
               }
             } catch (error) {
@@ -702,7 +711,7 @@ window.__ModuleLoader__.load({
           scope.effect(() => tabs.register({
             id: ID, // ui-copy-ignore
             kind: KIND, // ui-copy-ignore
-            multiple: true, // ui-copy-ignore
+            multiple: false, // ui-copy-ignore
             keepMounted: true,
             title: () => L('type.label'),
             description: () => L('guide.description'),

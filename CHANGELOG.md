@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+- A capture brings its own tab forward. Opening the pane was not enough: a tab
+  that stays mounted behind the pane's active tab has no box on screen, so the
+  capture stayed empty. Opening the kind now focuses the tab that is already
+  there, and the kind holds one tab per chat instead of several.
+
 ## 0.4.3
 
 - Opening the right pane works. `layout` has to be in the plugin's inject list,
