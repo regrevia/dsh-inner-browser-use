@@ -112,11 +112,13 @@ test('the tab type is additive: own id, own kind, no guide card', () => {
   assert.equal(tab.multiple, true)
 })
 
-test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
+function scene({ openTab, openTabIn } = {}) {
   /** @type {any[]} */
   const opened = []
   /** @type {string[]} */
   const bars = []
+  /** @type {string[][]} */
+  const injected = []
   const scope = {
     effect: (effect) => {
       effect()
@@ -125,6 +127,19 @@ test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
     slots: { inject: () => {}, register: () => () => {} },
     sidebarRightTabs: { register: () => () => {} },
     workspaces: { list: () => [] },
+    layout: { openRightbar: (...args) => bars.push(args.join(',')) },
+    sidebarRight: {
+      ...(openTab === undefined ? {} : {
+        openTab: (...args) => {
+          if (openTab === 'throw') throw new Error('no strip')
+          opened.push(['current', ...args])
+        },
+      }),
+      openTabIn: (...args) => {
+        if (openTabIn === 'throw') throw new Error('no strip')
+        opened.push(['session', ...args])
+      },
+    },
   }
   const ctx = {
     effect: (effect) => {
@@ -132,14 +147,24 @@ test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
       return () => {}
     },
     locale: { register: () => {} },
-    inject: (_names, callback) => callback(scope),
-    layout: { openRightbar: (...args) => bars.push(args.join(',')) },
-    sidebarRight: { openTabIn: (...args) => opened.push(['session', ...args]) },
+    inject: (names, callback) => {
+      injected.push(names)
+      return callback(scope)
+    },
   }
   sources.length = 0
   definition.apply(ctx)
-  const source = sources.at(-1)
+  return { opened, bars, injected, source: sources.at(-1) }
+}
+
+test('the ask reaches the strip as an injected service', () => {
+  const { injected, source } = scene()
+  assert.deepEqual(injected[0], ['layout', 'sidebarRight'])
   assert.equal(source.url, '/dsh-inner-browser-use/watch')
+})
+
+test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
+  const { opened, bars, source } = scene()
   source.send({ type: 'client-alive', phase: 'ready' })
   assert.deepEqual(opened, [])
   source.send({ type: 'wanted', session: 'chat-9' })
@@ -149,68 +174,14 @@ test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
   assert.equal(opened.length, 1)
 })
 
-test('the current chat is the first way to open, and its id is the fallback', () => {
-  /** @type {any[]} */
-  const opened = []
-  const scope = {
-    effect: (effect) => {
-      effect()
-      return () => {}
-    },
-    slots: { inject: () => {}, register: () => () => {} },
-    sidebarRightTabs: { register: () => () => {} },
-    workspaces: { list: () => [] },
-  }
-  const ctx = {
-    effect: (effect) => {
-      effect()
-      return () => {}
-    },
-    locale: { register: () => {} },
-    inject: (_names, callback) => callback(scope),
-    layout: { openRightbar: () => {} },
-    sidebarRight: {
-      openTab: (...args) => opened.push(['current', ...args]),
-      openTabIn: (...args) => opened.push(['session', ...args]),
-    },
-  }
-  sources.length = 0
-  definition.apply(ctx)
-  const source = sources.at(-1)
+test('the current chat is the first way to open', () => {
+  const { opened, source } = scene({ openTab: () => {} })
   source.send({ type: 'wanted', session: 'chat-4' })
   assert.deepEqual(opened, [['current', 'inner-browser-use', {}]])
 })
 
 test('a strip that refuses the current chat falls back to the chat id', () => {
-  /** @type {any[]} */
-  const opened = []
-  const scope = {
-    effect: (effect) => {
-      effect()
-      return () => {}
-    },
-    slots: { inject: () => {}, register: () => () => {} },
-    sidebarRightTabs: { register: () => () => {} },
-    workspaces: { list: () => [] },
-  }
-  const ctx = {
-    effect: (effect) => {
-      effect()
-      return () => {}
-    },
-    locale: { register: () => {} },
-    inject: (_names, callback) => callback(scope),
-    layout: { openRightbar: () => {} },
-    sidebarRight: {
-      openTab: () => {
-        throw new Error('no chat')
-      },
-      openTabIn: (...args) => opened.push(['session', ...args]),
-    },
-  }
-  sources.length = 0
-  definition.apply(ctx)
-  const source = sources.at(-1)
+  const { opened, source } = scene({ openTab: 'throw' })
   source.send({ type: 'wanted', session: 'chat-5' })
   assert.deepEqual(opened, [['session', 'chat-5', 'inner-browser-use', {}]])
 })

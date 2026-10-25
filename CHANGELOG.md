@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+
+- Fixed the reason a call never opened its tab: the page half read
+  `ctx.sidebarRight` without asking for the service, so it only ever saw
+  `undefined` and the ask was dropped in silence. It now runs its listener on a
+  scope injected with `layout` and `sidebarRight`, and reports `phase:"wired"`
+  once that scope is live.
+
 ## 0.3.1
 
 - The page opens the tab in its own chat first (`openTab`), and falls back to the

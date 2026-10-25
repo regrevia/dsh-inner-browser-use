@@ -488,7 +488,10 @@ window.__ModuleLoader__.load({
           return () => style.remove()
         }, 'dsh-inner-browser-use: styles')
 
-        ctx.effect(() => {
+        /* The strip is a service provided by the sidebar plugin; a page that was
+           not injected with it can only read it as undefined, and the ask is lost. */
+        ctx.inject(['layout', 'sidebarRight'], (scope) => scope.effect(() => {
+          beat({ tabType: registered, phase: 'wired' })
           const source = new EventSource(`${ROUTE}/watch`) // ui-copy-ignore
           const onWanted = (event) => {
             let frame
@@ -501,7 +504,7 @@ window.__ModuleLoader__.load({
             const sessionId = String(frame.session ?? '')
             if (sessionId === '') return
             try {
-              ctx.layout?.openRightbar?.(true, false) // ui-copy-ignore
+              scope.layout?.openRightbar?.(true, false) // ui-copy-ignore
             } catch (error) {
               beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
             }
@@ -509,7 +512,7 @@ window.__ModuleLoader__.load({
                the id path is the fallback for a page showing another chat. */
             let opened = ''
             try {
-              const strip = ctx.sidebarRight
+              const strip = scope.sidebarRight
               if (typeof strip?.openTab === 'function') {
                 strip.openTab(KIND, {}) // ui-copy-ignore
                 opened = 'current'
@@ -519,7 +522,7 @@ window.__ModuleLoader__.load({
             }
             if (opened === '' || opened.startsWith('failed')) {
               try {
-                ctx.sidebarRight?.openTabIn?.(sessionId, KIND, {}) // ui-copy-ignore
+                scope.sidebarRight?.openTabIn?.(sessionId, KIND, {}) // ui-copy-ignore
                 opened = 'session'
               } catch (error) {
                 opened = `failed: ${String(error?.message ?? error)}`
@@ -529,7 +532,7 @@ window.__ModuleLoader__.load({
           }
           source.addEventListener('message', onWanted)
           return () => source.close()
-        }, 'dsh-inner-browser-use: tab on demand')
+        }, 'dsh-inner-browser-use: tab on demand'))
 
         ctx.inject(['sidebarRightTabs', 'workspaces'], (scope) => {
           const tabs = scope.sidebarRightTabs
