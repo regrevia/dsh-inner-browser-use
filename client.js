@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({
     let reopenStream = null
     const SLOT = 'sidebar.right.pane.tab'
     const TITLE_SLOT = 'sidebar.right.pane.tab.title'
+    const WATCH_SLOT = 'conversation.session.header.utilities'
 
     const DICT = {
       zh: {
@@ -643,6 +644,22 @@ window.__ModuleLoader__.load({
      *  fall back to "the current chat" when this is the chat asking.
      *  @type {string} */
     let currentSession = ''
+
+    /**
+     * The chat the shell's address names, when it names one. The person can switch
+     * chat without any of this plugin's pages mounting, so the address is the only
+     * thing that says which chat is on screen; '' means the shell does not say.
+     * @returns {string} the chat on screen, or '' when unknown.
+     */
+    function routedSession() {
+      try {
+        const address = String(window.location?.href ?? '')
+        const hit = /session[-/:]([0-9a-f][0-9a-f-]{7,})/i.exec(address) // ui-copy-ignore
+        return hit === null ? '' : 'session-' + hit[1]
+      } catch {
+        return ''
+      }
+    }
     /* Chats whose page is actually on screen. A page kept mounted behind another
        chat is not: opening the right column for it takes the panel away from
        what the person is looking at. */
@@ -966,6 +983,7 @@ window.__ModuleLoader__.load({
                        bring forward; anyone else keeps the view they are using. */
                     const asking = String(frame.session ?? '')
                     const mine = asking === '' || asking === currentSession || currentSession === ''
+                      || (routedSession() !== '' && asking === routedSession())
                     const colWide = () => {
                       const column = document.querySelector('[class*="rightbarCol"]')
                       if (column === null) return 'no-column'
@@ -1193,7 +1211,7 @@ window.__ModuleLoader__.load({
             openedByUs = true
           } else {
             onScreen.delete(props.sessionId)
-            if (currentSession === props.sessionId) currentSession = ''
+            if (currentSession === props.sessionId && routedSession() === '') currentSession = ''
             if (openedByUs && onScreen.size === 0) {
               /* Our page went behind another chat and nothing of ours is left
                  on screen: the panel we opened now shows nothing. */
@@ -1285,7 +1303,14 @@ window.__ModuleLoader__.load({
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
         ctx.effect(() => {
-          const tick = setInterval(() => beat({ tabType: registered, phase: 'alive' }), ALIVE_MS)
+          const tick = setInterval(() => {
+            const seen = routedSession()
+            if (seen !== '' && seen !== currentSession) {
+              currentSession = seen
+              beat({ tabType: registered, phase: 'route', session: seen })
+            }
+            beat({ tabType: registered, phase: 'alive', session: currentSession })
+          }, ALIVE_MS)
           return () => clearInterval(tick)
         }, 'dsh-inner-browser-use: alive')
         try {
@@ -1328,6 +1353,7 @@ window.__ModuleLoader__.load({
           reveal = (asking) => {
             /* Another chat's page is never brought forward. */
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1345,6 +1371,7 @@ window.__ModuleLoader__.load({
           }
           raise = (asking) => {
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1378,6 +1405,15 @@ window.__ModuleLoader__.load({
             /* A page for a chat that is not on screen stays where it is; taking
                the right panel for it would hide what the person is reading. */
             beat({ phase: 'wanted', session: sessionId, panes: paneSessions.size, screen: onScreen.size })
+            /* The chat whose header is mounted is the chat on screen; the address
+               is the second word, for a shell that keeps the chat there. */
+            const seen = currentSession !== '' ? currentSession : routedSession()
+            if (seen !== '' && seen !== sessionId) {
+              /* The person is looking at another chat; taking the panel would
+                 replace what they are reading with an empty column. */
+              beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
+              return
+            }
             const hidden = paneSessions.has(sessionId) && onScreen.has(sessionId) !== true
             if (!hidden && onScreen.size > 0 && onScreen.has(sessionId) !== true) {
               /* The panel is already showing another chat's page. */
@@ -1498,6 +1534,27 @@ window.__ModuleLoader__.load({
               workspace: () => workspaceKey(workspaces, sessionId),
             }),
           }, Body))
+
+          /* The chat on screen is the one whose header is mounted. Watching it
+             here costs no pixels and answers before any page of ours exists. */
+          scope.slots.inject(WATCH_SLOT, () => scope.slots.register({
+            name: WATCH_SLOT, // ui-copy-ignore
+            id: ID, // ui-copy-ignore
+            order: 90, // ui-copy-ignore
+            locale: NS, // ui-copy-ignore
+          }, (props) => {
+            React.useEffect(() => {
+              const id = String(props?.sessionId ?? '')
+              if (id === '') return undefined
+              currentSession = id
+              beat({ tabType: registered, phase: 'seen', session: id })
+              return () => {
+                if (currentSession === id) currentSession = ''
+                beat({ tabType: registered, phase: 'unseen', session: id })
+              }
+            }, [props?.sessionId])
+            return null
+          }))
 
           scope.slots.inject(TITLE_SLOT, () => scope.slots.register({
             name: TITLE_SLOT, // ui-copy-ignore

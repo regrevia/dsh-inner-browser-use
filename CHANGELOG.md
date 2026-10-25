@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.6
+
+- The right panel is only taken for the chat on screen. A chat that is not on screen leaves the panel as it is, so no
+  empty column appears when the person switches chat mid-call.
+
 ## 0.8.5
 
 - A page that lost its surface because the right panel was closed is shown again on the next call, instead of the call
