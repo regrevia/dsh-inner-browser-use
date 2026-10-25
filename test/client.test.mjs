@@ -79,7 +79,14 @@ globalThis.document = {
   body: { appendChild() {} },
   createElement: () => ({ ...style, dataset: {} }),
   querySelector: () => null,
-  querySelectorAll: (selector) => (selector === '[data-sidebar-right-session]' ? globalThis.__panels : []),
+  querySelectorAll: (selector) => (selector === '[data-sidebar-right-session]'
+    ? globalThis.__panels.map((panel) => ({
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        getBoundingClientRect: () => ({ width: 0, height: 0 }),
+        ...panel,
+      }))
+    : []),
 }
 globalThis.__panels = []
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
@@ -126,6 +133,13 @@ test('the product browser tab is the only tab opened, so no look-alike is added'
 
 function scene({ openTab, openTabIn } = {}) {
   globalThis.__panels = []
+  globalThis.window.location = { origin: 'http://dsh.invalid' }
+  /** @type {string[]} */
+  const beats = []
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/uplink') && init?.body !== undefined) beats.push(String(init.body).slice(0, 160))
+    return { ok: true, json: async () => ({ ok: true, epoch: replyEpoch }) }
+  }
   /** @type {any[]} */
   const opened = []
   /** @type {string[]} */
@@ -169,7 +183,7 @@ function scene({ openTab, openTabIn } = {}) {
   }
   sources.length = 0
   definition.apply(ctx)
-  return { opened, bars, injected, source: sources.at(-1) }
+  return { opened, bars, beats, injected, source: sources.at(-1) }
 }
 
 test('a page is shown only for the chat the shell says is on screen', async () => {
@@ -336,15 +350,72 @@ test('driving the product page puts no container of ours into the page', () => {
 test('a chat whose column was never opened gets one before its tab', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /showColumn = \(\) => \{/)
-  assert.match(source, /panelOf\(sessionId\)\.length === 0\) \{\n {14}\/\* The product only opens a tab/)
+  assert.match(source, /await oneAtATime\(async \(\) => \{\n(?:.*\n)*?\s+if \(panelOf\(sessionId\)\.length > 0\) return/)
 })
 
 test('a chat whose column was never opened gets one, docked, before its tab', async () => {
-  const { opened, bars, source } = scene()
+  const { opened, bars, beats, source } = scene()
   globalThis.__panels = []
   source.send({ type: 'wanted', session: 'chat-7' })
-  assert.deepEqual(bars, ['true,false'])
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.deepEqual(bars, ['true,false'], beats.join('|'))
   /* The page waits for the column to appear before it opens the tab in it. */
   await new Promise((resolve) => setTimeout(resolve, 2_000))
-  assert.deepEqual(opened, [['session', 'chat-7', 'browser', {}]])
+  assert.deepEqual(opened, [['session', 'chat-7', 'browser', {}]], beats.join('|'))
+})
+
+test('a column that is already up is not pressed, because the control toggles', async () => {
+  const clicks = []
+  const button = { click: () => clicks.push('click') }
+  const was = globalThis.document.querySelector
+  globalThis.document.querySelector = (selector) => (selector === '[data-sidebar-right-expand]' ? button : null)
+  try {
+    const { bars, source } = scene()
+    globalThis.__panels = [{ dataset: {}, getBoundingClientRect: () => ({ width: 575, height: 900 }) }]
+    source.send({ type: 'wanted', session: 'chat-2' })
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    assert.deepEqual(clicks, [])
+    assert.deepEqual(bars, [])
+  } finally {
+    globalThis.document.querySelector = was
+    globalThis.__panels = []
+  }
+})
+
+test('a call for a chat that is not on screen opens no tab and takes no column', async () => {
+  const was = globalThis.window.location
+  try {
+    const { opened, bars, source } = scene()
+    globalThis.window.location = { origin: 'http://dsh.invalid', href: 'http://dsh.invalid/session-abcd1234ef56' }
+    globalThis.__panels = [{ dataset: { sidebarRightSession: 'session-abcd1234ef56' }, getBoundingClientRect: () => ({ width: 575, height: 900 }) }]
+    source.send({ type: 'wanted', session: 'session-away9999' })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    assert.deepEqual(bars, [])
+    assert.deepEqual(opened, [])
+  } finally {
+    globalThis.window.location = was
+    globalThis.__panels = []
+  }
+})
+
+test('two asks for one chat open its tab once', async () => {
+  const was = globalThis.document.querySelector
+  const button = {
+    click: () => {
+      const panel = { dataset: { sidebarRightSession: 'chat-8' }, getBoundingClientRect: () => ({ width: 575, height: 900 }) }
+      globalThis.__panels.push(panel)
+    },
+  }
+  globalThis.document.querySelector = (selector) => (selector === '[data-sidebar-right-expand]' ? button : null)
+  try {
+    const { opened, source } = scene()
+    globalThis.__panels = []
+    source.send({ type: 'wanted', session: 'chat-8' })
+    source.send({ type: 'wanted', session: 'chat-8' })
+    await new Promise((resolve) => setTimeout(resolve, 1_600))
+    assert.deepEqual(opened, [['session', 'chat-8', 'browser', {}]])
+  } finally {
+    globalThis.document.querySelector = was
+    globalThis.__panels = []
+  }
 })
