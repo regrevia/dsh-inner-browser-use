@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.16
+
+- A file name a page asks for is flattened to its last part, and a test now
+  holds that a name with `..` still lands inside the downloads folder.
+
 ## 0.11.15
 
 - A chat that named no project keeps its files under the account's home,

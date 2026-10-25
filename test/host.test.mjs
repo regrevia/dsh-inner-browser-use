@@ -320,6 +320,22 @@ test('a page that saves a file on its own lands it in the chat folder', async ()
   seat.stop()
 })
 
+test('a name a page asks for cannot reach outside the downloads folder', async () => {
+  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-name-'))
+  const seat = await tab('chat-name', `cwd:${project}`)
+  const id = 'name-1'
+  const answer = await call(`/land?session=chat-name&id=${id}&name=${encodeURIComponent('../../evil.sh')}&offset=0&final=1`, {
+    method: 'POST',
+    body: 'x',
+    headers: { 'x-dshib-land': '1' },
+  })
+  const landed = await answer.json()
+  const dir = join(project, '.dsh-inner-browser-use', 'downloads')
+  assert.equal(landed.path, join(dir, 'evil.sh'))
+  assert.equal(await readFile(landed.path, 'utf8'), 'x')
+  seat.stop()
+})
+
 test('a file lands in the folder the chat works in, not the profile', async () => {
   const project = await mkdtemp(join(tmpdir(), 'dsh-ib-project-'))
   const elsewhere = await mkdtemp(join(tmpdir(), 'dsh-ib-elsewhere-'))
