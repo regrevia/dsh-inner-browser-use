@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- Select text on the page and a **Drag to chat** handle appears in the tab's status row. Drag it into the
+  conversation to take that text with you. The page is read while the tab is on screen, so the handle has the
+  text before the drag starts.
+- The README said the opposite of the code in three places: that files cannot be downloaded, that the tab has to
+  be open already, and that there is no way to drag a page fragment into the chat. All three now describe what
+  actually happens.
+
 ## 0.7.3
 
 - This chat's browser tab comes forward while a call drives it, so the page is there to see and to photograph.

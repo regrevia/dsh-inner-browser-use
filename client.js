@@ -40,6 +40,8 @@ window.__ModuleLoader__.load({
         'phase.closed': '已关闭',
         'error.desktopOnly': '需要在桌面版中使用',
         'error.lease': '无法打开浏览器面板',
+        'pane.drag': '拖到聊天',
+        'pane.dragHint': '把这一页的选中文字拖进聊天',
       },
       en: {
         'type.label': 'Inner browser',
@@ -49,6 +51,8 @@ window.__ModuleLoader__.load({
         'phase.closed': 'Closed',
         'error.desktopOnly': 'Requires the desktop app',
         'error.lease': 'Could not open the browser panel',
+        'pane.drag': 'Drag to chat',
+        'pane.dragHint': 'Drag the selected text of this page into the chat',
       },
     }
     const LANG = /^zh/i.test(typeof navigator === 'undefined' ? '' : navigator.language ?? '') ? 'zh' : 'en'
@@ -68,6 +72,10 @@ window.__ModuleLoader__.load({
       '.dshib-state[data-tone="error"] .dshib-dot{background:var(--dsw-alias-label-danger)}',
       '.dshib-href{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;direction:rtl;background:transparent;border:0;padding:0;font:inherit;color:var(--dsh-text-2,inherit)}',
       '.dshib-href:focus{outline:none;text-align:left;direction:ltr;color:var(--dsh-text-1,inherit)}',
+      '.dshib-drag{flex:none;display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;',
+      'border:1px solid var(--dsw-alias-border-subtle);color:var(--dsw-alias-label-secondary);cursor:grab;',
+      'user-select:none;white-space:nowrap}',
+      '.dshib-drag:active{cursor:grabbing}',
     ].join('')
 
     /**
@@ -1134,6 +1142,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('')
       const [href, setHref] = React.useState('')
       const [draft, setDraft] = React.useState('')
+      const [picked, setPicked] = React.useState('')
       React.useEffect(() => {
         if (host.current === null) return undefined // ui-copy-ignore
         currentSession = props.sessionId
@@ -1153,6 +1162,29 @@ window.__ModuleLoader__.load({
         return () => guest.dispose()
       }, [props.sessionId])
       React.useEffect(() => { setDraft(href) }, [href])
+      /* A selection is read from the page while the pane is on screen, so the
+         drag handle carries it without asking the page at drag time. */
+      React.useEffect(() => {
+        let live = true
+        const tick = setInterval(() => {
+          const el = host.current?.querySelector('webview') // ui-copy-ignore
+          if (live !== true || !el || el.getBoundingClientRect().width < 2) return
+          el.executeJavaScript('(() => String(window.getSelection() || "").slice(0, 4000))()', true)
+            .then((text) => {
+              if (live !== true) return
+              const next = typeof text === 'string' ? text.trim() : ''
+              setPicked((was) => {
+                if (was !== next) probe({ phase: 'picked', len: next.length })
+                return next
+              })
+            })
+            .catch(() => {})
+        }, 900)
+        return () => {
+          live = false
+          clearInterval(tick)
+        }
+      }, [])
       const tone = phase === 'error' ? 'error' : phase === 'ready' ? 'ready' : 'opening'
       /* An address is only an address once it has a scheme; a bare host is a host. */ // ui-copy-ignore
       const open = () => {
@@ -1183,6 +1215,18 @@ window.__ModuleLoader__.load({
             onChange: (event) => setDraft(event.target.value),
             onKeyDown: (event) => { if (event.key === 'Enter') open() },
           }),
+          picked === '' ? null : h('span', {
+            key: 'drag',
+            className: 'dshib-drag',
+            draggable: true,
+            title: L('pane.dragHint'), // ui-copy-ignore
+            onDragStart: (event) => {
+              const data = event.dataTransfer
+              if (data === null) return
+              data.effectAllowed = 'copy'
+              data.setData('text/plain', picked)
+            },
+          }, L('pane.drag')),
         ]),
         h('div', { key: 'host', ref: host, className: 'dshib-viewport' }), // ui-copy-ignore
       ])

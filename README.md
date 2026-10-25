@@ -51,9 +51,9 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 
 - **Page → chat:** `browser_script` returns strings and `browser_screenshot` saves a PNG, so the agent can read what the page shows and quote it — or hand you the image path — in the conversation.
 - **Chat → page:** `browser_type` puts text into a field; `browser_script` can set values the page cannot be typed into.
-- **Selection → chat:** `browser_selection` reads what is selected and `browser_copy` copies it through the page's own
-  clipboard, so the model can quote it or you can paste it. There is no drag handle yet: sending a page fragment
-  into the conversation goes through those two tools.
+- **Selection → chat, by hand:** select text on the page and a **Drag to chat** handle appears in the tab's
+  status row. Drag it into the conversation to carry that text with you; the agent gets the same text through
+  `browser_selection`, and `browser_copy` puts it on the page's own clipboard.
 
 ## What it will not do
 
@@ -61,8 +61,10 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 - **It does not outlive a restart.** The guest partition lives in memory, so a page you signed into with a password needs the password again after the app restarts. Cookies survive a tab close and reopen within one session of the app.
 - **Screenshots are viewport-sized.** A `<webview>` captures what is visible, not the whole scroll height; scroll first, then capture.
 - **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
-- **No downloads, popups, or permission prompts.** The guest runs sandboxed. To get bytes out of a page (an image, a file), read them in-page with `browser_script`.
-- **It needs the tab open.** Tools fail with a one-line instruction rather than opening the tab for you.
+- **No popups or permission prompts.** A link that wants a new window stays in the tab it is in. A file the page
+  offers comes out through `browser_download`, which saves it into this chat's project folder and hands the path
+  back to the conversation.
+- **It opens the tab only when a call needs it.** Until then the right panel is left as you arranged it.
 - **A capture of a chat you are not looking at.** Reading, clicking and typing work while you are looking at
   another chat, because they drive the page itself. Pixels come from a surface the app is drawing, and a view
   behind another tab of the same pane is not drawn: the capture tries to bring this chat's tab forward, and if the
