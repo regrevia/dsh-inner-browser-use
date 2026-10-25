@@ -177,6 +177,19 @@ function scene({ openTab, openTabIn } = {}) {
   return { opened, bars, injected, source: sources.at(-1) }
 }
 
+test('a page is shown only for the chat the shell says is on screen', async () => {
+  const { revealAllowed } = await import('../client.js')
+  const onScreen = new Set(['chat-shown'])
+  const view = (current, routed) => ({ current, routed, onScreen })
+  assert.equal(revealAllowed('', view('', '')), true)
+  assert.equal(revealAllowed('chat-1', view('chat-1', '')), true)
+  assert.equal(revealAllowed('chat-2', view('chat-1', 'chat-2')), true)
+  assert.equal(revealAllowed('chat-shown', view('chat-1', 'chat-2')), true)
+  assert.equal(revealAllowed('chat-9', view('chat-1', 'chat-2')), false)
+  assert.equal(revealAllowed('chat-9', view('', '')), false)
+  assert.equal(revealAllowed('chat-9', view('chat-1', '')), false)
+})
+
 test('the ask reaches the strip as an injected service', () => {
   const { injected, source } = scene()
   assert.deepEqual(injected[0], ['layout', 'sidebarRight'])

@@ -11,6 +11,21 @@
  * Operations the Host can ask for: navigate, view, click, type, script. // ui-copy-ignore
  */
 
+/**
+ * Whether a call for this chat may bring the right column forward. Only the chat
+ * the shell says is on screen, or a page already showing, may; anyone else is
+ * answered without touching the panel.
+ * @param {string} sessionId - chat the call belongs to.
+ * @param {{current: string, routed: string, onScreen: Set<string>}} view - who is on screen.
+ * @returns {boolean} true when the panel may open for it.
+ */
+export function revealAllowed(sessionId, view) {
+  if (sessionId === '') return true
+  if (view.current !== '' && sessionId === view.current) return true
+  if (view.routed !== '' && sessionId === view.routed) return true
+  return view.onScreen.has(sessionId)
+}
+
 window.__ModuleLoader__.load({
   id: 'dsh-inner-browser-use',
   factory(require) {
@@ -698,19 +713,9 @@ window.__ModuleLoader__.load({
        what the person is looking at. */
     const onScreen = new Set()
 
-    /**
-     * Whether a call for this chat may bring the right column forward. Only the
-     * chat on screen, or a page already showing, may; anyone else is answered
-     * without touching the panel.
-     * @param {string} sessionId - chat the call belongs to.
-     * @returns {boolean} true when the panel may open for it.
-     */
+    /** @param {string} sessionId - chat the call belongs to. @returns {boolean} true when the panel may open for it. */
     function mayShow(sessionId) {
-      if (sessionId === '') return true
-      if (currentSession !== '' && sessionId === currentSession) return true
-      const routed = routedSession()
-      if (routed !== '' && sessionId === routed) return true
-      return onScreen.has(sessionId)
+      return revealAllowed(sessionId, { current: currentSession, routed: routedSession(), onScreen })
     }
     /* What the assistant is doing in each chat's page, so the pane can say it. */
     const acting = new Map()
@@ -1121,7 +1126,10 @@ window.__ModuleLoader__.load({
                       probe?.({ why: 'capture-parked', body: Math.round(target.getBoundingClientRect().width) })
                     }
                     const wide = colWide()
-                    probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: wide, mine, tries: 'poll', ...surface(webview) })
+                    probe?.({
+                      why: 'shot-geometry', columnBefore: before, columnAfter: wide, mine,
+                      tries: 'poll', ask: asking, cur: currentSession, routed: routedSession(), ...surface(webview),
+                    })
                     if (target.getBoundingClientRect().width < 2 || target.getBoundingClientRect().height < 2) {
                       throw new Error("this chat's page is not on screen")
                     }
