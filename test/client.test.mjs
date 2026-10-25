@@ -316,3 +316,9 @@ test('a page is looked for in the chat its call belongs to', () => {
   assert.match(source, /function nativeElement\(sessionId\)/)
   assert.match(source, /nativeReady\(40, options\.sessionId\)/)
 })
+
+test('a tab that never appeared is not reported as open', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /opened = 'no-panel'/)
+  assert.match(source, /panelOf\(sessionId\)\.length > 0/)
+})

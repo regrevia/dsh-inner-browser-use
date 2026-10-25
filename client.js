@@ -2177,7 +2177,18 @@ window.__ModuleLoader__.load({
             } else if (typeof strip?.openTabIn === 'function') {
               try {
                 strip.openTabIn(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
+                /* The product opens a tab only in a chat whose right panel it has
+                   adopted. Saying a tab opened when nothing appeared would have
+                   the call wait on a page that will never answer. */
                 opened = 'session'
+                if (NATIVE_MODE === true) {
+                  let drawn = panelOf(sessionId).length > 0
+                  for (let wait = 0; wait < 12 && drawn !== true; wait += 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 100))
+                    drawn = panelOf(sessionId).length > 0
+                  }
+                  if (drawn !== true) opened = 'no-panel'
+                }
               } catch (error) {
                 opened = `failed: ${String(error?.message ?? error)}`
               }
