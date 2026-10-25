@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.14
+
+- A chat the person is not reading answers from a page out of sight instead of
+  taking the right column, and the row above the page offers the file it just
+  downloaded to the chat as well as the selected text.
+
 ## 0.8.13
 
 - A saved image shows where the assistant acted, even when the action finished

@@ -142,6 +142,19 @@ tail -3 /tmp/dsh-inner-browser-use.log   # "why":"capture-lens"
 `why` is `capture-covered` when the app had no surface to read, and the message
 says which tab to open.
 
+A call for a chat the person is not reading never takes the column. If that chat
+has no page yet, one is mounted out of sight and answers from there; only if that
+is impossible does the call say which chat to open. The proof log shows the two
+halves:
+
+```bash
+grep -m1 '"phase":"wanted"' /tmp/dsh-inner-browser-use.log   # panes, screen
+grep -m1 'resident-open' /tmp/dsh-inner-browser-use.log      # the page made out of sight
+```
+
+At most three pages are kept out of sight, and the oldest goes first, so a long
+session cannot pile them up.
+
 ## What has been run in the app
 
 Each line was run against the live pane on 2026-10-25 and is what the tool

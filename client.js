@@ -699,8 +699,28 @@ window.__ModuleLoader__.load({
     const onScreen = new Set()
     /* What the assistant is doing in each chat's page, so the pane can say it. */
     const acting = new Map()
+    /* The last file each chat downloaded, kept only as long as it is small
+       enough to hand back: the row above the page offers it to the chat. */
+    const offers = new Map()
+    const OFFER_LIMIT = 8 * 1024 * 1024
     /** @type {Set<() => void>} */
     const actWatchers = new Set()
+    const offWatchers = new Set()
+
+    /**
+     * @param {string} name - file name.
+     * @returns {string} the type to hand a chat, from the name alone.
+     */
+    function mimeOf(name) {
+      const ext = String(name).toLowerCase().split('.').pop() ?? ''
+      const known = {
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+        gif: 'image/gif', svg: 'image/svg+xml', pdf: 'application/pdf',
+        json: 'application/json', txt: 'text/plain', md: 'text/markdown',
+        csv: 'text/csv', zip: 'application/zip',
+      }
+      return known[ext] ?? 'application/octet-stream'
+    }
     const setActing = (chat, tool) => {
       if (String(tool) === '') acting.delete(chat)
       else acting.set(chat, String(tool))
@@ -846,6 +866,12 @@ window.__ModuleLoader__.load({
     function keepResident(sessionId) {
       if (sessionId === '' || keyForSession === null || residents.has(sessionId)) return
       if (paneSessions.has(sessionId)) return
+      /* Three pages out of sight is enough to answer what is being asked; the
+         oldest one goes so a long session cannot pile them up. */
+      if (residents.size >= 3) {
+        const oldest = residents.keys().next()
+        if (oldest.done !== true) dropResident(oldest.value)
+      }
       beat({ tabType: true, phase: 'resident-open', session: sessionId })
       const guest = mountGuest({
         host: stashHost(), // ui-copy-ignore
@@ -1147,12 +1173,18 @@ window.__ModuleLoader__.load({
                       probe?.({ why: 'download-half', href: String(here).slice(0, 120), error: String(error?.message ?? error).slice(0, 80) })
                     }
                     const ticket = String(frame.args?.ticket ?? '')
+                    let bag = ''
+                    let offered = true
                     let offset = 0
                     let done = false
                     let landed = null
                     while (done === false) {
                       const part = await next()
                       const bytes = bytesOf(String(part?.data ?? ''))
+                      if (offered === true) {
+                        bag += String(part?.data ?? '')
+                        if (bag.length > OFFER_LIMIT * 2) offered = false
+                      }
                       done = part?.done === true
                       const answer = await fetch(
                         `${ROUTE}/grab?ticket=${encodeURIComponent(ticket)}&name=${encodeURIComponent(name)}` // ui-copy-ignore
@@ -1165,6 +1197,10 @@ window.__ModuleLoader__.load({
                     }
                     const savedPath = String(landed?.path ?? '')
                     const savedBytes = Number(landed?.bytes ?? offset)
+                    if (offered === true && bag !== '' && offers.has(String(frame.session)) === true) {
+                      offers.set(String(frame.session), { name, b64: bag })
+                      for (const tell of offWatchers) tell()
+                    }
                     /* Both shapes travel: an older half reads the sentence, and
                        the half that saved the file reads the path. */
                     reply({
@@ -1220,7 +1256,18 @@ window.__ModuleLoader__.load({
       const [href, setHref] = React.useState('')
       const [draft, setDraft] = React.useState('')
       const [picked, setPicked] = React.useState('')
+      const [offered, setOffered] = React.useState(null)
       const [act, setAct] = React.useState('')
+      React.useEffect(() => {
+        offers.set(props.sessionId, null)
+        const tell = () => setOffered(offers.get(props.sessionId) ?? null)
+        offWatchers.add(tell)
+        tell()
+        return () => {
+          offWatchers.delete(tell)
+          offers.delete(props.sessionId)
+        }
+      }, [props.sessionId])
       React.useEffect(() => {
         const tell = () => setAct(acting.get(props.sessionId) ?? '')
         actWatchers.add(tell)
@@ -1338,7 +1385,7 @@ window.__ModuleLoader__.load({
             onChange: (event) => setDraft(event.target.value),
             onKeyDown: (event) => { if (event.key === 'Enter') open() },
           }),
-          picked === '' ? null : h('span', {
+          picked === '' && offered === null ? null : h('span', {
             key: 'drag',
             className: 'dshib-drag',
             draggable: true,
@@ -1347,7 +1394,18 @@ window.__ModuleLoader__.load({
               const data = event.dataTransfer
               if (data === null) return
               data.effectAllowed = 'copy'
-              data.setData('text/plain', picked)
+              if (picked !== '') data.setData('text/plain', picked)
+              if (offered === null) return
+              try {
+                const bin = atob(offered.b64)
+                const bytes = new Uint8Array(bin.length)
+                for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+                const file = new File([bytes], offered.name, { type: mimeOf(offered.name) })
+                data.setData('text/plain', offered.name)
+                data.items.add(file)
+              } catch {
+                /* a jar that refuses files still carries the name as text */
+              }
             },
           }, L('pane.drag')),
         ]),
@@ -1456,7 +1514,7 @@ window.__ModuleLoader__.load({
               /* probed once per page load */
             }
           }
-          const onWanted = (event) => {
+          const onWanted = async (event) => {
             let frame
             try {
               frame = JSON.parse(event.data)
@@ -1477,7 +1535,19 @@ window.__ModuleLoader__.load({
                empty column in front of what the person is reading. */
             const hidden = paneSessions.has(sessionId) && onScreen.has(sessionId) !== true
             const take = seen === '' || seen === sessionId || paneSessions.has(sessionId) === true
-            if (!take) beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
+            /* The panel shows the chat being read, so a call for another chat
+               gets a page out of sight instead: it answers nothing on screen and
+               takes nothing away. */
+            const stashed = () => residents.has(sessionId) === true
+            if (!take && stashed() !== true) {
+              keepResident(sessionId)
+              for (let wait = 0; wait < 8 && stashed() !== true; wait += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 50))
+              }
+            }
+            if (!take && stashed() !== true) {
+              beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
+            }
             const bare = take && onScreen.size === 0
             if (take) {
               try {
