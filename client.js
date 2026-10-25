@@ -706,8 +706,8 @@ window.__ModuleLoader__.load({
      * @returns {boolean} true when the panel may open for it.
      */
     function mayShow(sessionId) {
-      if (sessionId === '' || currentSession === '') return true
-      if (sessionId === currentSession) return true
+      if (sessionId === '') return true
+      if (currentSession !== '' && sessionId === currentSession) return true
       const routed = routedSession()
       if (routed !== '' && sessionId === routed) return true
       return onScreen.has(sessionId)
@@ -1075,8 +1075,7 @@ window.__ModuleLoader__.load({
                     /* The chat that asked is the only one whose page this call may
                        bring forward; anyone else keeps the view they are using. */
                     const asking = String(frame.session ?? '')
-                    const mine = asking === '' || asking === currentSession || currentSession === ''
-                      || (routedSession() !== '' && asking === routedSession())
+                    const mine = mayShow(asking)
                     const colWide = () => {
                       const column = document.querySelector('[class*="rightbarCol"]')
                       if (column === null) return 'no-column'
