@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.11
+
+- The arrow stays where it acted for twenty seconds instead of eight, so you can
+  look over and see where the press landed.
+- A send reports the point it pressed, so a call that placed no arrow says so.
+
 ## 0.11.10
 
 - The page each chat last had is remembered in one place, so a remount reads it

@@ -306,6 +306,11 @@ window.__ModuleLoader__.load({
         D.documentElement.appendChild(rip)
       }
       let away = 0
+      /* Where the arrow is standing, so a report can say the press was seen. */
+      const at = () => {
+        const last = W.__dsh_ib_last
+        return last === undefined ? 'no pointer' : Math.round(last.x) + ',' + Math.round(last.y)
+      }
       const aim = async (el) => {
         chrome()
         const r = el.getBoundingClientRect()
@@ -318,7 +323,7 @@ window.__ModuleLoader__.load({
           ptr.classList.remove('away')
           ptr.style.transform = 'translate3d(' + (x - 4) + 'px,' + (y - 2) + 'px,0)'
           /* The pointer stays where it acted long enough to be seen, then leaves. */
-          away = setTimeout(() => ptr.classList.add('away'), 8000)
+          away = setTimeout(() => ptr.classList.add('away'), 20000)
         }
         await sleep(210)
         if (rip) {
@@ -460,7 +465,7 @@ window.__ModuleLoader__.load({
           clearTimeout(away)
           ptr.classList.remove('away')
           ptr.style.transform = 'translate3d(' + (last.x - 4) + 'px,' + (last.y - 2) + 'px,0)'
-          away = setTimeout(() => ptr.classList.add('away'), 8000)
+          away = setTimeout(() => ptr.classList.add('away'), 20000)
           return ''
         }
         if (op === 'click') {
@@ -495,19 +500,22 @@ window.__ModuleLoader__.load({
           } else {
             setValue(el, a.text)
           }
+          let where = ''
           if (a.submit === true) {
             const go = sendControl(el)
             if (go !== null) {
               await aim(go)
               go.click()
+              where = 'Pressed ' + label(go) + ' at ' + at()
             } else {
               press(el, 'Enter')
+              where = 'Pressed Enter'
             }
             await sleep(520)
           } else {
             await sleep(120)
           }
-          return 'Typed into #' + a.ref + ' ' + label(el) + '\n' + view()
+          return 'Typed into #' + a.ref + ' ' + label(el) + (where === '' ? '' : '\n' + where) + '\n' + view()
         }
         if (op === 'selection') {
           const picked = String(W.getSelection ? W.getSelection().toString() : '')
