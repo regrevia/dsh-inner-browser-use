@@ -322,3 +322,8 @@ test('a tab that never appeared is not reported as open', () => {
   assert.match(source, /opened = 'no-panel'/)
   assert.match(source, /panelOf\(sessionId\)\.length > 0/)
 })
+
+test('driving the product page puts no container of ours into the page', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /if \(NATIVE_MODE === false\) document\.body\.appendChild\(stashNode\)/)
+})

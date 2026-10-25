@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.4
+
+- The page the product owns is driven where it is: no hidden container of ours
+  is added to the chat page, so nothing can shift its layout.
+
 ## 0.11.3
 
 - A tab the product did not actually open is reported as not opened, so a call
