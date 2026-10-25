@@ -81,8 +81,8 @@ The tab is per chat: each chat has its own in the same built-in browser. A call 
 - **It opens the tab only when a call needs it.** A call for the chat you are reading may open the right
   panel; a call for any other chat gets a page out of sight instead, so the panel stays as you arranged it.
   At most three such pages are kept, and the oldest goes first.
-- **A capture of a chat you are not looking at.** Reading, clicking and typing work while you are looking at
-  another chat, because they drive the page itself. Pixels come from a surface the app is drawing, and a view
+- **A capture of a chat you are not looking at.** Reading, clicking and typing work on a tab that chat already
+  had, because they drive the page itself; a tab is opened only for the chat on screen. Pixels come from a surface the app is drawing, and a view
   behind another tab of the same pane is not drawn: the capture tries to bring this chat's tab forward, and if the
   page still has no surface it says so in a couple of seconds instead of waiting. Read what you need from the page
   instead — `browser_script` returns the same content.

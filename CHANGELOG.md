@@ -1,8 +1,21 @@
+# Changelog
+
+## 0.11.9
+
+- Typing with send presses the page's own send control: the pointer travels to it
+  and the ring marks the press, so a page that sends by button shows the click the
+  agent made.
+- A page offers up to 400 controls; a listing shows eighty and counts the rest, so
+  a composer below the fold is reachable.
+
+## 0.11.8
+
+- What the tab is showing is remembered as it navigates, so a rebuilt pane reopens
+  that page instead of an older one.
+
 ## 0.11.7
 
 The column that a call needs is expanded through the control the product already shows, so a chat whose right panel was never opened gets one; a page that is served a new build reloads into it by itself, carrying the build in its address.
-
-# Changelog
 
 ## 0.11.6
 
