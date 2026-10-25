@@ -337,6 +337,20 @@ window.__ModuleLoader__.load({
         }
         await new Promise((resolve) => setTimeout(resolve, 400))
       }
+      try {
+        const chain = []
+        let node = el
+        for (let up = 0; up < 7 && node !== null; up += 1) {
+          const box2 = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : { width: 0, height: 0 }
+          const style = getComputedStyle(node)
+          chain.push(String(node.tagName) + '.' + String(node.className ?? '').slice(0, 28) + ' '
+            + Math.round(box2.width) + 'x' + Math.round(box2.height) + ' ' + style.display + '/' + style.visibility)
+          node = node.parentElement
+        }
+        probe?.({ why: 'capture-empty', tries: tries.join(' '), chain, page: document.visibilityState })
+      } catch {
+        /* the error below still reports the geometry */
+      }
       const box = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : {}
       throw new Error('no pixels (' + tries.join(' ') + '; rect=' + Math.round(box.width ?? 0) + 'x' + Math.round(box.height ?? 0)
         + ' offset=' + (el.offsetWidth ?? 0) + 'x' + (el.offsetHeight ?? 0) + ' connected=' + String(el.isConnected)
@@ -352,6 +366,8 @@ window.__ModuleLoader__.load({
     /** Puts this pane on screen; a guest with no viewport paints nothing to capture.
      *  @type {null | (() => void)} */
     let reveal = null
+    /* The log, not the error, carries why a capture found no pixels. */
+    let probe = null
 
     /** The chat whose sidebar pane is mounted here: a broadcast ask may only
      *  fall back to "the current chat" when this is the chat asking.
@@ -610,6 +626,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         let registered = false
         beat({ tabType: false, phase: 'loaded' })
+        probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
         ctx.effect(() => {
           const tick = setInterval(() => beat({ tabType: registered, phase: 'alive' }), ALIVE_MS)

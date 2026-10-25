@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- A capture that finds no pixels now writes the page's own layout chain to the
+  plugin log: each ancestor's size and display, so the reason is measured
+  instead of guessed.
+
 ## 0.4.4
 
 - A capture brings its own tab forward. Opening the pane was not enough: a tab
