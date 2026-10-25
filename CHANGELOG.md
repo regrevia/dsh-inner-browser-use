@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3
+
+- Opening the right pane works. `layout` has to be in the plugin's inject list,
+  not only in the list passed to one nested scope: the nested read threw
+  "cannot get property layout without inject", so the pane stayed closed and
+  every screenshot of it came back empty.
+
 ## 0.4.2
 
 - A capture no longer trusts the webview element's own width. The element

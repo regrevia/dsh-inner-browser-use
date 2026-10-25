@@ -602,7 +602,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'layout'],
       /**
        * Register the tab type, its body, and its title.
        * @param {any} ctx - client plugin context.
@@ -645,7 +645,9 @@ window.__ModuleLoader__.load({
             const sessionId = String(frame.session ?? '')
             if (sessionId === '') return
             try {
-              scope.layout?.openRightbar?.(true, false) // ui-copy-ignore
+              /* `layout` is in this plugin's inject list; a scope that lists it
+                 alone still cannot read it, which is why the pane never opened. */
+              scope.layout.openRightbar(true, false) // ui-copy-ignore
               reveal = () => {
                 try {
                   scope.layout?.openRightbar?.(true, false)
