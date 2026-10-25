@@ -213,6 +213,40 @@ window.__ModuleLoader__.load({
           }
           return 'Typed into #' + a.ref + ' ' + label(el) + '\n' + view()
         }
+        if (op === 'selection') {
+          const picked = String(W.getSelection ? W.getSelection().toString() : '')
+          const active = D.activeElement
+          const field = active !== null && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')
+            && typeof active.value === 'string' && active.type !== 'password' ? String(active.value) : ''
+          const lines = ['URL ' + location.href]
+          if (picked.trim() !== '') lines.push('Selected ' + clip(picked, 4000))
+          else if (field !== '') lines.push('Field ' + clip(field, 4000))
+          else lines.push('Selected (none)')
+          return lines.join('\n')
+        }
+        if (op === 'copy') {
+          let text = String(W.getSelection ? W.getSelection().toString() : '')
+          if (text.trim() === '' && a.ref !== undefined) {
+            const el = find(a.ref)
+            text = typeof el.value === 'string' ? String(el.value) : String(el.innerText || el.textContent || '')
+          }
+          if (text.trim() === '') throw new Error('nothing selected on this page')
+          const area = D.createElement('textarea')
+          area.value = text
+          area.setAttribute('readonly', '')
+          area.style.position = 'fixed'
+          area.style.left = '-9999px'
+          D.documentElement.appendChild(area)
+          area.select()
+          let ok = false
+          try {
+            ok = D.execCommand('copy')
+          } finally {
+            area.remove()
+          }
+          if (ok !== true) throw new Error('this page refuses the clipboard')
+          return 'Copied ' + text.length + ' characters'
+        }
         if (op === 'upload') {
           const el = find(a.ref)
           if (el.tagName !== 'INPUT' || el.type !== 'file') throw new Error('#' + a.ref + ' is not a file field')
@@ -241,6 +275,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Give up on a step that never settles.
+     * @param {Promise<unknown>} work - pending step. @param {number} ms - budget. @param {string} label - stage name.
+     * @returns {Promise<unknown>} the step's value.
+     */
+    function tick(work, ms, label) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(label + ' timed out')), ms)
+        work.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
+      })
+    }
+
+    /**
      * Read the guest as a PNG, base64-encoded.
      *
      * The panel's own capture hands back an image object whose conversion runs
@@ -262,32 +308,30 @@ window.__ModuleLoader__.load({
       if (bug !== null) {
         let attached = false
         try {
-          await bug.attach('1.3')
+          await tick(bug.attach('1.3'), 3000, 'attach')
           attached = true
-          const shot = await bug.sendCommand('Page.captureScreenshot', { format: 'png' })
+          const shot = await tick(bug.sendCommand('Page.captureScreenshot', { format: 'png' }), 8000, 'capture')
           const data = shot?.data
           if (typeof data === 'string' && data !== '') return data
           notes.push('debugger: no data')
         } catch (error) {
           notes.push('debugger: ' + String(error?.message ?? error))
         } finally {
-          if (attached) {
-            try {
-              await bug.detach()
-            } catch {
-              /* already gone */
-            }
-          }
+          if (attached) bug.detach().catch(() => {})
         }
       }
       try {
         let image
         try {
-          image = await el.capturePage()
+          image = await tick(el.capturePage(), 5000, 'panel')
         } catch {
           await new Promise((resolve) => setTimeout(resolve, 250))
-          image = await el.capturePage()
+          image = await tick(el.capturePage(), 5000, 'panel')
         }
+        /* A data URL crosses the desktop bridge as a plain string; the PNG
+           Buffer does not cross it at all. */
+        const dataUrl = typeof image?.toDataURL === 'function' ? image.toDataURL() : ''
+        if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) return dataUrl.slice(dataUrl.indexOf(',') + 1)
         return image.toPNG().toString('base64')
       } catch (error) {
         throw new Error(String(error?.message ?? error) + ' (' + notes.join('; ') + ')')
@@ -300,6 +344,11 @@ window.__ModuleLoader__.load({
      * proof the module itself executed.
      * @param {Record<string, unknown>} frame - what to report.
      */
+    /** The chat whose sidebar pane is mounted here: a broadcast ask may only
+     *  fall back to "the current chat" when this is the chat asking.
+     *  @type {string} */
+    let currentSession = ''
+
     function beat(frame) {
       void fetch(`${ROUTE}/uplink?session=`, {
         method: 'POST',
@@ -503,6 +552,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('')
       React.useEffect(() => {
         if (host.current === null) return undefined // ui-copy-ignore
+        currentSession = props.sessionId
         const guest = mountGuest({
           host: host.current, // ui-copy-ignore
           sessionId: props.sessionId,
@@ -576,19 +626,22 @@ window.__ModuleLoader__.load({
             /* The current chat is the one place a page may open a tab without an id;
                the id path is the fallback for a page showing another chat. */
             let opened = ''
-            try {
-              const strip = scope.sidebarRight
-              if (typeof strip?.openTab === 'function') {
+            const strip = scope.sidebarRight
+            /* Every open page hears this broadcast, so a page must open the
+               asking chat's tab by id. Opening "the current chat" instead is how
+               one chat's call used to steer a browser tab in another chat. */
+            if (typeof strip?.openTabIn === 'function') {
+              try {
+                strip.openTabIn(sessionId, KIND, {}) // ui-copy-ignore
+                opened = 'session'
+              } catch (error) {
+                opened = `failed: ${String(error?.message ?? error)}`
+              }
+            }
+            if (opened === '' && currentSession === sessionId && typeof strip?.openTab === 'function') {
+              try {
                 strip.openTab(KIND, {}) // ui-copy-ignore
                 opened = 'current'
-              }
-            } catch (error) {
-              opened = `failed: ${String(error?.message ?? error)}`
-            }
-            if (opened === '' || opened.startsWith('failed')) {
-              try {
-                scope.sidebarRight?.openTabIn?.(sessionId, KIND, {}) // ui-copy-ignore
-                opened = 'session'
               } catch (error) {
                 opened = `failed: ${String(error?.message ?? error)}`
               }
@@ -617,6 +670,10 @@ window.__ModuleLoader__.load({
             multiple: true, // ui-copy-ignore
             keepMounted: true,
             title: () => L('type.label'),
+            description: () => L('guide.description'),
+            /* The guide page lists one card per registered type; without this the
+               column has no door to this tab. */
+            guide: [{ id: KIND, title: () => L('type.label'), description: () => L('guide.description'), order: 60 }],
           }), 'dsh-inner-browser-use: tab type')
           registered = true
           beat({ tabType: true, phase: 'registered' })

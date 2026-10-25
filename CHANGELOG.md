@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- `browser_screenshot` returns again. The panel's PNG is handed back as a data
+  URL string, because the image Buffer does not cross the desktop bridge, and the
+  guest debugger this build exposes has no `Page.captureScreenshot` to use. Each
+  stage now has its own budget, so a slow attach fails as "attach timed out"
+  instead of a bare timeout.
+- A tool call can no longer steer another chat's tab. Every open page hears the
+  ask, so a page now opens the asking chat's tab by id; opening "the current
+  chat" is allowed only when the mounted pane is that same chat.
+- `browser_selection` returns what is selected in the page, so the agent can quote
+  it here. `browser_copy` puts the selection, or one numbered control's text, on
+  the clipboard for a paste into the chat.
+
 ## 0.3.6
 
 - A PNG now comes from the guest's own debugger, which answers with base64 in

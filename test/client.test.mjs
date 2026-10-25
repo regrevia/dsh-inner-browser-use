@@ -75,7 +75,7 @@ globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, epoch
 
 await import('../client.js')
 
-test('the tab type is additive: own id, own kind, no guide card', () => {
+test('the tab type is additive: own id, own kind, own guide card', () => {
   /** @type {any[]} */
   const opened = []
   const scope = {
@@ -107,7 +107,11 @@ test('the tab type is additive: own id, own kind, no guide card', () => {
   const tab = opened[0]
   assert.equal(tab.id, 'dsh-inner-browser-use')
   assert.equal(tab.kind, 'inner-browser-use')
-  assert.equal(tab.guide, undefined)
+  assert.equal(Array.isArray(tab.guide), true)
+  assert.equal(tab.guide.length, 1)
+  assert.equal(tab.guide[0].kind === undefined || tab.guide[0].kind === 'inner-browser-use', true)
+  assert.equal(typeof tab.guide[0].title, 'function')
+  assert.equal(tab.guide[0].title(), '内置浏览器')
   assert.equal(typeof tab.title, 'function')
   assert.equal(tab.title(), '内置浏览器')
   assert.equal(tab.multiple, true)
@@ -136,10 +140,12 @@ function scene({ openTab, openTabIn } = {}) {
           opened.push(['current', ...args])
         },
       }),
-      openTabIn: (...args) => {
-        if (openTabIn === 'throw') throw new Error('no strip')
-        opened.push(['session', ...args])
-      },
+      ...(openTabIn === 'absent' ? {} : {
+        openTabIn: (...args) => {
+          if (openTabIn === 'throw') throw new Error('no strip')
+          opened.push(['session', ...args])
+        },
+      }),
     },
   }
   const ctx = {
@@ -175,16 +181,16 @@ test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
   assert.equal(opened.length, 1)
 })
 
-test('the current chat is the first way to open', () => {
+test('the asking chat id is the only way to open, so no other chat is touched', () => {
   const { opened, source } = scene({ openTab: () => {} })
   source.send({ type: 'wanted', session: 'chat-4' })
-  assert.deepEqual(opened, [['current', 'inner-browser-use', {}]])
+  assert.deepEqual(opened, [['session', 'chat-4', 'inner-browser-use', {}]])
 })
 
-test('a strip that refuses the current chat falls back to the chat id', () => {
-  const { opened, source } = scene({ openTab: 'throw' })
+test('a strip without the id path opens nothing rather than steering the current chat', () => {
+  const { opened, source } = scene({ openTabIn: 'absent' })
   source.send({ type: 'wanted', session: 'chat-5' })
-  assert.deepEqual(opened, [['session', 'chat-5', 'inner-browser-use', {}]])
+  assert.deepEqual(opened, [])
 })
 
 test('a heartbeat naming a new half reopens the ask stream once', async () => {

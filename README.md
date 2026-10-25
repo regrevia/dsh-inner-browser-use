@@ -15,6 +15,8 @@ The agent navigates, reads the page as numbered controls, clicks, types, and run
 | `browser_click` | Clicks one numbered control and returns the page it leads to. |
 | `browser_type` | Types into one numbered field, optionally pressing Enter. |
 | `browser_script` | Evaluates JavaScript and returns the last expression. |
+| `browser_selection` | Returns the text currently selected in the page. |
+| `browser_copy` | Copies the selection, or one control's text, to the clipboard. |
 | `browser_screenshot` | Saves a PNG of the tab and returns its path. |
 | `browser_upload` | Attaches a local file to a numbered file field. |
 

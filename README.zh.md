@@ -15,6 +15,8 @@
 | `browser_click` | 点击一个编号控件，返回跳转后的页面。 |
 | `browser_type` | 往一个编号输入框里写字，可选回车。 |
 | `browser_script` | 执行 JavaScript，返回最后一个表达式。 |
+| `browser_selection` | 返回页面里选中的文字。 |
+| `browser_copy` | 把选中内容、或某个编号控件的文字，复制到剪贴板。 |
 | `browser_screenshot` | 存一张当前画面的 PNG，返回文件路径。 |
 | `browser_upload` | 把本机文件塞进一个编号的文件框。 |
 
@@ -47,6 +49,7 @@ dsh plugin install /path/to/dsh-inner-browser-use
 ## 数据双向流动
 
 - **页面 → 聊天：** `browser_script` 返回字符串，`browser_screenshot` 存成 PNG，模型可以把页面内容写进对话，也可以把图片路径交给你。
+- **选中即用：** `browser_selection` 把你在页面里选中的文字交到对话里；`browser_copy` 把它压进剪贴板，⌘V 就粘进输入框。
 - **聊天 → 页面：** `browser_type` 写进输入框；`browser_script` 可以设置那些没法输入的字段。
 
 ## 它不做什么

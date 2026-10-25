@@ -132,9 +132,11 @@ after(async () => {
 test('registers the page tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
     'browser_click',
+    'browser_copy',
     'browser_navigate',
     'browser_screenshot',
     'browser_script',
+    'browser_selection',
     'browser_type',
     'browser_upload',
     'browser_view',

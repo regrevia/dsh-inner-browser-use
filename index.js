@@ -443,6 +443,28 @@ function tools(bridge) {
       execute: (args, exec) => run('type', args, exec, NAVIGATE_TIMEOUT_MS),
     },
     {
+      name: 'browser_selection', // ui-copy-ignore
+      description: 'Return the text selected in the sidebar browser of this chat, so it can be quoted here.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      isConcurrencySafe: () => false,
+      /** @param {any} args - call arguments. @param {any} exec - run context. @returns {Promise<{text: string}>} the selection. */
+      execute: (args, exec) => run('selection', args, exec, DEFAULT_TIMEOUT_MS),
+    },
+    {
+      name: 'browser_copy', // ui-copy-ignore
+      description: 'Copy the page selection, or one numbered control\'s text, to the clipboard so it can be pasted into this chat.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: { ref: { type: 'integer', description: 'Number shown by the latest browser_view. Omit to copy the selection.' } },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      isConcurrencySafe: () => false,
+      /** @param {any} args - call arguments. @param {any} exec - run context. @returns {Promise<{text: string}>} copy result. */
+      execute: (args, exec) => run('copy', args, exec, DEFAULT_TIMEOUT_MS),
+    },
+    {
       name: 'browser_script', // ui-copy-ignore
       description: 'Evaluate JavaScript in the sidebar browser of this chat and return its last expression. Use it when no control reaches the data you need.',
       parameters: {
