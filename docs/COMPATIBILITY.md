@@ -31,7 +31,7 @@ Installing this plugin changes nothing a user already had:
 
 - **Node 20+** on the Host. The plugin uses only `node:http`, `node:fs/promises`, `URL`, and `AbortSignal`.
 - **No dependencies.** No bundler, no build step, no post-install script.
-- Tested against DeepSeek Harness Desktop builds whose sidebar browser tab kind is `browser` and whose guest protocol exposes `acquire`/`release`. If `dshDesktop.protocolVersion` is not `1`, the plugin treats the Desktop bridge as absent rather than guessing.
+- Tested to 0.6.10 against DeepSeek Harness Desktop builds whose sidebar browser tab kind is `browser` and whose guest protocol exposes `acquire`/`release`. If `dshDesktop.protocolVersion` is not `1`, the plugin treats the Desktop bridge as absent rather than guessing.
 
 ## Coexistence
 
@@ -48,8 +48,28 @@ Installing this plugin changes nothing a user already had:
 | No downloads, popups, permission prompts | The guest attaches sandboxed | Read bytes in-page with `browser_script` |
 | Tools need the tab open | A tool cannot mount UI on your behalf | Open **内置浏览器** once per chat |
 | Text-only observations | Frames are JSON over one SSE socket | Use `browser_script` to pull exact values |
+| A capture needs that chat's page drawn | The app has no surface to read for a page another tab covers | Bring the chat's tab forward; the call says so in about two seconds |
 
 ## Unverified on this machine
 
-- Visual confirmation of the pointer overlay, the ripple, and the tab body in a live window.
+- Seeing the pointer overlay and the ripple in a picture: the placement is measured
+  from the page (`transform`, `opacity 1`, the top `z-index`), and the click reply
+  names the point, but no capture of a page the app is drawing has been taken
+  since the pointer stayed for eight seconds.
 - The built-in browser's own tab continuing to work while this plugin's tab is also open (they share a partition by design, but the two kinds have never been opened side by side here).
+- `browser_selection` and `browser_copy` in the app: the half that carries them
+  loads on the next start of the app. Their bridge is covered by
+  `test/host.test.mjs`.
+
+## Checking an install
+
+Run these in the chat whose tab is open, in this order. Each line is what a
+working install answers.
+
+1. `browser_navigate` to `https://example.com/` → title `Example Domain`, one control.
+2. `browser_view` → the same page, so the tab is the one this chat owns.
+3. `browser_script` adding a button, then `browser_click` it → `Clicked #2 [button] clicked at 120,160`.
+4. `browser_screenshot` → a path under `.dsh-inner-browser-use/`, or the sentence
+   naming the tab to bring forward.
+5. Restart the app once if `browser_selection` answers `unknown tool`: the tool
+   list is read at start.

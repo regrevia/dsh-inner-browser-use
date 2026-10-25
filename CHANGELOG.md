@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.10
+
+- `docs/COMPATIBILITY.md` names the capture limit, what is still unverified, and the
+  five calls that check an install.
+
 ## 0.6.9
 
 - The package is installable from the registry: it is no longer marked private,
