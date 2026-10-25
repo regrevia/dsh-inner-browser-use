@@ -697,6 +697,21 @@ window.__ModuleLoader__.load({
        chat is not: opening the right column for it takes the panel away from
        what the person is looking at. */
     const onScreen = new Set()
+
+    /**
+     * Whether a call for this chat may bring the right column forward. Only the
+     * chat on screen, or a page already showing, may; anyone else is answered
+     * without touching the panel.
+     * @param {string} sessionId - chat the call belongs to.
+     * @returns {boolean} true when the panel may open for it.
+     */
+    function mayShow(sessionId) {
+      if (sessionId === '' || currentSession === '') return true
+      if (sessionId === currentSession) return true
+      const routed = routedSession()
+      if (routed !== '' && sessionId === routed) return true
+      return onScreen.has(sessionId)
+    }
     /* What the assistant is doing in each chat's page, so the pane can say it. */
     const acting = new Map()
     /* The last file each chat downloaded, kept only as long as it is small
@@ -1041,11 +1056,15 @@ window.__ModuleLoader__.load({
                     await stop
                     if (failed !== '') throw new Error(failed)
                     /* A page the chat asked for is the one the person wants to
-                       watch, so it comes forward while the chat drives it. */
-                    try {
-                      reveal?.(String(frame.session ?? ''))
-                    } catch {
-                      /* the page loads behind; the answer still carries it */
+                       watch, so it comes forward while the chat drives it — but
+                       only for the chat on screen, or the panel would move under
+                       whoever is reading a different one. */
+                    if (mayShow(String(frame.session ?? ''))) {
+                      try {
+                        reveal?.(String(frame.session ?? ''))
+                      } catch {
+                        /* the page loads behind; the answer still carries it */
+                      }
                     }
                     rememberPage(frame.session, asked)
                     reply({ ok: true, value: await runIn(webview, 'view', {}) })
@@ -1120,9 +1139,10 @@ window.__ModuleLoader__.load({
                       const href = String(here ?? '').startsWith('about:blank') === true ? remembered : String(here ?? '')
                       /* A page can keep its size and still be behind another tab of
                          this chat's pane: the app draws what it shows. Showing this
-                         tab is what makes a surface, and it is what the image is of. */
+                         tab is what makes a surface, and it is what the image is of.
+                         A chat that is not the one on screen is not shown. */
                       try {
-                        reveal?.(asking)
+                        if (mayShow(asking)) reveal?.(asking)
                       } catch {
                         /* the pane stays as it is; the second try reports it */
                       }

@@ -123,24 +123,22 @@ tail -5 /tmp/dsh-inner-browser-use.log   # look for "why":"shot-geometry"
 
 ## A chat that is not on screen
 
-Pixels come from a painted surface. When this chat's page is not the one the
-right column is drawing, the capture renders the same address in a second guest
-on the same session partition and takes the image from there, then removes that
-guest. `browser_screenshot` with `offscreen: true` always takes that path, so it
-can be checked from any chat:
+Pixels come from a painted surface. A page behind another chat's tab has a size
+but no surface, so the capture comes back empty; the tool then says which tab to
+bring forward instead of guessing. A second guest would be no help here: it would
+load the address again and photograph the top of a page whose scroll position and
+form state are not the ones the chat is reading, so the image would not be of the
+page the answer describes. Read the content instead — `browser_script` returns the
+same text, and `browser_view` returns the same controls.
 
-```json
-{ "offscreen": true }
-```
+`browser_screenshot` with `offscreen: true` never opens the right column: it takes
+the image only if a surface already exists and otherwise says so at once.
 
-The proof log records what it found:
+The proof log records what the capture found:
 
 ```bash
-tail -3 /tmp/dsh-inner-browser-use.log   # "why":"capture-lens"
+tail -3 /tmp/dsh-inner-browser-use.log   # "why":"capture-covered" carries href and error
 ```
-
-`why` is `capture-covered` when the app had no surface to read, and the message
-says which tab to open.
 
 A call for a chat the person is not reading never takes the column. If that chat
 has no page yet, one is mounted out of sight and answers from there; only if that

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.15
+
+- A tool call for a chat you are not reading no longer brings the right column
+  forward, even when it needs a picture; the answer says what the page holds
+  instead of moving what you are looking at.
+
 ## 0.8.14
 
 - A chat the person is not reading answers from a page out of sight instead of
