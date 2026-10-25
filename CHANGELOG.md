@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.7
+
+- A click says where the pointer landed (`Clicked #2 [button] clicked at 120,160`),
+  and the pointer stays in place for eight seconds instead of under three.
+- A page that still reports itself is never reloaded, so a call cannot throw away
+  what the chat was looking at.
+
 ## 0.6.6
 
 - `docs/VERIFY.md` now lists what each tool returned when it was run against the

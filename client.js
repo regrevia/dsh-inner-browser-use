@@ -120,8 +120,8 @@ window.__ModuleLoader__.load({
         if (ptr) {
           ptr.classList.remove('away')
           ptr.style.transform = 'translate3d(' + (x - 4) + 'px,' + (y - 2) + 'px,0)'
-          /* The pointer stays where it acted for a moment, then leaves. */
-          away = setTimeout(() => ptr.classList.add('away'), 2600)
+          /* The pointer stays where it acted long enough to be seen, then leaves. */
+          away = setTimeout(() => ptr.classList.add('away'), 8000)
         }
         await sleep(210)
         if (rip) {
@@ -132,6 +132,7 @@ window.__ModuleLoader__.load({
           rip.classList.add('on')
         }
         await sleep(120)
+        return { x: Math.round(x), y: Math.round(y) }
       }
       const index = () => {
         const found = []
@@ -198,10 +199,10 @@ window.__ModuleLoader__.load({
         if (op === 'click') {
           const el = find(a.ref)
           el.scrollIntoView({ block: 'center', inline: 'center' })
-          await aim(el)
+          const at = await aim(el)
           el.click()
           await sleep(420)
-          return 'Clicked #' + a.ref + ' ' + label(el) + '\n' + view()
+          return 'Clicked #' + a.ref + ' ' + label(el) + ' at ' + at.x + ',' + at.y + '\n' + view()
         }
         if (op === 'type') {
           const el = find(a.ref)
@@ -583,12 +584,17 @@ window.__ModuleLoader__.load({
                   if (frame.tool !== 'navigate' && frame.tool !== 'shot') {
                     const asked = rememberedPage(frame.session)
                     let here = ''
+                    let known = false
                     try {
                       here = String(webview.getURL?.() ?? '')
+                      known = true
                     } catch {
-                      here = ''
+                      /* a guest that cannot report its page is left alone */
+                      known = false
                     }
-                    const blank = here === '' || here.startsWith('about:blank')
+                    /* Only a guest that says it is blank is reopened: reloading a
+                       live page would throw away what the chat was looking at. */
+                    const blank = known === true && (here === '' || here.startsWith('about:blank'))
                     if (blank === true && asked !== '') {
                       try {
                         await new Promise((resolve) => {

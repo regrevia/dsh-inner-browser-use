@@ -136,7 +136,8 @@ returned, not what the code was meant to do.
 | `browser_navigate` | example.com | title `Example Domain` |
 | `browser_view` | the same page | one control, the link's text |
 | `browser_script` | the same page | added a button, a form, and an output to the page |
-| `browser_click` | the added button | its label changed to `clicked`, its title to `probe clicked` |
+| `browser_click` | the added button at 60,140 (120x40) | its label changed to `clicked`, its title to `probe clicked`, and the reply named the point: `at 120,160` |
+| the pointer | read from the page after a click | `translate3d(116px, 158px, 0px)`, opacity `1`, `z-index: 2147483647` — the click point less the pointer's hotspot |
 | `browser_type` | the added text field | the field held the text that was typed |
 | `browser_upload` | the added file field | the field held the chosen file's name |
 | `browser_selection` | a paragraph | the range covered the paragraph |
