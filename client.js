@@ -2119,6 +2119,38 @@ window.__ModuleLoader__.load({
           }
           /* A tab asked for by a page that has since reloaded is not remembered. */
           tabAsked.clear()
+          /* An update of this plugin rebuilds the page, which closes the tab this
+             chat had. When the column is already up, the tab goes back without
+             pressing anything, so an update does not cost the page. */
+          if (NATIVE_MODE === true) {
+            setTimeout(() => {
+              const restore = async () => {
+                const session = currentSession
+                const url = rememberedPage(session)
+                if (session === '' || url === '' || panelOf(session).length === 0 || nativeElement(session) !== null) return
+                try {
+                  scope.sidebarRight.openTabIn(session, NATIVE_KIND, {}) // ui-copy-ignore
+                } catch {
+                  return
+                }
+                for (let wait = 0; wait < 30; wait += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 100))
+                  const el = nativeElement(session)
+                  if (el === null) continue
+                  try {
+                    const here = String(el.getURL?.() ?? '')
+                    if (here !== '' && here !== 'about:blank') return
+                    el.loadURL(url)
+                  } catch {
+                    /* the tab is mid-teardown; the next call reopens the page */
+                  }
+                  return
+                }
+              }
+              beat({ tabType: registered, phase: 'restore-tab', session: currentSession, url: rememberedPage(currentSession) })
+              restore().catch(() => {})
+            }, 3_000)
+          }
           /* The capture runs in another closure, so this lives at module scope. */
           faceOf = () => {
             try {
@@ -2324,9 +2356,15 @@ window.__ModuleLoader__.load({
                     await new Promise((resolve) => setTimeout(resolve, 100))
                     drawn = panelOf(sessionId).length > 0
                   }
-                  if (drawn !== true) opened = 'no-panel'
+                  /* A tab that never appeared is asked for again on the next
+                     call, so a column that was not ready yet is not a dead end. */
+                  if (drawn !== true) {
+                    opened = 'no-panel'
+                    tabAsked.delete(sessionId)
+                  }
                 }
               } catch (error) {
+                tabAsked.delete(sessionId)
                 opened = `failed: ${String(error?.message ?? error)}`
               }
             }

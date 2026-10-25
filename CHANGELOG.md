@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.12
+
+- An update of this plugin no longer costs the page: when the column is already
+  up, the tab this chat had comes back on its own, without pressing anything.
+- A tab that never appeared is asked for again on the next call.
+
 ## 0.11.11
 
 - The arrow stays where it acted for twenty seconds instead of eight, so you can
