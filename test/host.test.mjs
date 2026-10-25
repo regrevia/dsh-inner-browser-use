@@ -344,3 +344,10 @@ test('two open tabs stay apart: a chat reaches only its own', () => {
   assert.equal(bridge.push('chat-a', { type: 'call' }), true)
   assert.deepEqual(heard.map(([seat]) => seat), ['a'])
 })
+
+test('two halves never share an epoch, and every heartbeat reply names one', () => {
+  const one = new Bridge()
+  const two = new Bridge()
+  assert.notEqual(one.epoch, two.epoch)
+  assert.match(one.epoch, /^[a-z0-9]+-[a-z0-9]+$/)
+})

@@ -42,6 +42,14 @@ Same-origin is the whole trick, and it holds on both builds:
 | `GET /watch` | Host → page | Server-sent events, one long-lived response per page (not per tab): the channel the page uses to learn that some chat needs a tab. |
 | `GET /state` | either | Which chats have a tab, how many calls are in flight, last client heartbeat. |
 
+## Surviving a reload of the other half
+
+Each host half names itself (`epoch`) in every heartbeat reply. A page whose ask
+stream predates that name still holds an open socket to the old half, which can
+never open a tab. The next heartbeat (≤20 s) answers with a new name, and the page
+reopens the stream. Installing, or reloading the host, therefore needs no page
+reload.
+
 ## Routing a chat to its tab
 
 The tool layer names a chat by its agent id; the tab the page opens may carry a

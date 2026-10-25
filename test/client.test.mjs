@@ -70,7 +70,8 @@ const ticks = []
 globalThis.setInterval = (fn) => { ticks.push(fn); return ticks.length }
 globalThis.clearInterval = () => {}
 globalThis.EventSource = FakeEventSource
-globalThis.fetch = async () => ({ ok: true })
+let replyEpoch = 'epoch-1'
+globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, epoch: replyEpoch }) })
 
 await import('../client.js')
 
@@ -184,4 +185,23 @@ test('a strip that refuses the current chat falls back to the chat id', () => {
   const { opened, source } = scene({ openTab: 'throw' })
   source.send({ type: 'wanted', session: 'chat-5' })
   assert.deepEqual(opened, [['session', 'chat-5', 'inner-browser-use', {}]])
+})
+
+test('a heartbeat naming a new half reopens the ask stream once', async () => {
+  const { opened } = scene()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const before = sources.length
+  replyEpoch = 'epoch-1'
+  for (const tick of ticks) tick()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(sources.length, before)
+  replyEpoch = 'epoch-2'
+  for (const tick of ticks) tick()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(sources.length, before + 1)
+  assert.equal(sources.at(-1).url, '/dsh-inner-browser-use/watch')
+  replyEpoch = 'epoch-2'
+  for (const tick of ticks) tick()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(sources.length, before + 1)
 })

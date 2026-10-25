@@ -23,6 +23,11 @@ window.__ModuleLoader__.load({
     const ROUTE = '/dsh-inner-browser-use'
     const STYLE_ID = 'dsh-inner-browser-use-css'
     const ALIVE_MS = 20_000
+    /* The ask stream belongs to the half that was serving when it opened. After
+       that half reloads, the stream still looks open and reaches nothing, so the
+       beat that names a new one reopens it. */
+    let streamEpoch = ''
+    let reopenStream = null
     const SLOT = 'sidebar.right.pane.tab'
     const TITLE_SLOT = 'sidebar.right.pane.tab.title'
 
@@ -246,6 +251,13 @@ window.__ModuleLoader__.load({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'client-alive', at: new Date().toISOString(), ...frame }),
+      }).then(async (response) => {
+        if (response?.ok !== true) return
+        const seen = (await response.json().catch(() => null))?.epoch
+        if (typeof seen !== 'string' || seen === '' || seen === streamEpoch) return
+        const known = streamEpoch !== ''
+        streamEpoch = seen
+        if (known) reopenStream?.()
       }).catch(() => {})
     }
 
@@ -492,7 +504,7 @@ window.__ModuleLoader__.load({
            not injected with it can only read it as undefined, and the ask is lost. */
         ctx.inject(['layout', 'sidebarRight'], (scope) => scope.effect(() => {
           beat({ tabType: registered, phase: 'wired' })
-          const source = new EventSource(`${ROUTE}/watch`) // ui-copy-ignore
+          let source
           const onWanted = (event) => {
             let frame
             try {
@@ -530,8 +542,17 @@ window.__ModuleLoader__.load({
             }
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })
           }
-          source.addEventListener('message', onWanted)
-          return () => source.close()
+          const open = () => {
+            source?.close()
+            source = new EventSource(`${ROUTE}/watch`) // ui-copy-ignore
+            source.addEventListener('message', onWanted)
+          }
+          reopenStream = open
+          open()
+          return () => {
+            reopenStream = null
+            source?.close()
+          }
         }, 'dsh-inner-browser-use: tab on demand'))
 
         ctx.inject(['sidebarRightTabs', 'workspaces'], (scope) => {

@@ -132,6 +132,9 @@ export class Bridge {
     this.asked = new Map()
     /** @type {Map<string, string>} chat id the tool layer uses → tab id the page reported. */
     this.aliases = new Map()
+    /** Named in every heartbeat reply: a page whose stream predates this bridge
+     * still looks connected and reaches nothing, so the reply tells it to reopen. */
+    this.epoch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     /** @type {{chat: string, at: number} | undefined} the ask still waiting for a tab. */
     this.asking = undefined
     /** @type {number} how long a call waits for the tab it asked for. */
@@ -585,7 +588,7 @@ export function apply(ctx, config = {}) {
     }
       bridge.settle(frame)
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end('{"ok":true}')
+      res.end(JSON.stringify({ ok: true, epoch: bridge.epoch }))
       return
     }
 

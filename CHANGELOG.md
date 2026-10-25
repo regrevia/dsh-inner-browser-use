@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.4
+
+- Fixed the ask stream going to a half that no longer exists: after the host half
+  is reloaded (every install), the page's stream still looked open and reached
+  nothing, so a call waited and then reported "no tab answered". The heartbeat
+  reply now names the half serving it, and a page that hears a new name reopens
+  its stream — no page reload needed after an install.
+
 ## 0.3.3
 
 - The tab body gets its workspace under a name React keeps: `key` is reserved by
