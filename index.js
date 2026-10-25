@@ -90,6 +90,8 @@ const ASK_GAP_MS = 3_000
 const CLIENT_TTL_MS = 60_000
 const ASK_ALIAS_MS = 30_000
 const NO_TAB = 'No 内置浏览器 tab answered. Open it in the right sidebar from the tab strip, then call again.'
+const ELSEWHERE = "This chat's own tab is in the tab strip of the chat being read. Open that chat, then call again."
+const NO_PANEL = 'The browser panel could not be taken here. Open the 内置浏览器 tab in the right sidebar, then call again.'
 
 /** @type {string} */
 let proofLog = process.env.DSH_INNER_BROWSER_PROOF ?? '/tmp/dsh-inner-browser-use.log'
@@ -141,6 +143,8 @@ export class Bridge {
     this.seats = new Map()
     /** @type {Map<string, {resolve: (v: unknown) => void, reject: (e: Error) => void, timer: NodeJS.Timeout}>} */
     this.waiters = new Map()
+    /** @type {Map<string, string>} */
+    this.refused = new Map()
     /** @type {{at: string, frame: unknown} | undefined} */
     this.client = undefined
     /** @type {Set<import('node:http').ServerResponse>} open watch streams: the page's listener that can open tabs. */
@@ -171,6 +175,17 @@ export class Bridge {
    * after the ask, and that id is what the tab's own stream arrives under.
    * @param {Record<string, unknown>} frame - one heartbeat.
    */
+  /**
+   * A page that will not answer this chat says why, so the call need not wait.
+   * @param {{phase?: string, step?: string, session?: string}} frame - heartbeat from the page.
+   * @returns {void}
+   */
+  noteStep(frame) {
+    if (frame?.phase !== 'open' || typeof frame.session !== 'string' || frame.session === '') return
+    if (frame.step === 'other-chat') this.refused.set(frame.session, ELSEWHERE)
+    if (frame.step === 'rightbar') this.refused.set(frame.session, NO_PANEL)
+  }
+
   noteOpen(frame) {
     const asking = this.asking
     if (asking === undefined) return
@@ -243,6 +258,7 @@ export class Bridge {
       }
       const poll = setInterval(() => {
         if (this.hasSeat(sessionId)) done(true)
+        else if (this.refused.has(sessionId)) done(false)
       }, 120)
       poll.unref?.()
       const abort = () => done(false)
@@ -331,8 +347,15 @@ export class Bridge {
    */
   async call(sessionId, tool, args, signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
     if (!this.hasSeat(sessionId)) {
+      this.refused.delete(sessionId)
       this.want(sessionId)
       await this.waitSeat(sessionId, this.openWaitMs, signal)
+      /* A page that cannot come says so at once, instead of letting the call
+         wait out the whole opening window. */
+      if (!this.hasSeat(sessionId)) {
+        const why = this.refused.get(sessionId)
+        if (why !== undefined) throw new Error(why)
+      }
     }
     try {
       return await this.attempt(sessionId, tool, args, signal, timeoutMs)
@@ -824,6 +847,7 @@ export function apply(ctx, config = {}) {
       if (frame?.type === 'client-alive') {
       bridge.client = { ms: Date.now(), frame }
       bridge.noteOpen(frame)
+      bridge.noteStep(frame)
     }
       bridge.settle(frame)
       res.writeHead(200, { 'content-type': 'application/json' })

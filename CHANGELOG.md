@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.12
+
+- A call that cannot get the panel now answers with the reason and what to do about it, instead of waiting out the opening
+  window first.
+
 ## 0.8.11
 
 - The line above the page says what the assistant is doing there right now, and goes back to the page's own state when the

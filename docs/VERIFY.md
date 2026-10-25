@@ -214,3 +214,17 @@ grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
 A frame naming no chat at all, when no header reports, keeps the older behaviour:
 the tab is placed and the panel may open, then closes itself after three seconds
 unless a page of ours mounted in it (`"step":"selfheal"`).
+
+## A call that cannot get the panel answers at once
+
+When the chat that asked is not the one on screen, the page says so on its next
+heartbeat instead of opening anything, and the Host turns that into the call's
+answer rather than waiting out `openWaitMs`:
+
+```
+curl -s http://127.0.0.1:49661/dsh-inner-browser-use/state | grep -o '"pending":[0-9]*'
+grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
+```
+
+The tool result names the tab strip of the chat being read, so the next step is
+the person opening that chat — no empty column, and no eight-second pause.

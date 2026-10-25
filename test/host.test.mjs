@@ -389,6 +389,22 @@ test('a waiting call gives up when no tab opens', async () => {
   assert.ok(Date.now() - started < 2_000)
 })
 
+test('a page that cannot take the panel says so without waiting it out', async () => {
+  const bridge = new Bridge()
+  bridge.refused.set('chat-elsewhere', 'the page is in another chat')
+  const started = Date.now()
+  assert.equal(await bridge.waitSeat('chat-elsewhere', 5_000, undefined), false)
+  assert.ok(Date.now() - started < 1_500)
+})
+
+test('a step the page reports reaches the chat that asked', () => {
+  const bridge = new Bridge()
+  bridge.noteStep({ phase: 'open', step: 'other-chat', session: 'chat-9' })
+  assert.match(String(bridge.refused.get('chat-9')), /tab strip of the chat being read/)
+  bridge.noteStep({ phase: 'seen', step: 'other-chat', session: 'chat-9' })
+  assert.equal(bridge.refused.size, 1)
+})
+
 test('one ask per burst, and no ask when no page is listening', async () => {
   const bridge = new Bridge()
   const seen = []
