@@ -165,3 +165,26 @@ returned, not what the code was meant to do.
 A capture of a page the app *is* drawing returned a 74 KB PNG of that page; the
 same call on a covered page has no surface to read, which is the boundary
 described above.
+
+## Both halves reload without restarting the app
+
+A change is verifiable without asking anyone to restart anything. The two halves
+load at different moments, and both get there on their own:
+
+- `index.js` (the host half) is re-imported as soon as the file changes. A route
+  added or removed answers at once: `curl -s -o /dev/null -w '%{http_code}'
+  http://127.0.0.1:49661/dsh-inner-browser-use/<route>` flips from 404 to 200 on
+  the next request, with no app restart.
+- `client.js` (the page half) is re-imported about twenty seconds after a save.
+  To prove which copy is loaded without a restart, put a temporary field in the
+  probe and read it back instead of guessing:
+  `grep -o '"rev":"[^"]*"' /tmp/dsh-inner-browser-use.log | tail -1`.
+
+So: no restart to check a behaviour, and no restart to see the result of one.
+
+To skip the wait, a reloader plugin mounted in the same app can be asked directly.
+`dsh-unlag` answers on `POST /dsh-unlag/reload` with the header `x-dsh-unlag: 1`;
+`GET /dsh-unlag/state` reports its two switches. It only acts while no turn is
+running, so a request made from inside a turn answers `{"status":"busy"}` — leave
+a waiter behind that asks again once the turn ends, and the next check runs on
+the new code.
