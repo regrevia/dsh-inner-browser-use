@@ -1203,6 +1203,30 @@ window.__ModuleLoader__.load({
                     webview.loadURL(asked)
                     await stop
                     if (failed !== '') throw new Error(failed)
+                    /* A site this workspace signed in to before opens signed in, one
+                       silent reload later: a cookie written from the page cannot
+                       affect the document already on screen. */
+                    try {
+                      const before = String(await within(
+                        webview.executeJavaScript('document.cookie', true), 4000, 'cookie read',
+                      ))
+                      if ((await cookiesRestore(webview, key, probe)) > 0) {
+                        const after = String(await within(
+                          webview.executeJavaScript('document.cookie', true), 4000, 'cookie read',
+                        ))
+                        if (after !== before) {
+                          const again = new Promise((resolve) => {
+                            webview.addEventListener('did-stop-loading', () => resolve(), { once: true })
+                            setTimeout(resolve, 45_000)
+                          })
+                          webview.loadURL(asked)
+                          await again
+                          probe?.({ why: 'signed-in-again', url: asked })
+                        }
+                      }
+                    } catch (error) {
+                      probe?.({ why: 'sign-in-failed', message: String(error?.message ?? error).slice(0, 80) })
+                    }
                     /* A page the chat asked for is the one the person wants to
                        watch, so it comes forward while the chat drives it — but
                        only for the chat on screen, or the panel would move under
