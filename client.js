@@ -502,16 +502,34 @@ window.__ModuleLoader__.load({
           }
           let where = ''
           if (a.submit === true) {
-            const go = sendControl(el)
+            const held = () => String(el.isContentEditable === true ? el.innerText : (el.value ?? '')).trim()
+            const before = held()
+            let go = sendControl(el)
+            for (let wait = 0; go === null && wait < 5; wait += 1) {
+              await sleep(140)
+              go = sendControl(el)
+            }
             if (go !== null) {
               await aim(go)
               go.click()
               where = 'Pressed ' + label(go) + ' at ' + at()
-            } else {
-              press(el, 'Enter')
-              where = 'Pressed Enter'
+              await sleep(460)
             }
-            await sleep(520)
+            if (before !== '' && held() === before) {
+              press(el, 'Enter')
+              where = where === '' ? 'Pressed Enter' : where + ', then Enter'
+              await sleep(460)
+              if (held() === before) {
+                const late = sendControl(el)
+                if (late !== null && late !== go) {
+                  await aim(late)
+                  late.click()
+                  where = 'Pressed ' + label(late) + ' at ' + at()
+                  await sleep(460)
+                }
+              }
+            }
+            await sleep(200)
           } else {
             await sleep(120)
           }
@@ -1551,12 +1569,19 @@ window.__ModuleLoader__.load({
                   if (NATIVE_MODE === true && (webview === undefined || webview.isConnected !== true)) {
                     const ask = String(frame.args?.url ?? '')
                     if (frame.tool === 'navigate' && ask !== '') await nativeOpen(options.sessionId, ask)
-                    webview = await nativeReady(40, options.sessionId)
+                    /* The product's tab holds nothing until a page is asked for,
+                       so the page this chat last had is what it is given. */
+                    if (frame.tool !== 'navigate') {
+                      const last = String(rememberedPage(options.sessionId) ?? '')
+                      if (last !== '') await nativeOpen(options.sessionId, last)
+                    }
+                    webview = await nativeReady(25, options.sessionId)
                     if (webview === undefined) {
+                      /* This chat is not the one on screen, so it has no pane to
+                         drive. Every other chat keeps the page it is reading. */
                       reply({ ok: false, error: L('error.background') })
                       return
                     }
-                    options.onPhase('ready')
                   }
                   /* A view the app is not drawing has no surface, and a guest
                      without one runs no script. Give it a surface out of sight
@@ -1577,6 +1602,23 @@ window.__ModuleLoader__.load({
                       }
                     }
                     if (room().width < 2 || room().height < 2) {
+                      reply({ ok: false, error: L('error.background') })
+                      return
+                    }
+                  }
+                  /* This chat's tab collapsed has no surface to drive. Only its
+                     own column is asked for: another chat keeps what it shows. */
+                  if (NATIVE_MODE === true && (hidden() || room().width < 2 || room().height < 2)) {
+                    try {
+                      reveal?.(String(frame.session ?? ''))
+                    } catch {
+                      /* the wait below reports the surface it got */
+                    }
+                    for (let wait = 0; wait < 30; wait += 1) {
+                      await new Promise((resolve) => setTimeout(resolve, 100))
+                      if (!hidden() && room().width >= 2 && room().height >= 2) break
+                    }
+                    if (hidden() || room().width < 2 || room().height < 2) {
                       reply({ ok: false, error: L('error.background') })
                       return
                     }

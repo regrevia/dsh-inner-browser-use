@@ -250,6 +250,9 @@ export class Bridge {
     this.refused = new Map()
     /** @type {{at: string, frame: unknown} | undefined} */
     this.client = undefined
+    /** The last few beats, so a page that fell over keeps what it said on the way.
+     *  @type {Array<{at: string, frame: any}>} */
+    this.trail = []
     /** Whether the page said it drives the product's own browser; undefined until it says. @type {boolean | undefined} */
     this.native = undefined
     /** @type {Set<import('node:http').ServerResponse>} open watch streams: the page's listener that can open tabs. */
@@ -969,6 +972,8 @@ export function apply(ctx, config = {}) {
            drives the product's browser is a copy loaded before that existed. */
         if (frame.phase === 'alive') bridge.native = frame.native === true
       bridge.client = { ms: Date.now(), frame }
+      bridge.trail.push({ at: new Date().toISOString(), frame })
+      if (bridge.trail.length > 24) bridge.trail.shift()
       bridge.noteOpen(frame)
       bridge.noteStep(frame)
     }
@@ -1042,6 +1047,7 @@ export function apply(ctx, config = {}) {
         connected: bridge.connected(),
         pending: bridge.waiters.size,
         client: clientState(bridge.client),
+        trail: bridge.trail.map((entry) => entry.frame),
         /* Where a chat's files would land, when its tab told us the folder. */
         folders: Object.fromEntries(bridge.connected().map((chat) => [chat, bridge.cwdOf(chat) ?? bridge.folderOf(chat) ?? ''])),
         /* Lets a page that is still running an older bundle replace itself. */

@@ -12,7 +12,7 @@
   "error.desktopOnly": "Requires the desktop app",
   "error.lease": "Could not open the browser panel",
   "pane.address": "Type an address",
-  "error.background": "This page is in a background tab — bring it forward to drive it.",
+  "error.background": "This chat is not open on screen — open it to drive its page.",
   "phase.act.navigate": "Opening the page",
   "phase.act.click": "Clicking",
   "phase.act.read": "Reading the page",
