@@ -644,8 +644,33 @@ window.__ModuleLoader__.load({
                       const here = await webview.executeJavaScript('location.href', true).catch(() => '')
                       const remembered = lastUrl.get(String(frame.session ?? '')) ?? ''
                       const href = String(here ?? '').startsWith('about:blank') === true ? remembered : String(here ?? '')
-                      probe?.({ why: 'capture-covered', href })
-                      throw new Error('this chat\'s page is not being drawn — open this chat to take an image')
+                      /* A page can keep its size and still be behind another tab of
+                         this chat's pane: the app draws what it shows. Showing this
+                         tab is what makes a surface, and it is what the image is of. */
+                      try {
+                        reveal?.(asking)
+                      } catch {
+                        /* the pane stays as it is; the second try reports it */
+                      }
+                      let shown = false
+                      for (let wait = 0; wait < 10; wait += 1) {
+                        await new Promise((resolve) => setTimeout(resolve, 120))
+                        try {
+                          raise?.(asking)
+                        } catch {
+                          /* keep polling */
+                        }
+                        if (webview.getBoundingClientRect().width > 1) shown = true
+                      }
+                      probe?.({ why: 'capture-show', href, shown, column: colWide() })
+                      try {
+                        const png = await grab(webview)
+                        reply({ ok: true, value: { png } })
+                        return
+                      } catch (again) {
+                        probe?.({ why: 'capture-covered', href, error: String(again?.message ?? again).slice(0, 90) })
+                        throw new Error('this chat\'s page is not being drawn — bring its browser tab forward to take an image')
+                      }
                     }
                   }
                   if (frame.tool === 'script') {

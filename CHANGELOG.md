@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4
+
+- A capture brings this chat's browser tab to the front before it gives up, and
+  when that still yields no surface the message names the tab to open.
+- The page each chat was last told to open is reported when a capture finds a
+  guest the app left blank.
+
 ## 0.6.3
 
 - A capture of a page the app is not drawing gives up in a couple of seconds and

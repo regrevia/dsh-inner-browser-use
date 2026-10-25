@@ -64,8 +64,9 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 - **It needs the tab open.** Tools fail with a one-line instruction rather than opening the tab for you.
 - **A capture of a chat you are not looking at.** Reading, clicking and typing work while you are looking at
   another chat, because they drive the page itself. Pixels come from a surface the app is drawing, and a view
-  behind another conversation's view is not drawn: the capture then gives up in a few seconds and says so. Read
-  what you need from the page instead — `browser_script` returns the same content.
+  behind another tab of the same pane is not drawn: the capture tries to bring this chat's tab forward, and if the
+  page still has no surface it says so in a couple of seconds instead of waiting. Read what you need from the page
+  instead — `browser_script` returns the same content.
 
 ## Compatibility
 
