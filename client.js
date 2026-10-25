@@ -207,6 +207,23 @@ window.__ModuleLoader__.load({
           }
           return 'Typed into #' + a.ref + ' ' + label(el) + '\n' + view()
         }
+        if (op === 'upload') {
+          const el = find(a.ref)
+          if (el.tagName !== 'INPUT' || el.type !== 'file') throw new Error('#' + a.ref + ' is not a file field')
+          const binary = atob(a.base64)
+          const bytes = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+          const file = new File([bytes], a.name, { type: a.type || 'application/octet-stream' })
+          const tray = new DataTransfer()
+          tray.items.add(file)
+          el.files = tray.files
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+          el.dispatchEvent(new Event('change', { bubbles: true }))
+          el.scrollIntoView({ block: 'center' })
+          await aim(el)
+          await sleep(320)
+          return 'Attached ' + a.name + ' to #' + a.ref + '\n' + view()
+        }
         throw new Error('unknown operation ' + op)
       }
     `
@@ -384,6 +401,11 @@ window.__ModuleLoader__.load({
                     await stop
                     if (failed !== '') throw new Error(failed)
                     reply({ ok: true, value: await runIn(webview, 'view', {}) })
+                    return
+                  }
+                  if (frame.tool === 'shot') {
+                    const image = await webview.capturePage()
+                    reply({ ok: true, value: { png: image.toPNG().toString('base64') } })
                     return
                   }
                   if (frame.tool === 'script') {

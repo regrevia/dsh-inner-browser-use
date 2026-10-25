@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- `browser_screenshot`: captures the tab's viewport and writes a PNG under
+  `.dsh-inner-browser-use/` in the chat's working directory, returning the path.
+- `browser_upload`: reads a local file and attaches it to a numbered file field
+  through an in-page `File` and `DataTransfer`, with an 8 MB ceiling.
+- Tests now cover both new tools, including the bytes that cross the wire.
+
 ## 0.1.0
 
 First release.

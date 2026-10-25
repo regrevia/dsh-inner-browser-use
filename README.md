@@ -15,6 +15,8 @@ The agent navigates, reads the page as numbered controls, clicks, types, and run
 | `browser_click` | Clicks one numbered control and returns the page it leads to. |
 | `browser_type` | Types into one numbered field, optionally pressing Enter. |
 | `browser_script` | Evaluates JavaScript and returns the last expression. |
+| `browser_screenshot` | Saves a PNG of the tab and returns its path. |
+| `browser_upload` | Attaches a local file to a numbered file field. |
 
 Every call is visible: the pointer travels to the control, a ring marks it, and the page scrolls the target into view first.
 
@@ -42,13 +44,14 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 
 ## Drag data both ways
 
-- **Page → chat:** `browser_script` returns strings, so the agent can read what the page shows and quote it into the conversation.
+- **Page → chat:** `browser_script` returns strings and `browser_screenshot` saves a PNG, so the agent can read what the page shows and quote it — or hand you the image path — in the conversation.
 - **Chat → page:** `browser_type` puts text into a field; `browser_script` can set values the page cannot be typed into.
 
 ## What it will not do
 
 - **It does not create a second browser.** No new window, no Chrome profile, no CDP mirror.
 - **It does not outlive a restart.** The guest partition lives in memory, so a page you signed into with a password needs the password again after the app restarts. Cookies survive a tab close and reopen within one session of the app.
+- **Screenshots are viewport-sized.** A `<webview>` captures what is visible, not the whole scroll height; scroll first, then capture.
 - **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
 - **No downloads, popups, or permission prompts.** The guest runs sandboxed. To get bytes out of a page (an image, a file), read them in-page with `browser_script`.
 - **It needs the tab open.** Tools fail with a one-line instruction rather than opening the tab for you.

@@ -8,7 +8,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -129,12 +129,14 @@ after(async () => {
   await rm(proofDir, { recursive: true, force: true })
 })
 
-test('registers the five page tools and nothing else', () => {
+test('registers the page tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
     'browser_click',
     'browser_navigate',
+    'browser_screenshot',
     'browser_script',
     'browser_type',
+    'browser_upload',
     'browser_view',
   ])
   for (const definition of defs.values()) {
@@ -230,4 +232,47 @@ test('a client heartbeat is visible in the state route', async () => {
 test('an unknown path is a 404, not a hang', async () => {
   const response = await call('/nope')
   assert.equal(response.status, 404)
+})
+
+test('a screenshot lands on disk and the tool returns its path', async () => {
+  const seat = await tab('chat-5')
+  const cwd = await mkdtemp(join(tmpdir(), 'dsh-ib-cwd-'))
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64')
+  const pending = defs.get('browser_screenshot').execute({}, { agent: { id: 'chat-5', cwd } })
+  const frame = await seat.next()
+  assert.equal(frame.tool, 'shot')
+  await call('/uplink?session=chat-5', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { png } }),
+  })
+  const { text } = await pending
+  assert.ok(text.startsWith(cwd), text)
+  const bytes = await readFile(text)
+  assert.equal(bytes.length, 8)
+  seat.stop()
+  await rm(cwd, { recursive: true, force: true })
+})
+
+test('upload carries the file into the page and refuses a missing one', async () => {
+  const seat = await tab('chat-6')
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-ib-file-'))
+  const file = join(dir, 'note.txt')
+  await writeFile(file, 'hello')
+  const pending = defs.get('browser_upload').execute({ ref: 2, path: file }, { agent: { id: 'chat-6' } })
+  const frame = await seat.next()
+  assert.equal(frame.tool, 'upload')
+  assert.equal(frame.args.name, 'note.txt')
+  assert.equal(frame.args.type, 'text/plain')
+  assert.equal(Buffer.from(frame.args.base64, 'base64').toString(), 'hello')
+  await call('/uplink?session=chat-6', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { text: 'Attached' } }),
+  })
+  assert.deepEqual(await pending, { text: 'Attached' })
+  seat.stop()
+  await rm(dir, { recursive: true, force: true })
+  await assert.rejects(
+    defs.get('browser_upload').execute({ ref: 1, path: '/nope/missing.bin' }, { agent: { id: 'chat-6' } }),
+    /no file at/,
+  )
 })

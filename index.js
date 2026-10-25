@@ -24,6 +24,35 @@
  * One transport, two faces, no port, no secret: that is the whole design. // ui-copy-ignore
  */
 
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+
+/** Where screenshots land inside the chat's working directory. */
+const SHOT_DIR = '.dsh-inner-browser-use'
+
+/** Largest file the plugin will push into a page. */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+/** Types the guest needs for the common cases; the page rarely checks. */
+const TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.json': 'application/json',
+  '.csv': 'text/csv',
+  '.zip': 'application/zip',
+}
+
+/** @param {string} file - absolute path. @returns {string} media type for the guest. */
+function mediaType(file) {
+  const dot = file.lastIndexOf('.')
+  return TYPES[file.slice(dot).toLowerCase()] ?? 'application/octet-stream'
+}
+
 /** Route prefix owned by this plugin. Never under `/api`, which is the Host's own channel. */ // ui-copy-ignore
 export const ROUTE = '/dsh-inner-browser-use'
 
@@ -284,6 +313,65 @@ function tools(bridge) {
       isConcurrencySafe: () => false,
       /** @param {any} args - call arguments. @param {any} exec - run context. @returns {Promise<{text: string}>} result. */
       execute: (args, exec) => run('script', args, exec, NAVIGATE_TIMEOUT_MS),
+    },
+    {
+      name: 'browser_screenshot',
+      description: 'Save a PNG of what the sidebar browser of this chat shows now, and return the file path.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: TEXT_OUTPUT,
+      isConcurrencySafe: () => false,
+      /**
+       * @param {any} _args - call arguments, unused.
+       * @param {any} exec - run context.
+       * @returns {Promise<{text: string}>} absolute path of the saved PNG.
+       */
+      execute: async (_args, exec) => {
+        const value = await bridge.call(String(exec.agent?.id ?? ''), 'shot', {}, exec.signal, DEFAULT_TIMEOUT_MS)
+        const png = value?.png
+        if (typeof png !== 'string' || png === '') throw new Error('the page returned no image')
+        const dir = join(exec.agent?.cwd ?? process.cwd(), SHOT_DIR)
+        await mkdir(dir, { recursive: true })
+        const file = join(dir, `shot-${Date.now()}.png`)
+        await writeFile(file, Buffer.from(png, 'base64'))
+        return asValue(file)
+      },
+    },
+    {
+      name: 'browser_upload', // ui-copy-ignore
+      description: 'Attach a file from this machine to one numbered file field in the sidebar browser of this chat.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          ref: { type: 'integer', description: 'Number shown by the latest browser_view.' },
+          path: { type: 'string', description: 'Absolute path of the file to attach.' },
+        },
+        required: ['ref', 'path'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: NAVIGATE_TIMEOUT_MS + 5_000,
+      isConcurrencySafe: () => false,
+      /**
+       * @param {any} args - call arguments.
+       * @param {any} exec - run context.
+       * @returns {Promise<{text: string}>} page state after the attach.
+       */
+      execute: async (args, exec) => {
+        const file = resolve(String(args.path ?? ''))
+        const info = await stat(file).catch(() => undefined)
+        if (info === undefined || !info.isFile()) throw new Error(`no file at ${file}`)
+        if (info.size > MAX_UPLOAD_BYTES) throw new Error(`the file is ${info.size} bytes; the limit is ${MAX_UPLOAD_BYTES}`)
+        const bytes = await readFile(file)
+        const name = file.slice(file.lastIndexOf('/') + 1)
+        const value = await bridge.call(
+          String(exec.agent?.id ?? ''),
+          'upload',
+          { ref: args.ref, name, type: mediaType(file), base64: bytes.toString('base64') },
+          exec.signal,
+          NAVIGATE_TIMEOUT_MS,
+        )
+        return asValue(typeof value === 'string' ? value : String(value?.text ?? ''))
+      },
     },
   ]
 }
