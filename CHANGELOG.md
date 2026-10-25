@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.8
+
+- The panel is taken only for the chat the person is looking at, and the watch that tells which chat that is now measures
+  the header's sized container instead of an empty cell, so it keeps answering while the chat scrolls.
+
 ## 0.8.7
 
 - A chat whose header is kept mounted but off screen no longer counts as the chat on screen, so the panel is taken only

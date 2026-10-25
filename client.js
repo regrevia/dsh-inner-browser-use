@@ -1408,46 +1408,36 @@ window.__ModuleLoader__.load({
             /* The chat whose header is mounted is the chat on screen; the address
                is the second word, for a shell that keeps the chat there. */
             const seen = currentSession !== '' ? currentSession : routedSession()
-            if (seen !== '' && seen !== sessionId) {
-              /* The person is looking at another chat; taking the panel would
-                 replace what they are reading with an empty column. */
-              beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
-              return
-            }
+            /* The panel is taken only for the chat on screen, or for a chat that
+               already has a page here — opening it for anyone else would put an
+               empty column in front of what the person is reading. */
             const hidden = paneSessions.has(sessionId) && onScreen.has(sessionId) !== true
-            if (!hidden && onScreen.size > 0 && onScreen.has(sessionId) !== true) {
-              /* The panel is already showing another chat's page. */
-              beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
-              return
-            }
-            const bare = onScreen.size === 0
-            try {
-              /* `layout` is in this plugin's inject list; a scope that lists it
-                 alone still cannot read it, which is why the pane never opened.
-                 Only the chat on screen may open the pane: another chat keeps
-                 whatever the person is looking at. */
-              /* The pane may open for the chat that asked; a chat that is not on
-                 screen still gets its own page, never someone else's. */
-              /* A mounted page that lost its surface (a closed panel) is shown
-                 again; the panel opens only when nothing is on screen. */
-              if (bare || hidden) scope.layout.openRightbar(true, false) // ui-copy-ignore
-              /* Opened on the chance this chat's page would appear in it. If the
-                 page never gets a surface the panel is left as it was found. */
-              if (bare) {
-                setTimeout(() => {
-                  /* A page that mounted is kept, visible or not: closing the panel
-                     again would hide the very page the call is about. */
-                  if (paneSessions.has(sessionId) || onScreen.has(sessionId) === true) return
-                  try {
-                    scope.layout.openRightbar(false, false) // ui-copy-ignore
-                    beat({ tabType: registered, phase: 'open', step: 'selfheal' })
-                  } catch {
-                    /* nothing to close */
-                  }
-                }, 3000).unref?.()
+            const take = seen === '' || seen === sessionId || paneSessions.has(sessionId) === true
+            if (!take) beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
+            const bare = take && onScreen.size === 0
+            if (take) {
+              try {
+                /* A mounted page that lost its surface (a closed panel) is shown
+                   again; the panel opens only when nothing is on screen. */
+                if (bare || hidden) scope.layout.openRightbar(true, false) // ui-copy-ignore
+                /* Opened on the chance this chat's page would appear in it. If the
+                   page never gets a surface the panel is left as it was found. */
+                if (bare) {
+                  setTimeout(() => {
+                    /* A page that mounted is kept, visible or not: closing the panel
+                       again would hide the very page the call is about. */
+                    if (paneSessions.has(sessionId) || onScreen.has(sessionId) === true) return
+                    try {
+                      scope.layout.openRightbar(false, false) // ui-copy-ignore
+                      beat({ tabType: registered, phase: 'open', step: 'selfheal' })
+                    } catch {
+                      /* nothing to close */
+                    }
+                  }, 3000).unref?.()
+                }
+              } catch (error) {
+                beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
               }
-            } catch (error) {
-              beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
             }
             /* The current chat is the one place a page may open a tab without an id;
                the id path is the fallback for a page showing another chat. */
@@ -1549,7 +1539,14 @@ window.__ModuleLoader__.load({
               const node = mark.current
               /* A chat the person is not looking at may still be kept mounted, so
                  being in the page is not enough: the header has to be on screen. */
-              const row = node?.parentElement ?? null
+              /* The cell itself has no size worth measuring, so the nearest
+                 ancestor that does is what the eye is told to watch. */
+              let row = node?.parentElement ?? null
+              try {
+                while (row !== null && row.getBoundingClientRect().width < 2) row = row.parentElement
+              } catch {
+                row = null
+              }
               if (id === '' || row === null || typeof IntersectionObserver !== 'function') return undefined
               const see = (on) => {
                 if (on) {
