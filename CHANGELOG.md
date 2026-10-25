@@ -1,3 +1,7 @@
+## 0.11.7
+
+The column that a call needs is expanded through the control the product already shows, so a chat whose right panel was never opened gets one; a page that is served a new build reloads into it by itself, carrying the build in its address.
+
 # Changelog
 
 ## 0.11.6

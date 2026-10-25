@@ -605,3 +605,11 @@ test('a page that drives the product browser is driven', async () => {
   bridge.settle({ id: JSON.parse(seen.at(-1).replace(/^data: /, '')).id, ok: true, value: 'the page' })
   assert.equal(await pending, 'the page')
 })
+
+test('a page is asked for a chat only when the ask carries its gate', async () => {
+  const refused = await call('/want?session=chat-want', { method: 'POST' })
+  assert.equal(refused.status, 403)
+  const asked = await call('/want?session=chat-want', { method: 'POST', headers: { 'x-dshib-want': '1' } })
+  assert.equal(asked.status, 200)
+  assert.deepEqual(await asked.json(), { ok: true, session: 'chat-want', watchers: 0 })
+})

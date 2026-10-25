@@ -344,6 +344,7 @@ test('a chat whose column was never opened gets one, docked, before its tab', as
   globalThis.__panels = []
   source.send({ type: 'wanted', session: 'chat-7' })
   assert.deepEqual(bars, ['true,false'])
-  await new Promise((resolve) => setTimeout(resolve, 700))
+  /* The page waits for the column to appear before it opens the tab in it. */
+  await new Promise((resolve) => setTimeout(resolve, 2_000))
   assert.deepEqual(opened, [['session', 'chat-7', 'browser', {}]])
 })
