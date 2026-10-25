@@ -1037,7 +1037,9 @@ window.__ModuleLoader__.load({
         } catch {
           face = undefined
         }
-        if (face !== undefined && face !== null) {
+        /* A chat that is not on screen gets no tab: the product opens one in
+           whatever column is showing, which takes the page the person reads. */
+        if (face !== undefined && face !== null && mayShow(sessionId) === true) {
           try {
             if (typeof face.openTabIn === 'function') face.openTabIn(sessionId, NATIVE_KIND, {}) // ui-copy-ignore
             else if (typeof face.openTab === 'function') face.openTab(NATIVE_KIND, {}) // ui-copy-ignore
@@ -1292,6 +1294,9 @@ window.__ModuleLoader__.load({
        lets a call work with nobody looking. */
     let keyForSession = null
     const residents = new Map()
+    /* A chat's tab is asked for once: asking again rebuilds the page under a
+       call that is already using it. The mark is cleared with the pane. */
+    const tabAsked = new Set()
     /* Chats whose own pane is open. Their pane owns the wire, so no stashed
        guest is made for them: two guests on one chat leave the wire pointing at
        whichever opened last, which is the one nobody can see. */
@@ -1355,6 +1360,7 @@ window.__ModuleLoader__.load({
       const dispose = () => {
         disposed = true
         if (options.pane === true) paneSessions.delete(options.sessionId)
+        if (options.pane === true) tabAsked.delete(options.sessionId)
         steer.delete(options.sessionId)
         cancel()
         clearInterval(cookieTimer)
@@ -2044,6 +2050,17 @@ window.__ModuleLoader__.load({
         ctx.inject(['layout', 'sidebarRight'], (scope) => scope.effect(() => {
           beat({ tabType: registered, phase: 'wired' })
           let source
+          /* Two chats asking at once would both press the column and both claim a
+             tab, and the second tab lands in the column the first one took. */
+          let opening = Promise.resolve()
+          /** @param {() => Promise<any>} work - one open. @returns {Promise<any>} its answer. */
+          function oneAtATime(work) {
+            const next = opening.then(work, work)
+            opening = next.then(() => {}, () => {})
+            return next
+          }
+          /* A tab asked for by a page that has since reloaded is not remembered. */
+          tabAsked.clear()
           /* The capture runs in another closure, so this lives at module scope. */
           faceOf = () => {
             try {
@@ -2066,6 +2083,18 @@ window.__ModuleLoader__.load({
              tabs; a call that arrives before it was ever opened brings it up
              here, docked, so the page has a place to be seen. */
           showColumn = () => {
+            /* The control toggles, so pressing it over a column that is already
+               up would close it. Nothing is pressed while one is showing. */
+            try {
+              const drawn = Array.from(document.querySelectorAll('[data-sidebar-right-session]'))
+                .some((node) => {
+                  const box = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null
+                  return box !== null && box.width > 80 && box.height > 80
+                })
+              if (drawn === true) return 'shown'
+            } catch {
+              /* a page that cannot measure its own column presses once below */
+            }
             /* The product already owns the control that expands the column;
                a person's press is what the column is built to follow, and it
                leaves the product's own state in charge afterwards. */
@@ -2204,19 +2233,28 @@ window.__ModuleLoader__.load({
                rebuilds it, which closes the page a call is about to use. */
             if (paneSessions.has(sessionId)) {
               opened = 'kept'
+            } else if (nativeElement(sessionId) !== null) {
+              /* A page already in that chat's column is the page the call uses;
+                 opening the tab again would rebuild it mid-call. */
+              opened = 'page'
             } else if (take && NATIVE_MODE === true && panelOf(sessionId).length === 0) {
               /* The product only opens a tab in a column it has already adopted,
-                 so the column comes up first and the tab lands inside it. */
-              const how = showColumn?.()
-              for (let wait = 0; wait < 40 && panelOf(sessionId).length === 0; wait += 1) {
-                await new Promise((resolve) => setTimeout(resolve, 40))
-              }
-              if (panelOf(sessionId).length === 0) beat({ tabType: registered, phase: 'open', step: 'no-column', how, session: sessionId })
+                 so the column comes up first and the tab lands inside it. Queued:
+                 two chats pressing at once would both claim the same column. */
+              await oneAtATime(async () => {
+                if (panelOf(sessionId).length > 0) return
+                const how = showColumn?.()
+                for (let wait = 0; wait < 40 && panelOf(sessionId).length === 0; wait += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 40))
+                }
+                if (panelOf(sessionId).length === 0) beat({ tabType: registered, phase: 'open', step: 'no-column', how, session: sessionId })
+              })
             }
-            if (paneSessions.has(sessionId)) {
-              opened = 'kept'
-            } else if (typeof strip?.openTabIn === 'function') {
+            if (paneSessions.has(sessionId) || nativeElement(sessionId) !== null) {
+              if (opened === '') opened = 'page'
+            } else if (take && typeof strip?.openTabIn === 'function' && tabAsked.has(sessionId) !== true) {
               try {
+                tabAsked.add(sessionId)
                 strip.openTabIn(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
                 /* The product opens a tab only in a chat whose right panel it has
                    adopted. Saying a tab opened when nothing appeared would have
