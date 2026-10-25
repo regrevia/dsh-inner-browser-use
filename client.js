@@ -1110,6 +1110,31 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /* A tab type that holds many pages gives a new tab for every ask, so one
+       chat asks once and keeps the tab it got. */
+    const nativeTabs = new Set()
+    /** @param {string} sessionId - the chat the tab belongs to. @param {string} [kind] - the type to ask for. @returns {string} what was done. */
+    function openNativeTab(sessionId, kind = NATIVE_KIND) {
+      const who = String(sessionId ?? '')
+      const slot = who + ':' + String(kind)
+      if (who === '') return 'none'
+      if (nativeTabs.has(slot)) return 'kept'
+      if (nativeElement(who) !== null) {
+        nativeTabs.add(slot)
+        return 'page'
+      }
+      try {
+        const face = faceOf?.()
+        if (typeof face?.openTabIn === 'function') face.openTabIn(who, kind, {}) // ui-copy-ignore
+        else if (typeof face?.openTab === 'function') face.openTab(kind, {}) // ui-copy-ignore
+        else return 'none'
+      } catch {
+        return 'none'
+      }
+      nativeTabs.add(slot)
+      return 'asked'
+    }
+
     /** Type into the product's address bar: how an empty tab is made to hold a page. */
     async function nativeOpen(sessionId, url) {
       if (url === '') return 'no-url'
@@ -1122,14 +1147,7 @@ window.__ModuleLoader__.load({
         }
         /* A chat that is not on screen gets no tab: the product opens one in
            whatever column is showing, which takes the page the person reads. */
-        if (face !== undefined && face !== null && mayShow(sessionId) === true) {
-          try {
-            if (typeof face.openTabIn === 'function') face.openTabIn(sessionId, NATIVE_KIND, {}) // ui-copy-ignore
-            else if (typeof face.openTab === 'function') face.openTab(NATIVE_KIND, {}) // ui-copy-ignore
-          } catch {
-            /* the address bar below reports what the pane shows */
-          }
-        }
+        if (face !== undefined && face !== null && mayShow(sessionId) === true) openNativeTab(sessionId)
         let webview = nativeElement(sessionId)
         let slot = { form: null, input: null }
         for (let i = 0; i < 20; i += 1) {
@@ -1152,7 +1170,7 @@ window.__ModuleLoader__.load({
         if (form !== null && typeof form.requestSubmit === 'function') form.requestSubmit()
         else if (form !== null) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
         else slot.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
-        beat({ phase: 'native-typed', session: sessionId, url: url.slice(0, 120), value: String(slot.input.value ?? '').slice(0, 120), form: form !== null })
+        beat({ phase: 'native-typed', session: sessionId, url: url.slice(0, 120), value: String(slot.input.value ?? '').slice(0, 120), form: form !== null, boxes: panelOf(sessionId).map((node) => ({ attrs: Array.from(node.attributes).map((a) => a.name + '=' + String(a.value).slice(-10)), addr: node.querySelectorAll('input[class*="address"]').length, guest: node.querySelectorAll('webview').length, frame: node.querySelectorAll('iframe').length, kid: node.children.length, html: String(node.innerHTML ?? '').slice(0, 80) })) })
         return 'typed'
       } catch (error) {
         return 'failed:' + String(error?.message ?? error).slice(0, 80)
@@ -2163,49 +2181,40 @@ window.__ModuleLoader__.load({
           }
           /* A tab asked for by a page that has since reloaded is not remembered. */
           tabAsked.clear()
-          /* An update of this plugin rebuilds the page, which closes the tabs it
-             had. Every column that is still up gets its tab back, without
-             pressing anything, so an update does not cost the page. */
+          /* An update of this plugin rebuilds the page, which closes the tab it
+             had. The chat on screen gets its tab back on the page it held; a
+             chat that is not on screen opens nothing, because a tab lands in
+             the column that is showing. */
           if (NATIVE_MODE === true) {
             setTimeout(() => {
-              const restore = async () => {
-                /** @type {string[]} */
-                const ask = []
-                try {
-                  for (const node of Array.from(document.querySelectorAll('[data-sidebar-right-session]'))) {
-                    const session = String(node.dataset?.sidebarRightSession ?? '')
-                    if (session === '' || rememberedPage(session) === '') continue
-                    if (nativeElement(session) !== null || restoredOnce.has(session)) continue
-                    ask.push(session)
-                    restoredOnce.add(session)
+              void (async () => {
+                let shown = currentSession
+                if (shown === '') {
+                  try {
+                    shown = String(Array.from(document.querySelectorAll('[data-sidebar-right-session]'))[0]?.dataset?.sidebarRightSession ?? '')
+                  } catch {
+                    /* a page without a column has no chat to restore */
                   }
-                } catch {
+                }
+                if (shown === '') return
+                const url = rememberedPage(shown)
+                if (url === '') return
+                beat({ phase: 'restore-tab', session: shown })
+                if (nativeElement(shown) === null) openNativeTab(shown)
+                for (let wait = 0; wait < 30; wait += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 100))
+                  const el = nativeElement(shown)
+                  if (el === null) continue
+                  try {
+                    const here = String(el.getURL?.() ?? '')
+                    if (here === '' || here === 'about:blank') el.loadURL(url)
+                  } catch {
+                    /* the tab is mid-teardown; the next call reopens the page */
+                  }
                   return
                 }
-                beat({ tabType: registered, phase: 'restore-tab', sessions: ask })
-                for (const session of ask.slice(0, 2)) {
-                  const url = rememberedPage(session)
-                  try {
-                    scope.sidebarRight.openTabIn(session, NATIVE_KIND, {}) // ui-copy-ignore
-                  } catch {
-                    continue
-                  }
-                  for (let wait = 0; wait < 30; wait += 1) {
-                    await new Promise((resolve) => setTimeout(resolve, 100))
-                    const el = nativeElement(session)
-                    if (el === null) continue
-                    try {
-                      const here = String(el.getURL?.() ?? '')
-                      if (here === '' || here === 'about:blank') el.loadURL(url)
-                    } catch {
-                      /* the tab is mid-teardown; the next call reopens the page */
-                    }
-                    break
-                  }
-                }
-              }
-              restore().catch(() => {})
-            }, 3_000)
+              })()
+            }, 1_200)
           }
           /* The capture runs in another closure, so this lives at module scope. */
           faceOf = () => {
@@ -2269,10 +2278,7 @@ window.__ModuleLoader__.load({
             try {
               /* A kept-mounted tab stays hidden behind the pane's active tab;
                  opening this kind brings it forward. */
-              const face = faceOf()
-              const kind = NATIVE_MODE === true ? NATIVE_KIND : KIND
-              if (typeof face?.openTabIn === 'function') face.openTabIn(asking === '' ? currentSession : asking, kind, {}) // ui-copy-ignore
-              else if (typeof face?.openTab === 'function') face.openTab(kind, {}) // ui-copy-ignore
+              openNativeTab(asking === '' ? currentSession : asking, NATIVE_MODE === true ? NATIVE_KIND : KIND)
             } catch {
               /* the capture reports the geometry it saw */
             }
@@ -2401,6 +2407,7 @@ window.__ModuleLoader__.load({
             } else if (take && typeof strip?.openTabIn === 'function' && tabAsked.has(sessionId) !== true) {
               try {
                 tabAsked.add(sessionId)
+                nativeTabs.add(String(sessionId) + ':' + String(NATIVE_MODE === true ? NATIVE_KIND : KIND))
                 strip.openTabIn(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
                 /* The product opens a tab only in a chat whose right panel it has
                    adopted. Saying a tab opened when nothing appeared would have

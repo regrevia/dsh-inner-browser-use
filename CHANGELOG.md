@@ -4,6 +4,10 @@ The column that a call needs is expanded through the control the product already
 
 # Changelog
 
+## 0.11.18
+
+- 一个会话只开一次浏览器标签；插件更新后只在屏幕上的那个会话把标签找回来，别的会话不再凭空开空的标签页。
+
 ## 0.11.17
 
 - A call made from a chat the app is not showing no longer opens that chat or
