@@ -250,12 +250,15 @@ window.__ModuleLoader__.load({
      * @returns {Promise<string>} base64 PNG.
      */
     async function grab(el) {
+      const notes = []
       let bug = null
       try {
         bug = el.debugger ?? null
-      } catch {
+      } catch (error) {
+        notes.push('debugger: ' + String(error?.message ?? error))
         bug = null
       }
+      if (bug === null) notes.push('debugger: absent')
       if (bug !== null) {
         let attached = false
         try {
@@ -264,8 +267,9 @@ window.__ModuleLoader__.load({
           const shot = await bug.sendCommand('Page.captureScreenshot', { format: 'png' })
           const data = shot?.data
           if (typeof data === 'string' && data !== '') return data
-        } catch {
-          /* the panel's capture is tried next */
+          notes.push('debugger: no data')
+        } catch (error) {
+          notes.push('debugger: ' + String(error?.message ?? error))
         } finally {
           if (attached) {
             try {
@@ -276,14 +280,18 @@ window.__ModuleLoader__.load({
           }
         }
       }
-      let image
       try {
-        image = await el.capturePage()
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 250))
-        image = await el.capturePage()
+        let image
+        try {
+          image = await el.capturePage()
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          image = await el.capturePage()
+        }
+        return image.toPNG().toString('base64')
+      } catch (error) {
+        throw new Error(String(error?.message ?? error) + ' (' + notes.join('; ') + ')')
       }
-      return image.toPNG().toString('base64')
     }
 
     /**
