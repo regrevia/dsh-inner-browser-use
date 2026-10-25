@@ -587,3 +587,21 @@ test('a sign-in cookie is kept for the workspace, in a file only its user may re
   delete process.env.DSH_HOME
   await rm(home, { recursive: true, force: true })
 })
+
+test('a page running the previous copy is named instead of driven', async () => {
+  const bridge = new Bridge()
+  bridge.native = false
+  await assert.rejects(() => bridge.call('chat-old', 'view', {}, undefined, 200), /previous copy of this plugin/)
+})
+
+test('a page that drives the product browser is driven', async () => {
+  const bridge = new Bridge()
+  bridge.native = true
+  const seen = []
+  bridge.attach('chat-new', { write: (each) => { seen.push(each); return true }, end() {}, on() {} }, '')
+  const pending = bridge.call('chat-new', 'view', {}, undefined, 300)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.match(seen.join(''), /"tool":"view"/)
+  bridge.settle({ id: JSON.parse(seen.at(-1).replace(/^data: /, '')).id, ok: true, value: 'the page' })
+  assert.equal(await pending, 'the page')
+})

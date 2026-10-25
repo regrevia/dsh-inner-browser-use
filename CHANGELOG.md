@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.6
+
+- A page running the previous copy is named, with the one step that fixes it,
+  instead of being driven: that copy would open a look-alike tab of its own.
+
 ## 0.11.5
 
 - A chat whose right column was never opened now gets it, docked, before the
