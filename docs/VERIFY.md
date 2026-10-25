@@ -265,7 +265,7 @@ key, and writes it back when that origin is opened again:
 ```console
 $ ls -l ~/.dsh/inner-browser-use/cookies/
 -rw-------@ 1 apple  staff   811 Oct 25 21:26 7b5c760580d2febdb4d5f50a.json
-$ python3 -c "import json,glob;print([(c['name'],c['url']) for c in json.load(open(glob.glob('$HOME/.dsh/inner-browser-use/cookies/*.json')[0]))])"
+$ python3 -c "import json,glob,os;print([(c['name'],c['url']) for c in json.load(open(glob.glob(os.path.expanduser('~/.dsh/inner-browser-use/cookies/*.json'))[0]))])"
 [('i18next', 'http://127.0.0.1:8765'), ('sid', 'http://127.0.0.1:8765'), ('__ac_nonce', 'https://www.douyin.com'), ...]
 ```
 
