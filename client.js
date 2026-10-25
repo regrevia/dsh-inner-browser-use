@@ -1328,7 +1328,6 @@ window.__ModuleLoader__.load({
           reveal = (asking) => {
             /* Another chat's page is never brought forward. */
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
-            if (asking !== '' && paneSessions.has(asking) && onScreen.has(asking) !== true) return
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1346,7 +1345,6 @@ window.__ModuleLoader__.load({
           }
           raise = (asking) => {
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
-            if (asking !== '' && paneSessions.has(asking) && onScreen.has(asking) !== true) return
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1379,7 +1377,13 @@ window.__ModuleLoader__.load({
             if (sessionId === '') return
             /* A page for a chat that is not on screen stays where it is; taking
                the right panel for it would hide what the person is reading. */
-            if (paneSessions.has(sessionId) && onScreen.has(sessionId) !== true) return
+            beat({ phase: 'wanted', session: sessionId, panes: paneSessions.size, screen: onScreen.size })
+            const hidden = paneSessions.has(sessionId) && onScreen.has(sessionId) !== true
+            if (!hidden && onScreen.size > 0 && onScreen.has(sessionId) !== true) {
+              /* The panel is already showing another chat's page. */
+              beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
+              return
+            }
             const bare = onScreen.size === 0
             try {
               /* `layout` is in this plugin's inject list; a scope that lists it
@@ -1388,19 +1392,23 @@ window.__ModuleLoader__.load({
                  whatever the person is looking at. */
               /* The pane may open for the chat that asked; a chat that is not on
                  screen still gets its own page, never someone else's. */
-              if (bare && (sessionId === currentSession || currentSession === '')) scope.layout.openRightbar(true, false) // ui-copy-ignore
+              /* A mounted page that lost its surface (a closed panel) is shown
+                 again; the panel opens only when nothing is on screen. */
+              if (bare || hidden) scope.layout.openRightbar(true, false) // ui-copy-ignore
               /* Opened on the chance this chat's page would appear in it. If the
                  page never gets a surface the panel is left as it was found. */
               if (bare) {
                 setTimeout(() => {
-                  if (onScreen.has(sessionId) === true) return
+                  /* A page that mounted is kept, visible or not: closing the panel
+                     again would hide the very page the call is about. */
+                  if (paneSessions.has(sessionId) || onScreen.has(sessionId) === true) return
                   try {
                     scope.layout.openRightbar(false, false) // ui-copy-ignore
                     beat({ tabType: registered, phase: 'open', step: 'selfheal' })
                   } catch {
                     /* nothing to close */
                   }
-                }, 1800).unref?.()
+                }, 3000).unref?.()
               }
             } catch (error) {
               beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })

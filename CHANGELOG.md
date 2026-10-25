@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5
+
+- A page that lost its surface because the right panel was closed is shown again on the next call, instead of the call
+  failing as if no page existed. The panel is given back only when no page mounted at all.
+
 ## 0.8.4
 
 - `/state` reports the folder each connected chat writes into, so the place a file will land can be seen without
