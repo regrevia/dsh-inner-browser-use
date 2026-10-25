@@ -371,10 +371,29 @@ window.__ModuleLoader__.load({
      * proof the module itself executed.
      * @param {Record<string, unknown>} frame - what to report.
      */
-    /** Puts this pane on screen; a guest with no viewport paints nothing to capture.
-     *  @type {null | (() => void)} */
+    /**
+     * Keep a chat's view laid out while it is not the one on screen.
+     *
+     * The app hides a view it is not showing, and a hidden guest paints nothing,
+     * so a capture finds white there. This parks such a view out of sight at a
+     * real size, which keeps the page painted and its state intact.
+     */
+    function parkHiddenViews() {
+      if (document.getElementById('dshib-park') !== null) return
+      const style = document.createElement('style')
+      style.id = 'dshib-park'
+      style.textContent = '[hidden]:has(.dshib-guest){display:block !important;position:fixed !important;'
+        + 'left:-4000px !important;top:0 !important;width:var(--dshib-park-w,575px) !important;'
+        + 'height:var(--dshib-park-h,1080px) !important;visibility:visible !important}'
+      document.head.appendChild(style)
+    }
+
+    /** The injected pane face, reached from the capture path as well.
+     *  @type {() => any} */
     let faceOf = () => undefined
-let reveal = null
+    /** Puts this chat's pane on screen.
+     *  @type {null | ((asking: string) => void)} */
+    let reveal = null
     /* Re-asserting the pane is what survives another tab closing it. */
     let raise = null
     /* The log, not the error, carries why a capture found no pixels. */
@@ -589,6 +608,23 @@ let reveal = null
                         }
                       }
                     }
+                    if (webview.getBoundingClientRect().width < 2) {
+                      parkHiddenViews()
+                      try {
+                        document.documentElement.style.setProperty('--dshib-park-w', '575px')
+                        document.documentElement.style.setProperty('--dshib-park-h', '1080px')
+                      } catch {
+                        /* the rule keeps its own size */
+                      }
+                      for (let wait = 0; wait < 6; wait += 1) {
+                        await new Promise((resolve) => setTimeout(resolve, 120))
+                        if (webview.getBoundingClientRect().width > 1) {
+                          target = webview
+                          break
+                        }
+                      }
+                      probe?.({ why: 'capture-parked', body: Math.round(target.getBoundingClientRect().width) })
+                    }
                     const wide = colWide()
                     probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: wide, mine, tries: 'poll' })
                     if (target.getBoundingClientRect().width < 2 || target.getBoundingClientRect().height < 2) {
@@ -598,7 +634,8 @@ let reveal = null
                     return
                   }
                   if (frame.tool === 'script') {
-                    const result = await webview.executeJavaScript(String(frame.args?.code ?? ''), true)
+                    const body = String(frame.args?.code ?? '')
+                    const result = await webview.executeJavaScript('(async () => {\n' + body + '\n})()', true)
                     const text = typeof result === 'string' ? result : JSON.stringify(result ?? null)
                     reply({ ok: true, value: text.slice(0, 8000) })
                     return

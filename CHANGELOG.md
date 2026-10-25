@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- A chat that is not on screen keeps its page laid out out of sight, so a
+  capture shows the page as it is now rather than a reloaded copy.
+- `browser_script` can be run twice: each run gets its own scope.
+
 ## 0.6.0
 
 - A capture from a chat you are not looking at renders the same page in a

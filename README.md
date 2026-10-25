@@ -62,7 +62,7 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 - **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
 - **No downloads, popups, or permission prompts.** The guest runs sandboxed. To get bytes out of a page (an image, a file), read them in-page with `browser_script`.
 - **It needs the tab open.** Tools fail with a one-line instruction rather than opening the tab for you.
-- **A capture needs that chat's page on screen.** Reading, clicking and typing work while you are looking at
+- **A capture of a chat you are not looking at.** Reading, clicking and typing work while you are looking at
   another chat, because they drive the page itself. Pixels can only be taken from a page the app is drawing,
   so a screenshot from a chat you are not looking at says the page is not on screen instead of taking it over.
 

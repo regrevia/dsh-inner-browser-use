@@ -95,3 +95,24 @@ tail -5 /tmp/dsh-inner-browser-use.log   # look for "why":"shot-geometry"
 - `active` — which view the pane had in front.
 - `rooms` — the visible session containers and their sizes.
 
+## A chat that is not on screen
+
+Pixels come from a painted surface. When this chat's page is not the one the
+right column is drawing, the capture renders the same address in a second guest
+on the same session partition and takes the image from there, then removes that
+guest. `browser_screenshot` with `offscreen: true` always takes that path, so it
+can be checked from any chat:
+
+```json
+{ "offscreen": true }
+```
+
+The proof log records what it found:
+
+```bash
+tail -3 /tmp/dsh-inner-browser-use.log   # "why":"capture-lens"
+```
+
+`got` is the size of the returned PNG, or `none` when nothing painted. A page
+that needs a sign-in still signs in, because the second guest shares the
+partition; a page mid-form is rendered as it loads, not as it was.
