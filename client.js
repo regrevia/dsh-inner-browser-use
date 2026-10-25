@@ -1447,7 +1447,7 @@ window.__ModuleLoader__.load({
 
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
     function keepResident(sessionId) {
-      if (sessionId === '' || keyForSession === null || residents.has(sessionId)) return
+      if (sessionId === '' || residents.has(sessionId)) return
       if (paneSessions.has(sessionId)) return
       /* Three pages out of sight is enough to answer what is being asked; the
          oldest one goes so a long session cannot pile them up. */
@@ -1460,7 +1460,7 @@ window.__ModuleLoader__.load({
         shelf: stashHost(), // ui-copy-ignore
         hidden: true,
         sessionId,
-        key: () => keyForSession(sessionId),
+        key: () => (keyForSession === null ? '' : keyForSession(sessionId)),
         onPhase: (next, error) => beat({ tabType: true, phase: `resident-${next}`, session: sessionId, error: error ?? '' }),
       })
       residents.set(sessionId, guest)
