@@ -71,6 +71,7 @@ const OPEN_WAIT_MS = 8_000
 /** Shown when a tool runs without the tab that owns the guest. */
 const ASK_GAP_MS = 3_000
 const CLIENT_TTL_MS = 60_000
+const ASK_ALIAS_MS = 30_000
 const NO_TAB = 'No 内置浏览器 tab answered. Open it in the right sidebar from the tab strip, then call again.'
 
 /** @type {string} */
@@ -129,6 +130,10 @@ export class Bridge {
     this.watchers = new Set()
     /** When each chat last asked for a tab, so one ask per call burst. @type {Map<string, number>} */
     this.asked = new Map()
+    /** @type {Map<string, string>} chat id the tool layer uses → tab id the page reported. */
+    this.aliases = new Map()
+    /** @type {{chat: string, at: number} | undefined} the ask still waiting for a tab. */
+    this.asking = undefined
     /** @type {number} how long a call waits for the tab it asked for. */
     this.openWaitMs = OPEN_WAIT_MS
   }
@@ -139,6 +144,20 @@ export class Bridge {
    */
   watch(res) {
     this.watchers.add(res)
+  }
+
+  /**
+   * Learn which tab answers this chat: the page reports the id it opened right
+   * after the ask, and that id is what the tab's own stream arrives under.
+   * @param {Record<string, unknown>} frame - one heartbeat.
+   */
+  noteOpen(frame) {
+    const asking = this.asking
+    if (asking === undefined) return
+    if (frame?.opened !== 'current' && frame?.opened !== 'session') return
+    if (Date.now() - asking.at > ASK_ALIAS_MS) return
+    this.asking = undefined
+    this.alias(asking.chat, String(frame.session ?? ''))
   }
 
   /** @param {import('node:http').ServerResponse} res - closed SSE response. */
@@ -156,13 +175,34 @@ export class Bridge {
     if (last !== undefined && now - last < ASK_GAP_MS) return
     if (this.watchers.size === 0) return
     this.asked.set(sessionId, now)
+    this.asking = { chat: sessionId, at: now }
     const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId })}\n\n`
     for (const res of this.watchers) res.write(frame)
   }
 
+  /**
+   * The page names the tab it opened, and that name is not always the id the
+   * tool layer uses for this chat. One ask maps to the tab it produced.
+   * @param {string} chatId - id the tool layer used.
+   * @param {string} tabId - id the page reported for its tab.
+   */
+  alias(chatId, tabId) {
+    if (chatId === '' || tabId === '' || chatId === tabId) return
+    this.aliases.set(chatId, tabId)
+  }
+
+  /** @param {string} sessionId - chat asking. @returns {object | undefined} the tab that can take it. */
+  seatFor(sessionId) {
+    const direct = this.seats.get(sessionId)
+    if (direct !== undefined) return direct
+    const aliased = this.seats.get(this.aliases.get(sessionId) ?? '')
+    if (aliased !== undefined) return aliased
+    return this.seats.size === 1 ? [...this.seats.values()][0] : undefined
+  }
+
   /** @param {string} sessionId - chat asking. @returns {boolean} whether a tab can take the call now. */
   hasSeat(sessionId) {
-    return this.seats.has(sessionId) || this.seats.size === 1
+    return this.seatFor(sessionId) !== undefined
   }
 
   /**
@@ -216,7 +256,7 @@ export class Bridge {
    * @returns {boolean} whether a tab received it.
    */
   push(sessionId, frame) {
-    const seat = this.seats.get(sessionId) ?? (this.seats.size === 1 ? [...this.seats.values()][0] : undefined)
+    const seat = this.seatFor(sessionId)
     if (seat === undefined) return false
     seat.res.write(`data: ${JSON.stringify(frame)}\n\n`)
     return true
@@ -539,7 +579,10 @@ export function apply(ctx, config = {}) {
         return
       }
       await record({ kind: 'uplink', session: sessionId, frame })
-      if (frame?.type === 'client-alive') bridge.client = { ms: Date.now(), frame }
+      if (frame?.type === 'client-alive') {
+      bridge.client = { ms: Date.now(), frame }
+      bridge.noteOpen(frame)
+    }
       bridge.settle(frame)
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end('{"ok":true}')

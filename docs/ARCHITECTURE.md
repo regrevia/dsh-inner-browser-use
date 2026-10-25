@@ -42,6 +42,14 @@ Same-origin is the whole trick, and it holds on both builds:
 | `GET /watch` | Host → page | Server-sent events, one long-lived response per page (not per tab): the channel the page uses to learn that some chat needs a tab. |
 | `GET /state` | either | Which chats have a tab, how many calls are in flight, last client heartbeat. |
 
+## Routing a chat to its tab
+
+The tool layer names a chat by its agent id; the tab the page opens may carry a
+different session id. Right after an ask, the page reports which tab it opened
+(`phase:"open"`, `opened:"current"`), and the host records that pair for the next
+30 s. Later calls resolve chat → tab through the pair, so two open tabs stay
+apart instead of both falling back to the single-seat rule.
+
 ## Opening the tab on demand
 
 A tool cannot ask a user to click `+`, so the call carries the ask: when no seat

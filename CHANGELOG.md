@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.3
+
+- The tab body gets its workspace under a name React keeps: `key` is reserved by
+  React and never reaches a component, which is why the first tab to open failed
+  with `options.key is not a function`.
+- A chat and its tab do not always share an id, so the page now reports the tab
+  it opened and the host routes that chat to it. Two open tabs no longer rely on
+  "the only seat".
+
 ## 0.3.2
 
 - Fixed the reason a call never opened its tab: the page half read

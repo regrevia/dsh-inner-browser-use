@@ -441,7 +441,7 @@ window.__ModuleLoader__.load({
         const guest = mountGuest({
           host: host.current, // ui-copy-ignore
           sessionId: props.sessionId,
-          key: props.key, // ui-copy-ignore
+          key: props.workspace, // ui-copy-ignore
           onPhase: (next, message) => { // ui-copy-ignore
             setPhase(next)
             setError(message ?? '')
@@ -551,7 +551,12 @@ window.__ModuleLoader__.load({
             name: SLOT, // ui-copy-ignore
             key: ID, // ui-copy-ignore
             locale: NS, // ui-copy-ignore
-            inject: (sessionId) => ({ sessionId, key: () => workspaceKey(workspaces, sessionId) }),
+            /* `key` is reserved by React and never reaches the body; the slot
+               passes the workspace under its own name. */
+            inject: (sessionId) => ({
+              sessionId,
+              workspace: () => workspaceKey(workspaces, sessionId),
+            }),
           }, Body))
 
           scope.slots.inject(TITLE_SLOT, () => scope.slots.register({
