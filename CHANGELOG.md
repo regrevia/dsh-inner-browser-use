@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1
+
+- The pointer marks where a click or a typing goes, stays there for a moment so
+  it can be seen, then fades.
+
+## 0.5.0
+
+- A tool call only ever acts on the chat that asked. Each call names its chat,
+  and a page that is not on screen is never brought forward over whatever the
+  person is looking at: the call says the page is not on screen instead. What
+  still crosses chats is the right pane itself, which the app owns.
+- The log records the controller surface once, for the next step.
+
 ## 0.4.8
 
 - The log records the right column's size before and after a capture tries to

@@ -87,8 +87,9 @@ window.__ModuleLoader__.load({
         style.id = '__dsh_ib_css'
         style.textContent = [
           '#__dsh_ib_ptr{position:fixed;left:0;top:0;width:22px;height:22px;z-index:2147483647;pointer-events:none;',
-          'transform:translate3d(-40px,-40px,0);transition:transform 200ms cubic-bezier(.2,.7,.3,1);',
+          'transform:translate3d(-40px,-40px,0);opacity:1;transition:transform 200ms cubic-bezier(.2,.7,.3,1),opacity 600ms ease;',
           'filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}',
+          '#__dsh_ib_ptr.away{opacity:0}',
           '#__dsh_ib_rip{position:fixed;left:0;top:0;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;',
           'z-index:2147483646;pointer-events:none;opacity:0;background:rgba(120,160,255,.45);',
           'transform:translate3d(-60px,-60px,0) scale(.2)}',
@@ -108,13 +109,20 @@ window.__ModuleLoader__.load({
         rip.setAttribute('aria-hidden', 'true')
         D.documentElement.appendChild(rip)
       }
+      let away = 0
       const aim = async (el) => {
         chrome()
         const r = el.getBoundingClientRect()
         const x = r.left + r.width / 2, y = r.top + r.height / 2
         const ptr = D.getElementById('__dsh_ib_ptr')
         const rip = D.getElementById('__dsh_ib_rip')
-        if (ptr) ptr.style.transform = 'translate3d(' + (x - 4) + 'px,' + (y - 2) + 'px,0)'
+        clearTimeout(away)
+        if (ptr) {
+          ptr.classList.remove('away')
+          ptr.style.transform = 'translate3d(' + (x - 4) + 'px,' + (y - 2) + 'px,0)'
+          /* The pointer stays where it acted for a moment, then leaves. */
+          away = setTimeout(() => ptr.classList.add('away'), 2600)
+        }
         await sleep(210)
         if (rip) {
           rip.style.setProperty('--x', (x - 14) + 'px')
@@ -370,6 +378,7 @@ window.__ModuleLoader__.load({
     let raise = null
     /* The log, not the error, carries why a capture found no pixels. */
     let probe = null
+    let probed = false
 
     /** The chat whose sidebar pane is mounted here: a broadcast ask may only
      *  fall back to "the current chat" when this is the chat asking.
@@ -548,28 +557,29 @@ window.__ModuleLoader__.load({
                   }
                   if (frame.tool === 'shot') {
                     let target = webview
+                    /* The chat that asked is the only one whose page this call may
+                       bring forward; anyone else keeps the view they are using. */
+                    const asking = String(frame.session ?? '')
+                    const mine = asking === '' || asking === currentSession || currentSession === ''
                     const colWide = () => {
-                      let node = options.host
-                      while (node !== null && node !== void 0) {
-                        if (String(node.className ?? '').includes('rightbarCol')) {
-                          const r = node.getBoundingClientRect()
-                          return Math.round(r.width) + 'x' + Math.round(r.height)
-                        }
-                        node = node.parentElement
-                      }
-                      return 'no-column'
+                      const column = document.querySelector('[class*="rightbarCol"]')
+                      if (column === null) return 'no-column'
+                      const r = column.getBoundingClientRect()
+                      return Math.round(r.width) + 'x' + Math.round(r.height)
                     }
                     const before = colWide()
                     const box = target.getBoundingClientRect()
                     if (box.width < 2 || box.height < 2 || target.isConnected === false) {
-                      try {
-                        reveal?.()
-                      } catch {
-                        /* the pane stays closed; the capture reports the geometry */
+                      if (mine) {
+                        try {
+                          reveal?.(asking)
+                        } catch {
+                          /* the pane stays closed; the capture reports the geometry */
+                        }
                       }
                       for (let wait = 0; wait < 12; wait += 1) {
                         await new Promise((resolve) => setTimeout(resolve, 150))
-                        raise?.()
+                        if (mine) raise?.(asking)
                         const live = options.host.querySelector('webview') // ui-copy-ignore
                         if (live !== null && live.getBoundingClientRect().width > 1) {
                           target = live // ui-copy-ignore
@@ -577,7 +587,11 @@ window.__ModuleLoader__.load({
                         }
                       }
                     }
-                    probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: colWide(), tries: 'poll' })
+                    const wide = colWide()
+                    probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: wide, mine, tries: 'poll' })
+                    if (target.getBoundingClientRect().width < 2 || target.getBoundingClientRect().height < 2) {
+                      throw new Error("this chat's page is not on screen")
+                    }
                     reply({ ok: true, value: { png: await grab(target) } })
                     return
                   }
@@ -679,9 +693,15 @@ window.__ModuleLoader__.load({
             if (sessionId === '') return
             try {
               /* `layout` is in this plugin's inject list; a scope that lists it
-                 alone still cannot read it, which is why the pane never opened. */
-              scope.layout.openRightbar(true, false) // ui-copy-ignore
-              reveal = () => {
+                 alone still cannot read it, which is why the pane never opened.
+                 Only the chat on screen may open the pane: another chat keeps
+                 whatever the person is looking at. */
+              /* The pane may open for the chat that asked; a chat that is not on
+                 screen still gets its own page, never someone else's. */
+              if (sessionId === currentSession || currentSession === '') scope.layout.openRightbar(true, false) // ui-copy-ignore
+              reveal = (asking) => {
+                /* Another chat's page is never brought forward. */
+                if (asking !== '' && asking !== currentSession && currentSession !== '') return
                 try {
                   scope.layout.openRightbar(true, false) // ui-copy-ignore
                 } catch {
@@ -697,7 +717,8 @@ window.__ModuleLoader__.load({
                   /* the capture reports the geometry it saw */
                 }
               }
-              raise = () => {
+              raise = (asking) => {
+                if (asking !== '' && asking !== currentSession && currentSession !== '') return
                 try {
                   /* Switching the pane's active tab closes the pane: the built-in
                      browser reports itself hidden and the column collapses. */
@@ -713,6 +734,19 @@ window.__ModuleLoader__.load({
                the id path is the fallback for a page showing another chat. */
             let opened = ''
             const strip = scope.sidebarRight
+            if (!probed) {
+              probed = true
+              try {
+                beat({
+                  tabType: registered,
+                  phase: 'api',
+                  own: Object.keys(strip ?? {}).slice(0, 16),
+                  proto: strip === undefined ? [] : Object.getOwnPropertyNames(Object.getPrototypeOf(strip)).slice(0, 24),
+                })
+              } catch {
+                /* probed once per page load */
+              }
+            }
             /* Every open page hears this broadcast, so a page must open the
                asking chat's tab by id. Opening "the current chat" instead is how
                one chat's call used to steer a browser tab in another chat. */

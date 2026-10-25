@@ -280,7 +280,7 @@ export class Bridge {
       await this.waitSeat(sessionId, this.openWaitMs, signal)
     }
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    if (!this.push(sessionId, { type: 'call', id, tool, args })) throw new Error(NO_TAB)
+    if (!this.push(sessionId, { type: 'call', id, tool, args, session: sessionId })) throw new Error(NO_TAB)
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(id)
