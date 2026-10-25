@@ -251,13 +251,31 @@ partition = `dsh-sidebar-browser-${randomUUID()}`
 ```
 
 So a login is shared by every chat of the same project and survives closing the
-tab or the chat — and it does not survive quitting the app, because the name is
-chosen fresh each run and nothing is written to disk. `node scripts/doctor.mjs`
-prints that as `sign-in  kept per workspace`.
+tab or the chat. The partition itself is named fresh each run, so the guest keeps
+nothing on disk; the page half therefore files what the *page* can read under
+`~/.dsh/inner-browser-use/cookies/<hash>.json`, mode 0600, keyed by the workspace
+key, and writes it back when that origin is opened again:
 
-Keeping cookies across a restart would need a `persist:` partition, and the
-shell refuses any guest whose partition differs from the lease it issued, so it
-cannot be done from this plugin: it is an app-side change.
+```console
+$ ls -l ~/.dsh/inner-browser-use/cookies/
+-rw-------@ 1 apple  staff   811 Oct 25 21:26 7b5c760580d2febdb4d5f50a.json
+$ python3 -c "import json,glob;print([(c['name'],c['url']) for c in json.load(open(glob.glob('/Users/apple/.dsh/inner-browser-use/cookies/*.json')[0]))])"
+[('i18next', 'http://127.0.0.1:8765'), ('sid', 'http://127.0.0.1:8765'), ('__ac_nonce', 'https://www.douyin.com'), ...]
+```
+
+That file was produced by the app: one guest had been to `http://127.0.0.1:8765`,
+another to `https://www.douyin.com`, and each save replaced only its own origin, so
+both sites sit in the same workspace file. A save runs on `did-stop-loading` and
+every 30 s while the guest is alive; a restore runs once the page it belongs to has
+loaded, and the page is loaded once more only when a cookie was actually written,
+because a cookie set from the page cannot affect a document already open. The log
+shows `{"why":"cookies-restored"}` or `{"why":"signed-in-again"}` when that happens.
+
+Two limits stay. Cookies marked `HttpOnly` are invisible to the page, so a login
+that lives only in those needs the password again after the app quits. And the
+store holds only what the page could read when it was saved, so a workspace that
+has not opened a site yet has no file; `node scripts/doctor.mjs` prints
+`sign-in  kept per workspace` either way.
 
 ## What a running app showed
 
