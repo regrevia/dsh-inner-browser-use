@@ -4,6 +4,10 @@ The column that a call needs is expanded through the control the product already
 
 # Changelog
 
+## 0.11.21
+
+- 标签页里没有页面时，页面就在侧栏里由插件打开：位置就在你看着的那一栏。
+
 ## 0.11.20
 
 - 不在屏幕上的会话只在侧栏之外干自己的活，不再请求任何标签页。

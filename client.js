@@ -1430,8 +1430,8 @@ window.__ModuleLoader__.load({
     }
 
     /** @param {string} sessionId - chat whose page is out of sight. @returns {Promise<HTMLWebViewElement>} the guest. */
-    async function hiddenGuest(sessionId) {
-      const shelf = stashHost()
+    async function ownGuest(sessionId, host) {
+      const shelf = host ?? stashHost()
       const view = document.createElement('webview')
       view.className = 'dshib-guest'
       const part = productPartition()
@@ -1521,10 +1521,11 @@ window.__ModuleLoader__.load({
               }
             }
             if (webview === undefined) {
-              /* No column is showing this chat, so no tab holds its page: the
-                 page is made here, out of sight, and the product is left alone. */
+              /* No tab of the product holds this chat's page, so the page is
+                 made here: in the column when this chat's column is up, out of
+                 sight when it is not. */
               owns = true
-              webview = await hiddenGuest(options.sessionId)
+              webview = await ownGuest(options.sessionId, options.host ?? stashHost())
             }
             options.onPhase(webview === undefined ? 'waiting' : 'ready')
             /* A chat with no column up gets its page made here instead, and the
@@ -1558,7 +1559,7 @@ window.__ModuleLoader__.load({
             /* No column is showing this chat, so its page is made out of sight;
                the product's own tabs are left as the person left them. */
             owns = true
-            webview = await hiddenGuest(options.sessionId)
+            webview = await ownGuest(options.sessionId, stashHost())
             options.onPhase('ready')
             steer.set(options.sessionId, (to) => {
               rememberPage(options.sessionId, to)
