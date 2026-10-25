@@ -78,11 +78,12 @@ that load the page module with a fake module loader and a fake `EventSource`.
 
 Reading, clicking and typing drive the page itself, so they work while you are
 looking at another chat. Pixels are different: the page has to be drawn by the
-app for a capture to exist.
+app for a capture to exist, so this chat's view is parked out of sight at a real
+size while another chat is on screen, and the capture takes the live page from
+there. The frame `why:"capture-parked"` records the size it managed.
 
-Ask for a screenshot in a chat that is not on screen and the tool answers
-`this chat's page is not on screen`. The proof log carries the reason in the
-frame next to it:
+When it still cannot be drawn, the tool answers `this chat's page is not on
+screen`. The proof log carries the reason in the frame next to it:
 
 ```bash
 tail -5 /tmp/dsh-inner-browser-use.log   # look for "why":"shot-geometry"

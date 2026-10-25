@@ -94,10 +94,12 @@
 
 ## 0.4.1
 
-- The tab has a real height. The guest was laid out inside a column that had no
-  height to give it, so the page rendered at 0×0 and every capture came back
+- The tab has a real height. The guest is laid out inside a column that had no
+  height to give it, so the page could render at 0×0 and captures came back
   empty. The body is now a flex item of the pane, with a viewport between it and
-  the guest — the same chain the shipped browser pane uses.
+  the guest — the same chain the shipped browser pane uses. (The 0×0 reading was
+  reproduced; which ancestor caused it was not, so the sharing of the shipped
+  chain is the fix, not a proven root cause.)
 - A capture puts the pane on screen first when the guest has no size, and a guest
   that is still off screen reports its size instead of "no image".
 
