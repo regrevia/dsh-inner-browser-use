@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.7
+
+- The pane stays open while the capture waits. Switching the pane's active tab
+  made the built-in browser report itself hidden, which collapsed the column the
+  capture had just opened, so the pane is now re-asserted on every wait.
+
 ## 0.4.6
 
 - The measurement behind an empty capture reaches the page root, so a pane that

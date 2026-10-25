@@ -366,6 +366,8 @@ window.__ModuleLoader__.load({
     /** Puts this pane on screen; a guest with no viewport paints nothing to capture.
      *  @type {null | (() => void)} */
     let reveal = null
+    /* Re-asserting the pane is what survives another tab closing it. */
+    let raise = null
     /* The log, not the error, carries why a capture found no pixels. */
     let probe = null
 
@@ -555,6 +557,7 @@ window.__ModuleLoader__.load({
                       }
                       for (let wait = 0; wait < 12; wait += 1) {
                         await new Promise((resolve) => setTimeout(resolve, 150))
+                        raise?.()
                         const live = options.host.querySelector('webview') // ui-copy-ignore
                         if (live !== null && live.getBoundingClientRect().width > 1) {
                           target = live // ui-copy-ignore
@@ -677,6 +680,15 @@ window.__ModuleLoader__.load({
                   const strip = scope.sidebarRight
                   if (typeof strip?.openTab === 'function') strip.openTab(KIND, {}) // ui-copy-ignore
                   else if (typeof strip?.openTabIn === 'function') strip.openTabIn(currentSession, KIND, {}) // ui-copy-ignore
+                } catch {
+                  /* the capture reports the geometry it saw */
+                }
+              }
+              raise = () => {
+                try {
+                  /* Switching the pane's active tab closes the pane: the built-in
+                     browser reports itself hidden and the column collapses. */
+                  scope.layout.openRightbar(true, false) // ui-copy-ignore
                 } catch {
                   /* the capture reports the geometry it saw */
                 }
