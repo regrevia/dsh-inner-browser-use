@@ -1078,13 +1078,25 @@ window.__ModuleLoader__.load({
           if ((await ready) === false) throw new Error(L('error.lease'))
           if (disposed) return
           options.onPhase('ready')
-          /* Cookies change without a reload, so they are kept while the guest is alive. */
+          /* Cookies change without a reload, so they are kept while the guest is alive;
+             a page that has not touched them since the last save is not written again. */
+          let saved = ''
+          const saveIfChanged = async () => {
+            if (disposed || key === '') return
+            try {
+              const now = String(await within(webview.executeJavaScript('document.cookie', true), 4000, 'cookie read'))
+              if (now === saved) return
+              saved = now
+              await cookiesSave(webview, key, probe)
+            } catch {
+              /* a page mid-load is saved on its next stop */
+            }
+          }
           cookieTimer = setInterval(() => {
-            if (disposed) return
-            void cookiesSave(webview, key, probe)
+            void saveIfChanged()
           }, 30_000)
           webview.addEventListener('did-stop-loading', () => {
-            if (!disposed) void cookiesSave(webview, key, probe)
+            void saveIfChanged()
           })
           /* A tab that was closed on a page opens on that page again, without
              waiting for the chat to ask for anything. */
