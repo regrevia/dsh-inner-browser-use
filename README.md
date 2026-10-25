@@ -72,7 +72,7 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 ## What it will not do
 
 - **It does not create a second browser.** No new window, no Chrome profile, no CDP mirror.
-- **It does not outlive a restart.** The guest partition lives in memory, so a page you signed into with a password needs the password again after the app restarts. Cookies survive a tab close and reopen within one session of the app.
+- **A sign-in outlives a restart only when the page can read its cookie.** The guest partition lives in memory; the cookies this page can see are kept per workspace in `~/.dsh/inner-browser-use/cookies/` and written back when that workspace's pane opens again. A login held only in an `HttpOnly` cookie needs the password again.
 - **Screenshots are viewport-sized.** A `<webview>` captures what is visible, not the whole scroll height; scroll first, then capture.
 - **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
 - **No popups or permission prompts.** A link that wants a new window stays in the tab it is in. A file the page

@@ -46,13 +46,31 @@ function within(work, ms, label) {
 }
 
 /**
+ * The origin the guest is on, asked again if the page was mid-load.
+ * @param {any} el - the guest webview.
+ * @returns {Promise<string>} origin, or empty when the page has none yet.
+ */
+async function pageOrigin(el) {
+  for (const pause of [0, 500]) {
+    if (pause > 0) await new Promise((resolve) => setTimeout(resolve, pause))
+    try {
+      const origin = await within(el.executeJavaScript('location.origin', true), 4000, 'origin')
+      if (typeof origin === 'string') return origin
+    } catch {
+      /* a page that is still parsing is asked again */
+    }
+  }
+  return ''
+}
+
+/**
  * The cookies the guest itself can read, keyed to the origin it is on.
  * @param {any} el - the guest webview.
  * @returns {Promise<Record<string, unknown>[]>} cookies worth keeping.
  */
 async function cookiesOf(el) {
-  const raw = await within(el.executeJavaScript('document.cookie', true), 2000, 'cookie read')
-  const origin = await within(el.executeJavaScript('location.origin', true), 2000, 'origin')
+  const raw = await within(el.executeJavaScript('document.cookie', true), 4000, 'cookie read')
+  const origin = await pageOrigin(el)
   if (typeof raw !== 'string' || raw === '' || typeof origin !== 'string') return []
   if (origin === '' || origin === 'null' || origin.startsWith('about:')) return []
   const out = []
@@ -110,8 +128,8 @@ async function cookiesSave(el, key, probe) {
 async function cookiesRestore(el, key, probe) {
   if (key === '') return 0
   try {
-    const origin = await within(el.executeJavaScript('location.origin', true), 2000, 'origin')
-    if (typeof origin !== 'string' || origin === '' || origin === 'null') return 0
+    const origin = await pageOrigin(el)
+    if (origin === '' || origin === 'null') return 0
     const response = await within(fetch(`${BRIDGE_ROUTE}/cookies?key=${encodeURIComponent(key)}`), 3000, 'cookie read')
     if (!response.ok) return 0
     const body = await response.json()
