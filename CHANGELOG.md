@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+- The page opens the tab in its own chat first (`openTab`), and falls back to the
+  chat id (`openTabIn`) only when that refuses — the id path alone could decline
+  silently, which is what a call then reported as "no tab answered".
+- Every step of that handshake now reports itself: `phase:"open"` says which path
+  ran, and `guest-opening` / `guest-ready` / `guest-error` say whether the tab
+  body leased a browser at all. `GET /state` shows the last one.
+
 ## 0.3.0
 
 - Tools open the tab themselves: a call with no tab asks the page over a new

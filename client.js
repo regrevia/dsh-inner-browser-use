@@ -445,6 +445,7 @@ window.__ModuleLoader__.load({
           onPhase: (next, message) => { // ui-copy-ignore
             setPhase(next)
             setError(message ?? '')
+            beat({ tabType: true, phase: `guest-${next}`, session: props.sessionId, error: message ?? '' })
           },
         })
         return () => guest.dispose()
@@ -501,10 +502,30 @@ window.__ModuleLoader__.load({
             if (sessionId === '') return
             try {
               ctx.layout?.openRightbar?.(true, false) // ui-copy-ignore
-              ctx.sidebarRight?.openTabIn?.(sessionId, KIND, {}) // ui-copy-ignore
-            } catch {
-              /* the strip refuses while this chat has no right bar */
+            } catch (error) {
+              beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
             }
+            /* The current chat is the one place a page may open a tab without an id;
+               the id path is the fallback for a page showing another chat. */
+            let opened = ''
+            try {
+              const strip = ctx.sidebarRight
+              if (typeof strip?.openTab === 'function') {
+                strip.openTab(KIND, {}) // ui-copy-ignore
+                opened = 'current'
+              }
+            } catch (error) {
+              opened = `failed: ${String(error?.message ?? error)}`
+            }
+            if (opened === '' || opened.startsWith('failed')) {
+              try {
+                ctx.sidebarRight?.openTabIn?.(sessionId, KIND, {}) // ui-copy-ignore
+                opened = 'session'
+              } catch (error) {
+                opened = `failed: ${String(error?.message ?? error)}`
+              }
+            }
+            beat({ tabType: registered, phase: 'open', opened, session: sessionId })
           }
           source.addEventListener('message', onWanted)
           return () => source.close()
