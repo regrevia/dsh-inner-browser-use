@@ -20,6 +20,8 @@ The agent navigates, reads the page as numbered controls, clicks, types, and run
 
 Every call is visible: the pointer travels to the control, a ring marks it, and the page scrolls the target into view first.
 
+The first call opens the tab for you: the page half hears that a chat needs one and opens **内置浏览器** in the right sidebar. Nothing else in that sidebar changes — this plugin adds its own tab type and nothing to the guide pane.
+
 ## Install
 
 ```bash
