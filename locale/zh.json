@@ -11,5 +11,6 @@
   "phase.closed": "已关闭",
   "error.desktopOnly": "需要在桌面版中使用",
   "error.lease": "无法打开浏览器面板",
-  "pane.address": "输入网址"
+  "pane.address": "输入网址",
+  "error.background": "这个页面在后台标签里，切到它才能操作。"
 }

@@ -257,9 +257,10 @@ test('a file the page offers lands in the chat folder', async () => {
   assert.equal(landed.bytes, 11)
   await call('/uplink?session=chat-6', {
     method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: `Saved ${landed.path} (${landed.bytes} bytes)` }),
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { path: landed.path, bytes: landed.bytes } }),
   })
-  assert.deepEqual(await pending, { text: `Saved ${landed.path} (11 bytes)` })
+  const answered = await pending
+  assert.equal(answered.text, `Saved ${landed.path} (11 bytes)\n\nhello world`)
   assert.equal(await readFile(landed.path, 'utf8'), 'hello world')
   seat.stop()
 })

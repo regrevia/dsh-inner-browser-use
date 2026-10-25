@@ -383,6 +383,30 @@ function asValue(text) {
   return { text }
 }
 
+/** The largest saved file the chat reads back in the same result. */
+const INLINE_BYTES = 200_000 // ui-copy-ignore
+/** The longest text the chat reads back in the same result. */
+const INLINE_CHARS = 6_000 // ui-copy-ignore
+
+/**
+ * Read back a saved file when it is small and holds text, so the chat can quote
+ * it straight away. A picture, an archive or a big file stays on disk.
+ * @param {string} file - absolute path of the saved file.
+ * @returns {Promise<string>} text to append, empty when the file is not text.
+ */
+async function readableTail(file) {
+  if (file === '') return ''
+  const info = await stat(file).catch(() => undefined)
+  if (info === undefined || info.isFile() !== true || info.size === 0 || info.size > INLINE_BYTES) return ''
+  const raw = await readFile(file).catch(() => undefined)
+  if (raw === undefined) return ''
+  if (raw.subarray(0, 512).includes(0) === true) return '' // ui-copy-ignore
+  const text = raw.toString('utf8')
+  if (text.includes('\uFFFD') === true) return ''
+  const kept = text.length > INLINE_CHARS ? `${text.slice(0, INLINE_CHARS)}\n…` : text
+  return `\n\n${kept}`
+}
+
 /** @param {string | null} raw - a name the page offered. @returns {string} one safe path segment. */
 function safeName(raw) {
   const flat = String(raw ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
@@ -604,7 +628,15 @@ function tools(bridge, sinks) {
             exec.signal,
             DOWNLOAD_TIMEOUT_MS,
           )
-          return asValue(typeof value === 'string' ? value : String(value?.text ?? ''))
+          const saved = typeof value === 'string' ? value : String(value?.text ?? '')
+          const file = typeof value === 'object' && value !== null && typeof value.path === 'string' ? value.path : ''
+          const size = typeof value === 'object' && value !== null && Number.isFinite(value.bytes) ? value.bytes : undefined
+          const line = file === ''
+            ? saved
+            : `Saved ${file} (${size ?? (await stat(file).catch(() => undefined))?.size ?? 0} bytes)`
+          /* A page that saved a readable file hands it over here as well, so the
+             chat can quote it without a second trip through the machine. */
+          return asValue(line + (await readableTail(file)))
         } finally {
           sinks.delete(ticket)
         }

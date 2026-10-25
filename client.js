@@ -224,7 +224,16 @@ window.__ModuleLoader__.load({
         const named = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(sent)
         if (named !== null) return decodeURIComponent(named[1])
         const tail = new URL(url).pathname.split('/').filter(Boolean).pop() || ''
-        return tail === '' ? 'download' : decodeURIComponent(tail)
+        if (tail !== '') return decodeURIComponent(tail)
+        /* A page with no name in its address is still worth a file: its type
+           gives it one the desktop knows how to open. */
+        const kind = String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+        const ext = {
+          'text/html': 'html', 'application/xhtml+xml': 'html', 'text/plain': 'txt', 'text/markdown': 'md',
+          'application/json': 'json', 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg',
+          'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg', 'application/zip': 'zip',
+        }[kind]
+        return 'page.' + (ext ?? 'bin')
       }
       const run = async (op, a) => {
         chrome()
@@ -775,6 +784,28 @@ window.__ModuleLoader__.load({
               }
               void (async () => {
                 try {
+                  /* A view the app is not drawing has no surface, and a guest
+                     without one runs no script. Give it a surface out of sight
+                     first, and only bring the chat's tab forward as a second try. */
+                  const room = () => webview.getBoundingClientRect()
+                  if (room().width < 2 || room().height < 2) {
+                    parkHiddenViews()
+                    for (let wait = 0; wait < 25; wait += 1) {
+                      await new Promise((resolve) => setTimeout(resolve, 100))
+                      if (room().width >= 2 && room().height >= 2) break
+                      if (wait === 5) {
+                        try {
+                          reveal?.(String(frame.session ?? ''))
+                        } catch {
+                          /* the page stays where it is; the wait below reports it */
+                        }
+                      }
+                    }
+                    if (room().width < 2 || room().height < 2) {
+                      reply({ ok: false, error: L('error.background') })
+                      return
+                    }
+                  }
                   if (frame.tool !== 'navigate' && frame.tool !== 'shot') {
                     const asked = rememberedPage(frame.session)
                     let here = ''
@@ -817,6 +848,13 @@ window.__ModuleLoader__.load({
                     webview.loadURL(asked)
                     await stop
                     if (failed !== '') throw new Error(failed)
+                    /* A page the chat asked for is the one the person wants to
+                       watch, so it comes forward while the chat drives it. */
+                    try {
+                      reveal?.(String(frame.session ?? ''))
+                    } catch {
+                      /* the page loads behind; the answer still carries it */
+                    }
                     rememberPage(frame.session, asked)
                     reply({ ok: true, value: await runIn(webview, 'view', {}) })
                     return
@@ -957,7 +995,14 @@ window.__ModuleLoader__.load({
                       if (landed?.ok !== true) throw new Error(String(landed?.error ?? 'the file did not reach the folder'))
                       offset += bytes.length
                     }
-                    reply({ ok: true, value: `Saved ${landed?.path ?? ''} (${landed?.bytes ?? offset} bytes)` })
+                    const savedPath = String(landed?.path ?? '')
+                    const savedBytes = Number(landed?.bytes ?? offset)
+                    /* Both shapes travel: an older half reads the sentence, and
+                       the half that saved the file reads the path. */
+                    reply({
+                      ok: true,
+                      value: { text: `Saved ${savedPath} (${savedBytes} bytes)`, path: savedPath, bytes: savedBytes },
+                    })
                     return
                   }
                   if (frame.tool === 'script') {

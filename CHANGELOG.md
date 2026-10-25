@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1
+
+- A saved file comes back in the same answer when it is text and under 200 kB, so the chat can quote it without
+  another trip through the machine. A picture, an archive or a large file still stays on disk only.
+- A file with no name in its address is saved as `page.html` — or the extension its type implies — instead of
+  `download`, so the desktop opens it with the right program.
+- Asking for a page brings this chat's browser tab forward, so the drive is visible while the chat does it.
+- A view the app is not drawing is parked out of sight before it is driven. Before, every call against a tab in
+  the background failed with the guest's "Script failed to execute", which said nothing about the cause.
+- A view that stays without a surface answers that the page is in a background tab, instead of the guest error.
+
 ## 0.7.0
 
 - `browser_download` saves a file the page offers (a deliverable card, a "Download" link, a signed address) into
