@@ -4,6 +4,10 @@ The column that a call needs is expanded through the control the product already
 
 # Changelog
 
+## 0.11.19
+
+- 不在屏幕上的会话也能让它的页面干完活：页面在侧栏之外打开，用同一份登录状态，不动你正在看的窗口。
+
 ## 0.11.18
 
 - 一个会话只开一次浏览器标签；插件更新后只在屏幕上的那个会话把标签找回来，别的会话不再凭空开空的标签页。

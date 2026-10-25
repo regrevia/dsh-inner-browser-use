@@ -1319,7 +1319,11 @@ window.__ModuleLoader__.load({
         const finish = (hit) => {
           if (done) return
           done = true
-          el.removeEventListener(name, onHit)
+          try {
+            el.removeEventListener?.(name, onHit)
+          } catch {
+            /* a guest that has gone takes its listeners with it */
+          }
           resolve(hit)
         }
         const onHit = () => finish(true)
@@ -1392,9 +1396,54 @@ window.__ModuleLoader__.load({
         stashNode.setAttribute('aria-hidden', 'true')
         /* The product's page is driven where it is; nothing is parked, so no
            container of ours goes into the page. */
-        if (NATIVE_MODE === false) document.body.appendChild(stashNode)
+        document.body.appendChild(stashNode)
       }
       return stashNode
+    }
+
+    /* The product's browser tab exists only while its column is on screen. A
+       chat that is not on screen gets a page of its own, out of sight, so the
+       work goes on without touching what the person is reading. */
+    const PART_KEY = 'dshib:partition'
+
+    /** @returns {string} the storage the product's own page uses, once it is known. */
+    function productPartition() {
+      try {
+        const found = document.querySelector('webview[data-sidebar-browser-frame]')
+        const part = String(found?.getAttribute('partition') ?? '')
+        if (part !== '') {
+          try {
+            window.localStorage.setItem(PART_KEY, part)
+          } catch {
+            /* a page that keeps nothing still drives its guest */
+          }
+          return part
+        }
+      } catch {
+        /* no product tab is up to be read */
+      }
+      try {
+        return String(window.localStorage.getItem(PART_KEY) ?? '')
+      } catch {
+        return ''
+      }
+    }
+
+    /** @param {string} sessionId - chat whose page is out of sight. @returns {Promise<HTMLWebViewElement>} the guest. */
+    async function hiddenGuest(sessionId) {
+      const shelf = stashHost()
+      const view = document.createElement('webview')
+      view.className = 'dshib-guest'
+      const part = productPartition()
+      if (part !== '') view.setAttribute('partition', part)
+      view.setAttribute('allowpopups', '')
+      const first = rememberedPage(sessionId)
+      view.setAttribute('src', first === '' ? 'about:blank' : first)
+      const ready = waitEvent(view, 'dom-ready', 20_000)
+      shelf.appendChild(view) // ui-copy-ignore
+      if ((await ready) === false) throw new Error(L('error.background'))
+      beat({ phase: 'hidden-open', session: sessionId, part })
+      return view
     }
 
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
@@ -1469,6 +1518,12 @@ window.__ModuleLoader__.load({
                 await nativeOpen(options.sessionId, first)
                 webview = await nativeReady(40, options.sessionId)
               }
+            }
+            if (webview === undefined) {
+              /* No column is showing this chat, so no tab holds its page: the
+                 page is made here, out of sight, and the product is left alone. */
+              owns = true
+              webview = await hiddenGuest(options.sessionId)
             }
             options.onPhase(webview === undefined ? 'waiting' : 'ready')
             if (webview !== undefined) {

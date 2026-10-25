@@ -342,9 +342,12 @@ test('a tab that never appeared is not reported as open', () => {
   assert.match(source, /panelOf\(sessionId\)\.length > 0/)
 })
 
-test('driving the product page puts no container of ours into the page', () => {
+test('a page of ours is made only for a chat whose column is not showing', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  assert.match(source, /if \(NATIVE_MODE === false\) document\.body\.appendChild\(stashNode\)/)
+  /* The product's own page is driven where it is; a guest of ours is only made
+     when no column is up to hold that chat's page. */
+  assert.match(source, /if \(webview === undefined\) \{\n(?:.*\n)*?\s+owns = true\n\s+webview = await hiddenGuest\(options\.sessionId\)/)
+  assert.match(source, /const part = productPartition\(\)/)
 })
 
 test('a chat whose column was never opened gets one before its tab', () => {
