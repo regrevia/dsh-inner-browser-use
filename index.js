@@ -35,6 +35,9 @@ const SHOT_DIR = '.dsh-inner-browser-use'
 /** Where files the page offers land inside the chat's working directory. */
 const DOWNLOAD_DIR = join(SHOT_DIR, 'downloads')
 
+/** The largest screenshot this half hands over, in bytes of base64. */
+const MAX_SHOT_BASE64 = 12 * 1024 * 1024 // ui-copy-ignore
+
 /** Largest file the plugin will push into a page. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
@@ -381,6 +384,61 @@ function decodeBase64(value) {
 
 function asValue(text) {
   return { text }
+}
+
+/** The main process module that owns the guest views. */
+async function viewOwner() {
+  try {
+    const mod = await import('electron')
+    return mod?.webContents ?? mod?.default?.webContents ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Read a guest as a PNG from outside its page.
+ *
+ * A page the app is not drawing has no surface to copy, so the page's own
+ * capture answers with nothing. A renderer still rasterises itself when the
+ * debugger asks it to, which is what happens here before the plain copy.
+ * @param {number} wcid - guest identifier.
+ * @returns {Promise<string>} base64 PNG, empty when no image came back.
+ */
+async function captureView(wcid) {
+  if (Number.isInteger(wcid) !== true || wcid <= 0) return ''
+  const owner = await viewOwner()
+  const view = owner?.fromId?.(wcid) ?? null
+  if (view === null || view.isDestroyed?.() === true) return ''
+  const bug = view.debugger ?? null // ui-copy-ignore
+  if (bug !== null) {
+    let attached = false
+    try {
+      await bug.attach('1.3')
+      attached = true
+      const shapes = [{ format: 'png', fromSurface: false, captureBeyondViewport: true }, { format: 'png' }]
+      for (const shape of shapes) {
+        try {
+          const shot = await bug.sendCommand('Page.captureScreenshot', shape)
+          if (typeof shot?.data === 'string' && shot.data !== '') return shot.data
+        } catch {
+          /* the next shape may still answer */
+        }
+      }
+    } catch {
+      /* the plain copy below still tries */
+    } finally {
+      if (attached) bug.detach().catch(() => {})
+    }
+  }
+  try {
+    const image = await view.capturePage()
+    const png = image?.toPNG?.() ?? null
+    if (png === null || png.length === 0 || png.length > MAX_SHOT_BASE64) return ''
+    return png.toString('base64')
+  } catch {
+    return ''
+  }
 }
 
 /** The largest saved file the chat reads back in the same result. */
@@ -787,6 +845,23 @@ export function apply(ctx, config = {}) {
     if (path === '/state' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ connected: bridge.connected(), pending: bridge.waiters.size, client: clientState(bridge.client) }))
+      return
+    }
+
+    if (path === '/capture' && req.method === 'GET') {
+      /* Only the page that holds this chat's seat may ask, and the answer is an
+         image of a guest the window already owns. */
+      const seat = bridge.seats?.get(sessionId) ?? null
+      const png = bridge.connected() === true || seat !== null
+        ? await captureView(Number(url.searchParams.get('wcid') ?? ''))
+        : ''
+      if (png === '') {
+        res.writeHead(503, { 'content-type': 'text/plain' })
+        res.end('no image')
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ png }))
       return
     }
 

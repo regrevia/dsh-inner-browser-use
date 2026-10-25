@@ -435,6 +435,31 @@ window.__ModuleLoader__.load({
      * @param {HTMLWebViewElement} el - guest.
      * @returns {Promise<string>} base64 PNG.
      */
+    /** Where the driven guest sits, and what covers it. */
+    function surface(driven) {
+      try {
+        const r = driven.getBoundingClientRect()
+        const cx = Math.round(r.left + r.width / 2)
+        const cy = Math.round(Math.min(r.top + r.height / 2, window.innerHeight - 4))
+        const inside = cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight
+        const hit = inside ? document.elementFromPoint(cx, cy) : null
+        const guests = []
+        for (const each of document.querySelectorAll('webview')) {
+          const b = each.getBoundingClientRect()
+          guests.push([Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)].join(','))
+        }
+        return {
+          rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(','),
+          view: window.innerWidth + 'x' + window.innerHeight,
+          covers: hit === null ? 'none' : String(hit.tagName) + '.' + String(hit.className || '').slice(0, 20),
+          guests,
+          seen: document.visibilityState,
+        }
+      } catch (error) {
+        return { surface: String(error?.message ?? error).slice(0, 60) }
+      }
+    }
+
     async function grab(el) {
       const notes = []
       let bug = null
@@ -447,18 +472,57 @@ window.__ModuleLoader__.load({
       if (bug === null) notes.push('debugger: absent')
       if (bug !== null) {
         let attached = false
+        /* A page the compositor is not drawing still answers a capture asked
+           for from the page itself, so the capture that needs no surface is
+           tried after the plain one instead of giving up with it. */
+        const shapes = [
+          { format: 'png' },
+          { format: 'png', fromSurface: false },
+          { format: 'png', fromSurface: false, captureBeyondViewport: true },
+        ]
         try {
           await tick(bug.attach('1.3'), 3000, 'attach')
           attached = true
-          const shot = await tick(bug.sendCommand('Page.captureScreenshot', { format: 'png' }), 8000, 'capture')
-          const data = shot?.data
-          if (typeof data === 'string' && data !== '') return data
-          notes.push('debugger: no data')
+          try {
+            await tick(bug.sendCommand('Page.enable'), 2000, 'enable')
+          } catch (error) {
+            notes.push('enable: ' + String(error?.message ?? error).slice(0, 60))
+          }
+          for (const shape of shapes) {
+            try {
+              const shot = await tick(bug.sendCommand('Page.captureScreenshot', shape), 8000, 'capture')
+              const data = shot?.data
+              if (typeof data === 'string' && data !== '') return data
+              notes.push('debugger: no data ' + JSON.stringify(shape))
+            } catch (error) {
+              notes.push('debugger: ' + String(error?.message ?? error).slice(0, 70) + ' ' + JSON.stringify(shape))
+            }
+          }
         } catch (error) {
-          notes.push('debugger: ' + String(error?.message ?? error))
+          notes.push('debugger: ' + String(error?.message ?? error).slice(0, 70))
         } finally {
           if (attached) bug.detach().catch(() => {})
         }
+      }
+      /* The window owns the view, so it can be read even when the app draws
+         nothing there: ask the half that owns it before giving up. */
+      try {
+        const wcid = typeof el.getWebContentsId === 'function' ? el.getWebContentsId() : 0
+        if (wcid > 0) {
+          const asked = await fetch(`${ROUTE}/capture?session=${encodeURIComponent(currentSession)}&wcid=${wcid}`, { cache: 'no-store' }) // ui-copy-ignore
+          if (asked.ok) {
+            const body = await asked.json().catch(() => null)
+            if (typeof body?.png === 'string' && body.png !== '') return body.png
+          }
+          notes.push('window: ' + asked.status)
+        }
+      } catch (error) {
+        notes.push('window: ' + String(error?.message ?? error).slice(0, 60))
+      }
+      try {
+        el.scrollIntoView?.({ block: 'center', inline: 'nearest' }) // ui-copy-ignore
+      } catch {
+        /* a guest outside the scroller answers through its own capture */
       }
       const tries = []
       for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -513,10 +577,26 @@ window.__ModuleLoader__.load({
       if (document.getElementById('dshib-park') !== null) return
       const style = document.createElement('style')
       style.id = 'dshib-park'
+      /* Inside the window, because a painter given no place inside it is never
+         drawn: parked at a negative offset the page keeps its state but has no
+         picture. Nearly clear, out of the way of clicks, and under the app's
+         own surface, it paints without being seen. */
       style.textContent = '[hidden]:has(.dshib-guest){display:block !important;position:fixed !important;'
-        + 'left:-4000px !important;top:0 !important;width:var(--dshib-park-w,575px) !important;'
+        + 'left:0 !important;top:0 !important;z-index:-1 !important;opacity:0.02 !important;'
+        + 'pointer-events:none !important;width:var(--dshib-park-w,575px) !important;'
         + 'height:var(--dshib-park-h,1080px) !important;visibility:visible !important}'
       document.head.appendChild(style)
+    }
+
+    /**
+     * Take that surface back.
+     *
+     * It is borrowed for one call and returned at the end of it: left in place,
+     * it holds another chat's hidden view laid out in front of the app, which
+     * grows a column that belongs to nobody.
+     */
+    function unparkHiddenViews() {
+      document.getElementById('dshib-park')?.remove()
     }
 
     /** The injected pane face, reached from the capture path as well.
@@ -910,7 +990,7 @@ window.__ModuleLoader__.load({
                       probe?.({ why: 'capture-parked', body: Math.round(target.getBoundingClientRect().width) })
                     }
                     const wide = colWide()
-                    probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: wide, mine, tries: 'poll' })
+                    probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: wide, mine, tries: 'poll', ...surface(webview) })
                     if (target.getBoundingClientRect().width < 2 || target.getBoundingClientRect().height < 2) {
                       throw new Error("this chat's page is not on screen")
                     }
@@ -948,7 +1028,7 @@ window.__ModuleLoader__.load({
                         reply({ ok: true, value: { png } })
                         return
                       } catch (again) {
-                        probe?.({ why: 'capture-covered', href, error: String(again?.message ?? again).slice(0, 90) })
+                        probe?.({ why: 'capture-covered', href, error: String(again?.message ?? again).slice(0, 400) })
                         throw new Error('this chat\'s page is not being drawn — bring its browser tab forward to take an image')
                       }
                     }
@@ -1028,6 +1108,8 @@ window.__ModuleLoader__.load({
                   reply({ ok: true, value: await runIn(webview, frame.tool, frame.args ?? {}) })
                 } catch (error) {
                   reply({ ok: false, error: String(error?.message ?? error) })
+                } finally {
+                  unparkHiddenViews()
                 }
               })()
             },
@@ -1149,6 +1231,14 @@ window.__ModuleLoader__.load({
           reveal = (asking) => {
             /* Another chat's page is never brought forward. */
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            /* A view the app is not showing is never brought forward either: the
+               window the person is looking at would open a column with nothing
+               in it, and its own controls would sit where they do not belong. */
+            try {
+              if (webview.closest('[hidden]') !== null) return
+            } catch {
+              return
+            }
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1166,6 +1256,11 @@ window.__ModuleLoader__.load({
           }
           raise = (asking) => {
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            try {
+              if (webview.closest('[hidden]') !== null) return
+            } catch {
+              return
+            }
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {

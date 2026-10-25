@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.2
+
+- Asking for an image no longer depends on the page being painted: the window that owns the view reads it through
+  its own renderer, so a drive that runs while the chat's browser is behind the chat still returns a real picture.
+- The surface a background view borrows is returned at the end of the call. Left in place it held another chat's
+  hidden view laid out in front of the app, which grew a column that belonged to nobody.
+- A page is only brought forward in the window the person is already looking at. Another chat's drive used to open
+  that window's side column with nothing in it, and its own controls moved where they do not belong.
+
 ## 0.7.1
 
 - A saved file comes back in the same answer when it is text and under 200 kB, so the chat can quote it without
