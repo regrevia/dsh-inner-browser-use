@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.2
+
+- A call finds its own chat's page. It reads the browser tab the product keeps
+  for that chat instead of the right-most guest on the page, so a call can no
+  longer drive a page that belongs to another conversation.
+- The address bar is typed into from that chat's panel too, which works before
+  its page exists.
+- A workspace controller that cannot name a chat's folder no longer leaves a
+  rejected promise behind: the key falls back to the chat itself.
+
 ## 0.11.1
 
 - A call with no browser open for its chat says what happens next instead of

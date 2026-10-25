@@ -309,3 +309,10 @@ test('a page that saves a file on its own has somewhere to put it', () => {
   assert.match(source, /__dshib_land/)
   assert.match(source, /\/land\?session=/)
 })
+
+test('a page is looked for in the chat its call belongs to', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /data-sidebar-right-session/)
+  assert.match(source, /function nativeElement\(sessionId\)/)
+  assert.match(source, /nativeReady\(40, options\.sessionId\)/)
+})
