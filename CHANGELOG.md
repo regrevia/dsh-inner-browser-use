@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.11
+
+- A chat with no pane showing still answers: when a call arrives and no page is
+  mounted, the page half mounts one out of sight and serves the call there, so
+  nothing has to be clicked first. A pane that appears takes the chat back.
+- `docs/VERIFY.md` records the eight calls measured in the app.
+
 ## 0.6.10
 
 - `docs/COMPATIBILITY.md` names the capture limit, what is still unverified, and the

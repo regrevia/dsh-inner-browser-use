@@ -25,15 +25,16 @@ Expected: `{"connected":[],"pending":0,"client":{…"tabType":true…}}`.
 - `client` present, `connected:[]`: correct before any tab is open. Seats are
   open tabs, not the page.
 
-## 2. A tool opens its own tab
+## 2. A tool opens its own page
 
 Ask the model: `用 browser_view 看看当前页面`. Nothing was clicked.
 
-Expected: the right sidebar gains an **内置浏览器** tab and the call returns the
-page text plus numbered controls.
+Expected: the call returns the page text plus numbered controls, and the
+**内置浏览器** tab shows the same page.
 
-- `No 内置浏览器 tab answered.`: the tab did not open within `openWaitMs`. Check
-  that the right sidebar is not collapsed and reload the window.
+- `No 内置浏览器 tab answered.`: no page answered within `openWaitMs`. Check
+  `phase:"resident-ready"` in the proof log; without it the stashed page never
+  came up.
 
 ## 3. Drive a page
 
@@ -50,6 +51,19 @@ browser_upload    { "ref": 3, "file": "/absolute/path/note.txt" }
 Expected: the pointer moves and ripples in the page; `click`/`type`/`upload`
 each return a fresh `view`; the screenshot returns a path under
 `.dsh-inner-browser-use/` in the chat's working directory.
+
+Measured in the app on 2026-10-25, nothing clicked, one chat on screen:
+
+| call | came back |
+| --- | --- |
+| `browser_navigate` | `Example Domain`, one control |
+| `browser_view` | the page text and `#1 [link] Learn more` |
+| `browser_script` | the selection it set |
+| `browser_selection` | that selection, 917 characters |
+| `browser_copy` | `Copied 917 characters` |
+| `browser_click` | text changed to `clicked` |
+| `browser_type` | `#1 [input] n = hello harness` |
+| `browser_upload` | `#2 [input] f = C:\fakepath\dshib-upload.txt` |
 
 ## 4. The tab does not disturb other panes
 

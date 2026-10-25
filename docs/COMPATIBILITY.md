@@ -73,3 +73,19 @@ working install answers.
    naming the tab to bring forward.
 5. Restart the app once if `browser_selection` answers `unknown tool`: the tool
    list is read at start.
+
+## A tab that is not the active one
+
+The strip mounts only the tab it shows, and after a restart the restored tab is
+not the active one. Nothing in the tab face switches it: `openTabIn` with
+`activate`/`focus`, `focus(id)`, `focus(session, id)`, `active(id)`, `placeTab`
+(throws `no tab type is registered`), `place` (throws), `tab.activate` and
+`tab.focus` were each tried and left the active tab unchanged; the tab bar's
+controls are not inside `sidebarRight.host`, so there is no element to click.
+
+A call therefore does not depend on that switch. With no pane mounted, the page
+half mounts a guest of its own in a container held off screen and answers there;
+when a pane for the same chat reports ready, that guest is dropped so one page
+serves the chat at a time. The proof log names both halves: `resident-opening`,
+`resident-ready`, then `resident-closed` and `resident-drop` once a pane took
+over.

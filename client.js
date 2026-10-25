@@ -57,6 +57,9 @@ window.__ModuleLoader__.load({
     const CSS = [
       '.dshib-body{display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;height:100%;position:relative;background:var(--dsw-alias-bg-base)}',
       '.dshib-viewport{display:flex;flex:1 1 auto;min-width:0;min-height:0;position:relative}',
+      /* Kept off screen rather than display:none: an unrendered guest cannot
+         answer, and this one has to answer while another chat is on screen. */
+      '.dshib-stash{position:fixed;left:-20000px;top:0;width:1100px;height:820px;visibility:hidden;pointer-events:none}',
       '.dshib-guest{flex:1 1 auto;min-width:0;min-height:0;width:100%;height:100%;border:0;display:flex;background:var(--dsw-alias-bg-base)}',
       '.dshib-state{flex:none;display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-subtle)}',
       '.dshib-state[data-tone="error"]{color:var(--dsw-alias-label-danger)}',
@@ -531,6 +534,46 @@ window.__ModuleLoader__.load({
      * @param {{host: HTMLElement, sessionId: string, key: () => Promise<string>, onPhase: (phase: string, error?: string) => void}} options - mount options. // ui-copy-ignore
      * @returns {{dispose: () => void}} handle.
      */
+    /* The strip only mounts the tab it shows, so a chat that is not on screen has
+       no page at all. This keeps one stashed guest per such chat, which is what
+       lets a call work with nobody looking. */
+    let keyForSession = null
+    const residents = new Map()
+    let stashNode = null
+
+    /** @returns {HTMLElement} the container hidden guests live in. */
+    function stashHost() {
+      if (stashNode === null) {
+        stashNode = document.createElement('div')
+        stashNode.className = 'dshib-stash'
+        stashNode.setAttribute('aria-hidden', 'true')
+        document.body.appendChild(stashNode)
+      }
+      return stashNode
+    }
+
+    /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
+    function keepResident(sessionId) {
+      if (sessionId === '' || keyForSession === null || residents.has(sessionId)) return
+      beat({ tabType: true, phase: 'resident-open', session: sessionId })
+      const guest = mountGuest({
+        host: stashHost(), // ui-copy-ignore
+        sessionId,
+        key: () => keyForSession(sessionId),
+        onPhase: (next, error) => beat({ tabType: true, phase: `resident-${next}`, session: sessionId, error: error ?? '' }),
+      })
+      residents.set(sessionId, guest)
+    }
+
+    /** @param {string} sessionId - chat whose pane took over. @returns {void} */
+    function dropResident(sessionId) {
+      const guest = residents.get(sessionId)
+      if (guest === undefined) return
+      residents.delete(sessionId)
+      guest.dispose()
+      beat({ tabType: true, phase: 'resident-drop', session: sessionId })
+    }
+
     function mountGuest(options) {
       const carrier = globalThis.dshDesktop
       const bridge = carrier?.protocolVersion === 1 ? carrier.browser : undefined
@@ -758,6 +801,7 @@ window.__ModuleLoader__.load({
           key: props.workspace, // ui-copy-ignore
           onPhase: (next, message) => { // ui-copy-ignore
             setPhase(next)
+            if (next === 'ready') dropResident(props.sessionId)
             setError(message ?? '')
             beat({ tabType: true, phase: `guest-${next}`, session: props.sessionId, error: message ?? '' })
           },
@@ -917,6 +961,7 @@ window.__ModuleLoader__.load({
               }
             }
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })
+            keepResident(sessionId)
           }
           const open = () => {
             source?.close()
@@ -934,6 +979,7 @@ window.__ModuleLoader__.load({
         ctx.inject(['sidebarRightTabs', 'workspaces'], (scope) => {
           const tabs = scope.sidebarRightTabs
           const workspaces = scope.workspaces
+          keyForSession = (sessionId) => workspaceKey(workspaces, sessionId)
           scope.effect(() => tabs.register({
             id: ID, // ui-copy-ignore
             kind: KIND, // ui-copy-ignore

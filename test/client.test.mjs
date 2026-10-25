@@ -47,7 +47,19 @@ class FakeEventSource {
   }
 }
 
-const style = { id: '', dataset: {}, textContent: '', remove() {} }
+/* A guest is mounted for a chat with no pane, so an element has to model the
+   handful of calls that mounting makes before the missing desktop stops it. */
+const style = {
+  id: '',
+  dataset: {},
+  textContent: '',
+  className: '',
+  setAttribute() {},
+  getAttribute: () => null,
+  appendChild() {},
+  addEventListener() {},
+  remove() {},
+}
 
 globalThis.window = {
   location: { origin: 'http://dsh.invalid' },
@@ -62,6 +74,7 @@ globalThis.window = {
 }
 globalThis.document = {
   head: { appendChild() {} },
+  body: { appendChild() {} },
   createElement: () => ({ ...style, dataset: {} }),
   querySelector: () => null,
 }
