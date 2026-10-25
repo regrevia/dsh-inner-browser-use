@@ -71,6 +71,10 @@
   second guest on the same session partition and takes the pixels from there,
   instead of refusing.
 
+  Corrected in `0.6.10`: that second guest never produced pixels — a guest that
+  is not drawn cannot be captured — so the claim above is wrong. Pixels still
+  need the chat's page on screen; every other tool does not.
+
 ## 0.5.5
 
 - The readme says plainly that pixels need that chat's page on screen, while
