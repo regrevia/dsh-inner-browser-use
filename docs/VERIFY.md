@@ -74,16 +74,19 @@ that load the page module with a fake module loader and a fake `EventSource`.
 `node ~/.dsh/skills/ui-restraint/scripts/ui-copy-lint.mjs .` must print
 `ui-copy-lint: clean.`
 
-## A capture needs that chat's page on screen
+## A capture needs that chat's page to be drawn
 
 Reading, clicking and typing drive the page itself, so they work while you are
-looking at another chat. Pixels are different: the page has to be drawn by the
-app for a capture to exist, so this chat's view is parked out of sight at a real
-size while another chat is on screen, and the capture takes the live page from
-there. The frame `why:"capture-parked"` records the size it managed.
+looking at another chat. Pixels are different: they come from a surface the app
+is drawing. A view sitting behind another conversation's view is not drawn — the
+guest keeps a real size (`575x1015`) and `capturePage` never answers at all, so
+the tool tries twice for a short time and then reports what it got, rather than
+waiting fifteen seconds. `browser_script` still reads that page.
 
-When it still cannot be drawn, the tool answers `this chat's page is not on
-screen`. The proof log carries the reason in the frame next to it:
+A view the app has hidden outright is parked out of sight at a real size instead,
+which keeps it drawn; the frame `why:"capture-parked"` records the size it got.
+
+The proof log carries the reason in the frame next to it:
 
 ```bash
 tail -5 /tmp/dsh-inner-browser-use.log   # look for "why":"shot-geometry"
