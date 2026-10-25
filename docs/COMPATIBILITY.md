@@ -18,7 +18,7 @@ What this plugin assumes, and what it degrades to when an assumption fails.
 
 Installing this plugin changes nothing a user already had:
 
-- No shipped tab type is replaced or wrapped: it owns `inner-browser-use` only.
+- Nothing shipped is wrapped or shadowed: the browser tab, its kind, its tools' behaviour and its partition are the product's; this plugin only drives them.
 - No guide card: the `开始` pane renders exactly the entries it had before. A
   client test asserts the registered tab type carries no `guide` array.
 - No global CSS: every rule is scoped under the pane's own class.
@@ -35,7 +35,7 @@ Installing this plugin changes nothing a user already had:
 
 ## Coexistence
 
-- The tab kind is `inner-browser-use`. The built-in `browser` kind is never registered, wrapped, or shadowed.
+- The tab kind is `browser` — the built-in browser's own. This plugin registers no tab kind of its own.
 - The route prefix is `/dsh-inner-browser-use`. Nothing is mounted under `/api`.
 - The guest partition is the workspace's own `dsh-sidebar-browser-<uuid>`. Two plugins leasing the same workspace key share storage, exactly as two built-in tabs do.
 
@@ -56,7 +56,7 @@ Installing this plugin changes nothing a user already had:
   from the page (`transform`, `opacity 1`, the top `z-index`), and the click reply
   names the point, but no capture of a page the app is drawing has been taken
   since the pointer stayed for eight seconds.
-- The built-in browser's own tab continuing to work while this plugin's tab is also open (they share a partition by design, but the two kinds have never been opened side by side here).
+- The built-in browser's own tab continuing to work while an agent is driving it: a call for the chat on screen uses the same tab, so watching and driving are the same pane.
 - `browser_selection` and `browser_copy` in the app: the half that carries them
   loads on the next start of the app. Their bridge is covered by
   `test/host.test.mjs`.

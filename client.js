@@ -1964,7 +1964,7 @@ window.__ModuleLoader__.load({
               currentSession = seen
               beat({ tabType: registered, phase: 'route', session: seen })
             }
-            beat({ tabType: registered, phase: 'alive', session: currentSession })
+            beat({ tabType: registered, phase: 'alive', native: NATIVE_MODE, session: currentSession })
           }, ALIVE_MS)
           return () => clearInterval(tick)
         }, 'dsh-inner-browser-use: alive')
