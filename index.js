@@ -287,6 +287,15 @@ export class Bridge {
     return dir === '' ? undefined : dir
   }
 
+  folderOf(sessionId) {
+    try {
+      const dir = String(this.hostFolder?.(sessionId) ?? '')
+      return dir === '' ? undefined : dir
+    } catch {
+      return undefined
+    }
+  }
+
   /** @param {string} sessionId - owning chat. @param {import('node:http').ServerResponse} res - response being closed. */
   detach(sessionId, res) {
     const seat = this.seats.get(sessionId)
@@ -625,7 +634,8 @@ function tools(bridge, sinks) {
         )
         const png = value?.png
         if (typeof png !== 'string' || png === '') throw new Error('the page returned no image')
-        const base = bridge.cwdOf(String(exec.agent?.id ?? '')) ?? exec.agent?.cwd ?? process.cwd()
+        const chat = String(exec.agent?.id ?? '')
+        const base = bridge.cwdOf(chat) ?? exec.agent?.cwd ?? bridge.folderOf(chat) ?? process.cwd()
         const dir = await bridge.room(base, SHOT_DIR)
         const file = join(dir, `shot-${Date.now()}.png`)
         await writeFile(file, decodeBase64(png))
@@ -653,7 +663,8 @@ function tools(bridge, sinks) {
        * @returns {Promise<{text: string}>} absolute path of the saved file.
        */
       execute: async (args, exec) => {
-        const base = bridge.cwdOf(String(exec.agent?.id ?? '')) ?? exec.agent?.cwd ?? process.cwd()
+        const chat = String(exec.agent?.id ?? '')
+        const base = bridge.cwdOf(chat) ?? exec.agent?.cwd ?? bridge.folderOf(chat) ?? process.cwd()
         const dir = await bridge.room(base, DOWNLOAD_DIR)
         /* The page never names a folder: this ticket is the one folder its bytes
            may reach, and it dies with the call. */
@@ -736,6 +747,18 @@ export function apply(ctx, config = {}) {
   const sinks = new Map()
   if (Number.isInteger(config.openWaitMs)) bridge.openWaitMs = config.openWaitMs
   ctx.effect(() => () => bridge.dispose(), 'dsh-inner-browser-use: bridge lifetime')
+  /* Each chat works in a folder the app already knows; asking it is cheaper
+     than waiting for the page to say so. */
+  bridge.hostFolder = (chat) => {
+    try {
+      const session = ctx.get('sessions')?.get?.(chat)
+      if (session === undefined || session === null) return undefined
+      const dir = String(ctx.get('workingDirectory')?.get?.(session) ?? '')
+      return dir === '' ? undefined : dir
+    } catch {
+      return undefined
+    }
+  }
 
   /** @param {import('node:http').IncomingMessage} req - request. @param {import('node:http').ServerResponse} res - response. */
   const handler = async (req, res) => {
@@ -830,7 +853,7 @@ export function apply(ctx, config = {}) {
         pending: bridge.waiters.size,
         client: clientState(bridge.client),
         /* Where a chat's files would land, when its tab told us the folder. */
-        folders: Object.fromEntries(bridge.connected().map((chat) => [chat, bridge.cwdOf(chat) ?? ''])),
+        folders: Object.fromEntries(bridge.connected().map((chat) => [chat, bridge.cwdOf(chat) ?? bridge.folderOf(chat) ?? ''])),
       }))
       return
     }

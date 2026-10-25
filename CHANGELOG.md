@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.10
+
+- A chat's folder is resolved even when its own tab never named one, so the state page and the files a page hands over
+  always point inside that chat's project folder.
+
 ## 0.8.9
 
 - The chat on screen is read from its header once, without a diagnostic pass, and the panel is taken only for that chat or

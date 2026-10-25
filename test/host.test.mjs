@@ -24,6 +24,15 @@ const defs = new Map()
 let server
 let origin
 
+/** A chat's folder, as the Host knows it. */
+const HOST_FOLDER = '/Users/somebody/project'
+
+/** What the Host answers when a chat's tab never named its folder. */
+const services = {
+  sessions: { get: (id) => (id === '' ? undefined : { id }) },
+  workingDirectory: { get: () => HOST_FOLDER },
+}
+
 /**
  * A plugin context with only what the plugin touches.
  * @returns {any} context.
@@ -52,6 +61,7 @@ function context() {
         return disposable
       },
     },
+    get: (name) => services[name],
     logger: { info() {} },
   }
 }
@@ -232,6 +242,13 @@ test('the state route says where each chat writes', async () => {
   assert.equal(state.folders['chat-11'], project)
   seat.stop()
   await rm(project, { recursive: true, force: true })
+})
+
+test('a chat with no folder in its tab still reports the folder the Host knows', async () => {
+  const seat = await tab('chat-12')
+  const state = await call('/state').then((response) => response.json())
+  assert.equal(state.folders['chat-12'], HOST_FOLDER)
+  seat.stop()
 })
 
 test('a client heartbeat is visible in the state route', async () => {
