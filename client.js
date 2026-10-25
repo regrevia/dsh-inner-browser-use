@@ -1449,6 +1449,7 @@ window.__ModuleLoader__.load({
 
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
     function keepResident(sessionId) {
+      beat({ phase: 'keep-enter', session: sessionId, held: residents.size, pane: paneSessions.has(sessionId) })
       if (sessionId === '') return
       /* A guest that lost its page is not the one this call needs: it goes, and
          the chat gets a page again. */
@@ -2539,6 +2540,7 @@ window.__ModuleLoader__.load({
             }
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })
             if (NATIVE_MODE === true) setTimeout(() => beat({ phase: 'dom-probe', session: sessionId, ...domDump() }), 1_500)
+            beat({ phase: 'keep-ask', session: sessionId, held: residents.size, shown: paneSessions.size })
             keepResident(sessionId)
           }
           const open = () => {
