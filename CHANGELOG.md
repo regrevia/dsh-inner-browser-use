@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.13
+
+- Every column still up gets its tab back after an update, once per chat, and
+  the page it had is loaded again instead of a blank one.
+
 ## 0.11.12
 
 - An update of this plugin no longer costs the page: when the column is already

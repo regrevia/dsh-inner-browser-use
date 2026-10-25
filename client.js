@@ -1340,6 +1340,8 @@ window.__ModuleLoader__.load({
     /* A chat's tab is asked for once: asking again rebuilds the page under a
        call that is already using it. The mark is cleared with the pane. */
     const tabAsked = new Set()
+    /* A chat whose tab was closed by an update is asked for once, at boot. */
+    const restoredOnce = new Set()
     /* Chats whose own pane is open. Their pane owns the wire, so no stashed
        guest is made for them: two guests on one chat leave the wire pointing at
        whichever opened last, which is the one nobody can see. */
@@ -2119,35 +2121,47 @@ window.__ModuleLoader__.load({
           }
           /* A tab asked for by a page that has since reloaded is not remembered. */
           tabAsked.clear()
-          /* An update of this plugin rebuilds the page, which closes the tab this
-             chat had. When the column is already up, the tab goes back without
+          /* An update of this plugin rebuilds the page, which closes the tabs it
+             had. Every column that is still up gets its tab back, without
              pressing anything, so an update does not cost the page. */
           if (NATIVE_MODE === true) {
             setTimeout(() => {
               const restore = async () => {
-                const session = currentSession
-                const url = rememberedPage(session)
-                if (session === '' || url === '' || panelOf(session).length === 0 || nativeElement(session) !== null) return
+                /** @type {string[]} */
+                const ask = []
                 try {
-                  scope.sidebarRight.openTabIn(session, NATIVE_KIND, {}) // ui-copy-ignore
+                  for (const node of Array.from(document.querySelectorAll('[data-sidebar-right-session]'))) {
+                    const session = String(node.dataset?.sidebarRightSession ?? '')
+                    if (session === '' || rememberedPage(session) === '') continue
+                    if (nativeElement(session) !== null || restoredOnce.has(session)) continue
+                    ask.push(session)
+                    restoredOnce.add(session)
+                  }
                 } catch {
                   return
                 }
-                for (let wait = 0; wait < 30; wait += 1) {
-                  await new Promise((resolve) => setTimeout(resolve, 100))
-                  const el = nativeElement(session)
-                  if (el === null) continue
+                beat({ tabType: registered, phase: 'restore-tab', sessions: ask })
+                for (const session of ask.slice(0, 2)) {
+                  const url = rememberedPage(session)
                   try {
-                    const here = String(el.getURL?.() ?? '')
-                    if (here !== '' && here !== 'about:blank') return
-                    el.loadURL(url)
+                    scope.sidebarRight.openTabIn(session, NATIVE_KIND, {}) // ui-copy-ignore
                   } catch {
-                    /* the tab is mid-teardown; the next call reopens the page */
+                    continue
                   }
-                  return
+                  for (let wait = 0; wait < 30; wait += 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 100))
+                    const el = nativeElement(session)
+                    if (el === null) continue
+                    try {
+                      const here = String(el.getURL?.() ?? '')
+                      if (here === '' || here === 'about:blank') el.loadURL(url)
+                    } catch {
+                      /* the tab is mid-teardown; the next call reopens the page */
+                    }
+                    break
+                  }
                 }
               }
-              beat({ tabType: registered, phase: 'restore-tab', session: currentSession, url: rememberedPage(currentSession) })
               restore().catch(() => {})
             }, 3_000)
           }

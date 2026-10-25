@@ -444,3 +444,45 @@ test('a page a chat was told to open is read back after a remount', () => {
     else Object.defineProperty(globalThis.window, 'localStorage', was)
   }
 })
+
+test('an update that closed the tab brings it back for the chat on screen', async () => {
+  const chat = 'session-abcd1234ef56'
+  const store = new Map([['dshib:url:' + chat, 'https://example.org/keep']])
+  const wasStorage = Object.getOwnPropertyDescriptor(globalThis.window, 'localStorage')
+  const wasLocation = globalThis.window.location
+  Object.defineProperty(globalThis.window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => store.set(key, String(value)),
+    },
+  })
+  const loaded = []
+  const opened = []
+  const webview = {
+    getURL: () => 'about:blank',
+    loadURL: (to) => loaded.push(to),
+    addEventListener: () => {},
+    getBoundingClientRect: () => ({ width: 575, height: 900 }),
+  }
+  const panel = (guest) => ({
+    dataset: { sidebarRightSession: chat },
+    getBoundingClientRect: () => ({ width: 575, height: 900 }),
+    querySelector: (selector) => (guest === true && String(selector).includes('webview') ? webview : null),
+    querySelectorAll: (selector) => (guest === true && selector === 'webview' ? [webview] : []),
+  })
+  try {
+    globalThis.window.location = { origin: 'http://dsh.invalid', href: 'http://dsh.invalid/' + chat }
+    const { beats, opened } = scene()
+    globalThis.__panels.push(panel(false))
+    setTimeout(() => globalThis.__panels.push(panel(true)), 1_000)
+    await new Promise((resolve) => setTimeout(resolve, 4_000))
+    assert.equal(beats.filter((frame) => frame.includes('restore-tab')).length > 0, true)
+    assert.deepEqual(loaded, ['https://example.org/keep'])
+  } finally {
+    if (wasStorage === undefined) delete globalThis.window.localStorage
+    else Object.defineProperty(globalThis.window, 'localStorage', wasStorage)
+    globalThis.window.location = wasLocation
+    globalThis.__panels = []
+  }
+})
