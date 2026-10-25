@@ -340,15 +340,15 @@ async function record(line) {
  * @returns {{text: string}} tool value.
  */
 /**
- * Turn base64 into bytes. A plugin runs without Node globals in some hosts, so
- * `Buffer` is used when present and the page's own decoder otherwise.
+ * Turn base64 into bytes without naming a global the tool context may hide.
  * @param {string} value - base64 text.
- * @returns {any} bytes a write accepts.
+ * @returns {Uint8Array} bytes a write accepts.
  */
 function decodeBase64(value) {
-  const text = String(value)
-  if (typeof Buffer !== 'undefined') return Buffer.from(text, 'base64')
-  return Uint8Array.from(atob(text), (character) => character.charCodeAt(0))
+  const binary = atob(String(value))
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return bytes
 }
 
 function asValue(text) {
