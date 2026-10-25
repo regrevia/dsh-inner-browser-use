@@ -279,6 +279,26 @@ export class Bridge {
       this.want(sessionId)
       await this.waitSeat(sessionId, this.openWaitMs, signal)
     }
+    try {
+      return await this.attempt(sessionId, tool, args, signal, timeoutMs)
+    } catch (error) {
+      /* A page that just came back has a moment before it can take a call. */
+      if (!String(error?.message ?? error).includes('must be attached to the DOM')) throw error
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      return this.attempt(sessionId, tool, args, signal, timeoutMs)
+    }
+  }
+
+  /**
+   * One round trip to the page.
+   * @param {string} sessionId - target chat.
+   * @param {string} tool - operation the Client understands.
+   * @param {Record<string, unknown>} args - operation arguments.
+   * @param {AbortSignal | undefined} signal - cancellation from the tool layer.
+   * @param {number} timeoutMs - how long the operation may take.
+   * @returns {Promise<unknown>} the Client's reply value.
+   */
+  async attempt(sessionId, tool, args, signal, timeoutMs) {
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     if (!this.push(sessionId, { type: 'call', id, tool, args, session: sessionId })) throw new Error(NO_TAB)
     return new Promise((resolve, reject) => {

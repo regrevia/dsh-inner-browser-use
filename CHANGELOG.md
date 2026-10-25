@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3
+
+- A page that has just come back takes the call on the second try instead of
+  failing the first one.
+
 ## 0.5.2
 
 - A capture can open what it needs: the pane and the tab are now reachable from
