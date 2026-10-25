@@ -66,6 +66,7 @@ window.__ModuleLoader__.load({
       '.dshib-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);flex:none}',
       '.dshib-state[data-tone="ready"] .dshib-dot{background:var(--dsw-alias-label-success)}',
       '.dshib-state[data-tone="error"] .dshib-dot{background:var(--dsw-alias-label-danger)}',
+      '.dshib-href{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;direction:rtl}',
     ].join('')
 
     /**
@@ -610,6 +611,17 @@ window.__ModuleLoader__.load({
           if ((await ready) === false) throw new Error(L('error.lease'))
           if (disposed) return
           options.onPhase('ready')
+          /* The pane shows which page it holds; the guest is the only one that
+             knows, so it reports every navigation it makes. */
+          const tellUrl = () => {
+            try {
+              const here = String(webview.getURL?.() ?? '')
+              if (here !== '') options.onUrl?.(here)
+            } catch { /* a guest mid-teardown has no URL */ }
+          }
+          webview.addEventListener('did-navigate', tellUrl)
+          webview.addEventListener('did-navigate-in-page', tellUrl)
+          tellUrl()
 
           cancel = readFrames(
             (await fetch(`${ROUTE}/downlink?session=${encodeURIComponent(options.sessionId)}`, { cache: 'no-store' })).body,
@@ -766,7 +778,16 @@ window.__ModuleLoader__.load({
                   }
                   if (frame.tool === 'script') {
                     const body = String(frame.args?.code ?? '')
-                    const result = await webview.executeJavaScript('(async () => {\n' + body + '\n})()', true)
+                    /* A bare script returns its completion value, so "1 + 1" and
+                       "const a = 1; a + 1" both answer. Only code that needs a
+                       function body — a top-level await or return — falls back
+                       to the wrapper, because the wrapper hides completion. */
+                    let result
+                    try {
+                      result = await webview.executeJavaScript(body, true)
+                    } catch {
+                      result = await webview.executeJavaScript('(async () => {\n' + body + '\n})()', true)
+                    }
                     const text = typeof result === 'string' ? result : JSON.stringify(result ?? null)
                     reply({ ok: true, value: text.slice(0, 8000) })
                     return
@@ -792,6 +813,7 @@ window.__ModuleLoader__.load({
       const host = React.useRef(null) // ui-copy-ignore
       const [phase, setPhase] = React.useState('opening')
       const [error, setError] = React.useState('')
+      const [href, setHref] = React.useState('')
       React.useEffect(() => {
         if (host.current === null) return undefined // ui-copy-ignore
         currentSession = props.sessionId
@@ -799,6 +821,7 @@ window.__ModuleLoader__.load({
           host: host.current, // ui-copy-ignore
           sessionId: props.sessionId,
           key: props.workspace, // ui-copy-ignore
+          onUrl: setHref,
           onPhase: (next, message) => { // ui-copy-ignore
             setPhase(next)
             if (next === 'ready') dropResident(props.sessionId)
@@ -813,6 +836,7 @@ window.__ModuleLoader__.load({
         h('div', { key: 'state', className: 'dshib-state', 'data-tone': tone }, [
           h('span', { key: 'dot', className: 'dshib-dot' }),
           h('span', { key: 'text' }, error !== '' ? error : L(`phase.${phase}`)),
+          h('span', { key: 'href', className: 'dshib-href', title: href }, href),
         ]),
         h('div', { key: 'host', ref: host, className: 'dshib-viewport' }), // ui-copy-ignore
       ])

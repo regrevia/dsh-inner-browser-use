@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.13
+
+- `browser_script` answers with the script's completion value again: the guest
+  ran the code inside a function body and threw the value away, so `1 + 1` and
+  `const a = 40; a + 2` both read `null`. Code that needs a function body (a
+  top-level `await` or `return`) still gets one.
+- The pane header shows the page it holds and updates on navigation; the guest
+  is the only half that knows the address.
+
 ## 0.6.12
 
 - The package declares the host it needs (`>=0.2.0`), so the card can say which

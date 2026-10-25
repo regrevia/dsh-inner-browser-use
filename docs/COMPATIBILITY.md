@@ -89,3 +89,13 @@ when a pane for the same chat reports ready, that guest is dropped so one page
 serves the chat at a time. The proof log names both halves: `resident-opening`,
 `resident-ready`, then `resident-closed` and `resident-drop` once a pane took
 over.
+
+## Downloads never land
+
+The host cancels every download: its browser session installs
+`will-download` with `event.preventDefault()`. There is no default download
+folder and nothing for the user to configure, so a page's own download link,
+a `<a download>` click, and a blob URL all do nothing.
+
+Move a big file out of a page by reading its bytes inside the page and writing
+them from the chat side — the sidebar browser is a view, not a file channel.
