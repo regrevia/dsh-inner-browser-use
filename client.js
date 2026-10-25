@@ -1447,7 +1447,12 @@ window.__ModuleLoader__.load({
 
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
     function keepResident(sessionId) {
-      if (sessionId === '' || residents.has(sessionId)) return
+      if (sessionId === '') return
+      /* A guest that lost its page is not the one this call needs: it goes, and
+         the chat gets a page again. */
+      const kept = residents.get(sessionId)
+      if (kept !== undefined && kept.alive() !== false) return
+      if (kept !== undefined) dropResident(sessionId)
       if (paneSessions.has(sessionId)) return
       /* Three pages out of sight is enough to answer what is being asked; the
          oldest one goes so a long session cannot pile them up. */
@@ -2019,7 +2024,11 @@ window.__ModuleLoader__.load({
         }
       })()
 
-      return { dispose }
+      return {
+        dispose,
+        /** @returns {boolean} true while this guest still holds a live page. */
+        alive: () => disposed !== true && webview !== undefined && webview.isConnected !== false,
+      }
     }
 
     /** @param {{sessionId: string, key: () => Promise<string>}} props - slot props. @returns {any} element. */
