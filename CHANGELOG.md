@@ -4,6 +4,10 @@ The column that a call needs is expanded through the control the product already
 
 # Changelog
 
+## 0.11.20
+
+- 不在屏幕上的会话只在侧栏之外干自己的活，不再请求任何标签页。
+
 ## 0.11.19
 
 - 不在屏幕上的会话也能让它的页面干完活：页面在侧栏之外打开，用同一份登录状态，不动你正在看的窗口。

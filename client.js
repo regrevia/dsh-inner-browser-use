@@ -1459,6 +1459,7 @@ window.__ModuleLoader__.load({
       beat({ tabType: true, phase: 'resident-open', session: sessionId })
       const guest = mountGuest({
         host: stashHost(), // ui-copy-ignore
+        hidden: true,
         sessionId,
         key: () => keyForSession(sessionId),
         onPhase: (next, error) => beat({ tabType: true, phase: `resident-${next}`, session: sessionId, error: error ?? '' }),
@@ -1506,7 +1507,7 @@ window.__ModuleLoader__.load({
         }
         options.onPhase('opening')
         try {
-          if (NATIVE_MODE === true) {
+          if (NATIVE_MODE === true && options.hidden !== true) {
             /* The product's tab owns the page. This end answers that page's
                wire and nothing else: no lease, no element of its own. */
             owns = false
@@ -1526,6 +1527,8 @@ window.__ModuleLoader__.load({
               webview = await hiddenGuest(options.sessionId)
             }
             options.onPhase(webview === undefined ? 'waiting' : 'ready')
+            /* A chat with no column up gets its page made here instead, and the
+               product is never asked for a tab on its behalf. */
             if (webview !== undefined) {
               steer.set(options.sessionId, (to) => {
                 rememberPage(options.sessionId, to)
@@ -1551,6 +1554,32 @@ window.__ModuleLoader__.load({
               }
               note()
             }
+          } else if (options.hidden === true && NATIVE_MODE === true) {
+            /* No column is showing this chat, so its page is made out of sight;
+               the product's own tabs are left as the person left them. */
+            owns = true
+            webview = await hiddenGuest(options.sessionId)
+            options.onPhase('ready')
+            steer.set(options.sessionId, (to) => {
+              rememberPage(options.sessionId, to)
+              try {
+                webview.loadURL(to)
+              } catch (error) {
+                probe?.({ why: 'steer-failed', url: to, error: String(error?.message ?? error).slice(0, 80) })
+              }
+            })
+            const note = () => {
+              try {
+                const here = String(webview.getURL?.() ?? '')
+                if (here === '' || here.startsWith('about:blank')) return
+                rememberPage(options.sessionId, here)
+                options.onUrl?.(here)
+              } catch { /* a page mid-teardown has no URL */ }
+            }
+            for (const kind of ['did-navigate', 'did-navigate-in-page', 'did-stop-loading']) {
+              webview.addEventListener(kind, note)
+            }
+            note()
           } else {
             key = await options.key()
             lease = await bridge.acquire(key)
