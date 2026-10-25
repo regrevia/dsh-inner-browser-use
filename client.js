@@ -469,35 +469,7 @@ window.__ModuleLoader__.load({
 
     async function grab(el) {
       const notes = []
-      /* The window owns the view, so it can hand over an image even when the app
-         draws nothing there. Cheap, and the only answer while the tab sits
-         behind the chat, so it is asked first in that case. */
-      const fromWindow = async () => {
-        try {
-          const wcid = typeof el.getWebContentsId === 'function' ? (el.getWebContentsId() ?? 0) : 0
-          if (wcid <= 0) return ''
-          const asked = await fetch(`${ROUTE}/capture?wcid=${wcid}`, { cache: 'no-store' }) // ui-copy-ignore
-          if (asked.ok) {
-            const body = await asked.json().catch(() => null)
-            if (typeof body?.png === 'string' && body.png !== '') return body.png
-          }
-          notes.push('window: ' + asked.status + ' ' + (await asked.text().catch(() => '')).slice(0, 80))
-        } catch (error) {
-          notes.push('window: ' + String(error?.message ?? error).slice(0, 60))
-        }
-        return ''
-      }
-      let drawn = false
-      try {
-        const box = el.getBoundingClientRect()
-        drawn = box.width >= 2 && box.height >= 2 && el.closest('[hidden]') === null
-      } catch {
-        drawn = false
-      }
-      if (drawn !== true) {
-        const early = await fromWindow()
-        if (early !== '') return early
-      }
+
       let bug = null
       try {
         bug = el.debugger ?? null

@@ -2,13 +2,14 @@
 
 ## 0.7.3
 
-- Asking for an image no longer fails silently when the window cannot offer one: the answer says which step refused,
-  so the next try has a cause to work from.
-- A hidden page is given a surface by bringing the page itself forward, not only the box around it. A guest marked
-  hidden kept its size but was never drawn, so every image of it came back blank.
-- This chat's browser tab comes forward again while a call drives it. Another chat's tab still never does.
-- A page that is already in this chat's pane is left mounted instead of being opened again, which used to close the
-  page the call was about to use and rebuild it from scratch.
+- This chat's browser tab comes forward while a call drives it, so the page is there to see and to photograph.
+  Another chat's tab still never comes forward, and the column that belongs to nobody stays shut.
+- A page marked hidden is drawn again by bringing the page itself forward, not only the box around it. It kept its
+  size but was never painted, which is why every image of it came back blank.
+- A page already in this chat's pane is left mounted instead of being opened again, which used to close the page
+  the call was about to use and rebuild it from scratch.
+- The attempt to read an image from outside the page is gone: this half runs where the window is out of reach, so
+  the answer was always nothing.
 
 ## 0.7.2
 

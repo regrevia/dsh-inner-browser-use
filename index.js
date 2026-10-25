@@ -25,7 +25,6 @@
  */
 
 import { createWriteStream } from 'node:fs'
-import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
@@ -35,9 +34,6 @@ const SHOT_DIR = '.dsh-inner-browser-use'
 
 /** Where files the page offers land inside the chat's working directory. */
 const DOWNLOAD_DIR = join(SHOT_DIR, 'downloads')
-
-/** The largest screenshot this half hands over, in bytes of base64. */
-const MAX_SHOT_BASE64 = 12 * 1024 * 1024 // ui-copy-ignore
 
 /** Largest file the plugin will push into a page. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -387,82 +383,6 @@ function asValue(text) {
   return { text }
 }
 
-/** The app's own module table, which is the only thing that owns a guest view. */
-const requireApp = createRequire(import.meta.url)
-
-/**
- * The module that owns guest views.
- * @returns {any} its `webContents`, or null.
- */
-function viewOwner() {
-  const asks = [
-    () => requireApp('electron'),
-    () => process.mainModule?.require?.('electron'),
-    () => globalThis.require?.('electron'),
-  ]
-  for (const ask of asks) {
-    try {
-      const mod = ask()
-      const owner = mod?.webContents ?? mod?.default?.webContents ?? null
-      if (owner !== null) return owner
-    } catch {
-      /* the next way of asking may still resolve */
-    }
-  }
-  return null
-}
-
-/**
- * Read a guest as a PNG from outside its page.
- *
- * A page the app is not drawing has no surface to copy, so the page's own
- * capture answers with nothing. A renderer still rasterises itself when the
- * debugger asks it to, which is what happens here before the plain copy.
- * @param {number} wcid - guest identifier.
- * @returns {Promise<string>} base64 PNG, empty when no image came back.
- */
-async function captureView(wcid) {
-  const notes = []
-  if (Number.isInteger(wcid) !== true || wcid <= 0) return { png: '', why: 'no view named' }
-  const owner = viewOwner()
-  if (owner === null) return { png: '', why: 'no window to ask' }
-  const view = owner.fromId?.(wcid) ?? null
-  if (view === null) return { png: '', why: 'no view ' + String(wcid) }
-  if (view.isDestroyed?.() === true) return { png: '', why: 'view closed' }
-  const bug = view.debugger ?? null // ui-copy-ignore
-  if (bug !== null) {
-    let attached = false
-    try {
-      await bug.attach('1.3')
-      attached = true
-      const shapes = [{ format: 'png', fromSurface: false, captureBeyondViewport: true }, { format: 'png' }]
-      for (const shape of shapes) {
-        try {
-          const shot = await bug.sendCommand('Page.captureScreenshot', shape)
-          if (typeof shot?.data === 'string' && shot.data !== '') return { png: shot.data, why: '' }
-        } catch (error) {
-          notes.push('debugger: ' + String(error?.message ?? error).slice(0, 60))
-        }
-      }
-    } catch (error) {
-      notes.push('debugger: ' + String(error?.message ?? error).slice(0, 60))
-    } finally {
-      if (attached) bug.detach().catch(() => {})
-    }
-  } else {
-    notes.push('debugger: absent')
-  }
-  try {
-    const image = await view.capturePage()
-    const png = image?.toPNG?.() ?? null
-    if (png === null || png.length === 0) notes.push('copy: empty')
-    else if (png.length > MAX_SHOT_BASE64) notes.push('copy: too large')
-    else return { png: png.toString('base64'), why: '' }
-  } catch (error) {
-    notes.push('copy: ' + String(error?.message ?? error).slice(0, 60))
-  }
-  return { png: '', why: notes.join('; ') }
-}
 
 /** The largest saved file the chat reads back in the same result. */
 const INLINE_BYTES = 200_000 // ui-copy-ignore
@@ -868,20 +788,6 @@ export function apply(ctx, config = {}) {
     if (path === '/state' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ connected: bridge.connected(), pending: bridge.waiters.size, client: clientState(bridge.client) }))
-      return
-    }
-
-    if (path === '/capture' && req.method === 'GET') {
-      /* Only the page that holds this chat's seat may ask, and the answer is an
-         image of a guest the window already owns. */
-      const taken = await captureView(Number(url.searchParams.get('wcid') ?? ''))
-      if (taken.png === '') {
-        res.writeHead(503, { 'content-type': 'text/plain' })
-        res.end('no image: ' + taken.why)
-        return
-      }
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ png: taken.png }))
       return
     }
 

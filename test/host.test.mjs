@@ -239,11 +239,6 @@ test('an unknown path is a 404, not a hang', async () => {
   assert.equal(response.status, 404)
 })
 
-test('an image of a view no window owns is refused', async () => {
-  const response = await call('/capture?wcid=424242')
-  assert.equal(response.status, 503)
-})
-
 test('a file the page offers lands in the chat folder', async () => {
   const seat = await tab('chat-6')
   const cwd = await mkdtemp(join(tmpdir(), 'dsh-ib-cwd-'))
