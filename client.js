@@ -66,7 +66,8 @@ window.__ModuleLoader__.load({
       '.dshib-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);flex:none}',
       '.dshib-state[data-tone="ready"] .dshib-dot{background:var(--dsw-alias-label-success)}',
       '.dshib-state[data-tone="error"] .dshib-dot{background:var(--dsw-alias-label-danger)}',
-      '.dshib-href{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;direction:rtl}',
+      '.dshib-href{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;direction:rtl;background:transparent;border:0;padding:0;font:inherit;color:var(--dsh-text-2,inherit)}',
+      '.dshib-href:focus{outline:none;text-align:left;direction:ltr;color:var(--dsh-text-1,inherit)}',
     ].join('')
 
     /**
@@ -197,6 +198,34 @@ window.__ModuleLoader__.load({
         el.dispatchEvent(new KeyboardEvent('keypress', init))
         el.dispatchEvent(new KeyboardEvent('keyup', init))
       }
+      const keep = () => (W.__dshib_dl = W.__dshib_dl || {})
+      const join64 = (parts) => {
+        let size = 0
+        for (const part of parts) size += part.length
+        const all = new Uint8Array(size)
+        let at = 0
+        for (const part of parts) { all.set(part, at); at += part.length }
+        let s = ''
+        for (let i = 0; i < all.length; i += 8192) s += String.fromCharCode.apply(null, all.subarray(i, i + 8192))
+        return W.btoa(s)
+      }
+      const fileUrl = (a) => {
+        if (typeof a.url === 'string' && a.url !== '') return a.url
+        if (a.ref === undefined) throw new Error('give a url, or the control that links to the file')
+        const el = find(a.ref)
+        const holder = el.closest('a[href]') || el
+        const href = holder.getAttribute('href') || holder.getAttribute('src') || holder.src || ''
+        if (href === '' || href.startsWith('javascript:')) throw new Error('#' + a.ref + ' carries no file address')
+        return new URL(href, location.href).href
+      }
+      const fileName = (a, url, res) => {
+        if (typeof a.name === 'string' && a.name !== '') return a.name
+        const sent = res.headers.get('content-disposition') || ''
+        const named = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(sent)
+        if (named !== null) return decodeURIComponent(named[1])
+        const tail = new URL(url).pathname.split('/').filter(Boolean).pop() || ''
+        return tail === '' ? 'download' : decodeURIComponent(tail)
+      }
       const run = async (op, a) => {
         chrome()
         if (op === 'view') return view()
@@ -278,9 +307,97 @@ window.__ModuleLoader__.load({
           await sleep(320)
           return 'Attached ' + a.name + ' to #' + a.ref + '\n' + view()
         }
+        if (op === 'href') {
+          return fileUrl({ ref: a.ref })
+        }
+        if (op === 'dl-open') {
+          const url = fileUrl(a)
+          const res = await fetch(url, { credentials: 'include', redirect: 'follow' })
+          if (res.ok !== true) throw new Error('the page answered ' + res.status + ' for ' + url.slice(0, 160))
+          if (res.body === null) throw new Error('this page cannot stream ' + url.slice(0, 160))
+          const name = fileName(a, url, res)
+          const type = res.headers.get('content-type') || ''
+          keep()[String(a.id || 'dl')] = { reader: res.body.getReader() }
+          return { name, type, size: Number(res.headers.get('content-length') || 0) }
+        }
+        if (op === 'dl-next') {
+          const id = String(a.id || 'dl')
+          const entry = (W.__dshib_dl || {})[id]
+          if (entry === undefined) throw new Error('no transfer ' + id)
+          const parts = []
+          let size = 0
+          while (size < 512 * 1024) {
+            const step = await entry.reader.read()
+            if (step.done === true) {
+              delete W.__dshib_dl[id]
+              return { data: join64(parts), done: true }
+            }
+            parts.push(step.value)
+            size += step.value.length
+          }
+          return { data: join64(parts), done: false }
+        }
         throw new Error('unknown operation ' + op)
       }
     `
+
+    /** @param {string} base64 - bytes as base64. @returns {Uint8Array} the bytes. */
+    function bytesOf(base64) {
+      const binary = atob(base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+      return bytes
+    }
+
+    /** @param {Uint8Array} bytes - raw bytes. @returns {string} the same bytes as base64. */
+    function encode64(bytes) {
+      let binary = ''
+      for (let index = 0; index < bytes.length; index += 8192) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 8192))
+      }
+      return btoa(binary)
+    }
+
+    /**
+     * A page can forbid its own network (a strict connect-src) and still show the
+     * address of the file. This half has its own network rules, so it takes over.
+     * @param {string} url - absolute address.
+     * @param {string} wanted - name the caller asked for, if any.
+     * @returns {Promise<{name: string, next: () => Promise<{data: string, done: boolean}>}>} a stream.
+     */
+    async function fetchHere(url, wanted) {
+      const res = await fetch(url, { credentials: 'omit', redirect: 'follow' })
+      if (res.ok !== true) throw new Error('this machine answered ' + res.status + ' for the address')
+      if (res.body === null) throw new Error('this machine cannot stream the address')
+      const reader = res.body.getReader()
+      const tail = new URL(url).pathname.split('/').filter(Boolean).pop() ?? ''
+      const asked = wanted !== '' ? wanted : decodeURIComponent(tail)
+      return {
+        name: asked === '' ? 'download' : asked,
+        next: async () => {
+          const parts = []
+          let size = 0
+          while (size < 512 * 1024) {
+            const step = await reader.read()
+            if (step.done === true) return { data: encode64(parts.reduce((all, part) => {
+              const next = new Uint8Array(all.length + part.length)
+              next.set(all, 0)
+              next.set(part, all.length)
+              return next
+            }, new Uint8Array(0))), done: true }
+            parts.push(step.value)
+            size += step.value.length
+          }
+          const merged = parts.reduce((all, part) => {
+            const next = new Uint8Array(all.length + part.length)
+            next.set(all, 0)
+            next.set(part, all.length)
+            return next
+          }, new Uint8Array(0))
+          return { data: encode64(merged), done: false }
+        },
+      }
+    }
 
     /** @param {HTMLWebViewElement} el - guest. @param {string} op - operation name. @param {Record<string, unknown>} args - arguments. @returns {Promise<string>} guest answer. */
     function runIn(el, op, args) {
@@ -396,6 +513,8 @@ window.__ModuleLoader__.load({
     /** The injected pane face, reached from the capture path as well.
      *  @type {() => any} */
     let faceOf = () => undefined
+    /** The pane's own way into its guest, for an address typed by hand. @type {Map<string, (url: string) => void>} */
+    const steer = new Map()
     /** The page each chat last asked for; a reload leaves its guest at about:blank. @type {Map<string, string>} */
     const lastUrl = new Map()
     const pageKey = (session) => 'dshib:url:' + String(session ?? '')
@@ -585,6 +704,7 @@ window.__ModuleLoader__.load({
 
       const dispose = () => {
         disposed = true
+        steer.delete(options.sessionId)
         cancel()
         if (webview !== undefined) webview.remove()
         if (bridge !== undefined && lease !== undefined) bridge.release(lease)
@@ -611,6 +731,25 @@ window.__ModuleLoader__.load({
           if ((await ready) === false) throw new Error(L('error.lease'))
           if (disposed) return
           options.onPhase('ready')
+          /* A tab that was closed on a page opens on that page again, without
+             waiting for the chat to ask for anything. */
+          const kept = rememberedPage(options.sessionId)
+          if (kept !== '') {
+            try {
+              webview.loadURL(kept)
+              probe?.({ why: 'reopen', url: kept })
+            } catch (error) {
+              probe?.({ why: 'reopen-failed', url: kept, error: String(error?.message ?? error).slice(0, 80) })
+            }
+          }
+          steer.set(options.sessionId, (to) => {
+            rememberPage(options.sessionId, to)
+            try {
+              webview.loadURL(to)
+            } catch (error) {
+              probe?.({ why: 'steer-failed', url: to, error: String(error?.message ?? error).slice(0, 80) })
+            }
+          })
           /* The pane shows which page it holds; the guest is the only one that
              knows, so it reports every navigation it makes. */
           const tellUrl = () => {
@@ -776,6 +915,51 @@ window.__ModuleLoader__.load({
                       }
                     }
                   }
+                  if (frame.tool === 'download') {
+                    const id = 'dl-' + frame.id
+                    const want = String(frame.args?.name ?? '')
+                    let name = want
+                    let next = null
+                    try {
+                      const opened = await runIn(webview, 'dl-open', {
+                        id,
+                        url: frame.args?.url, // ui-copy-ignore
+                        ref: frame.args?.ref, // ui-copy-ignore
+                        name: want, // ui-copy-ignore
+                      })
+                      name = String(opened?.name ?? (want === '' ? 'download' : want))
+                      next = () => runIn(webview, 'dl-next', { id })
+                    } catch (error) {
+                      /* The page refused its own network; take the address and go
+                         around it rather than telling the user to. */
+                      const here = typeof frame.args?.url === 'string' && frame.args.url !== ''
+                        ? frame.args.url
+                        : await runIn(webview, 'href', { ref: frame.args?.ref })
+                      const mine = await fetchHere(String(here), want)
+                      name = mine.name
+                      next = mine.next
+                      probe?.({ why: 'download-half', href: String(here).slice(0, 120), error: String(error?.message ?? error).slice(0, 80) })
+                    }
+                    const ticket = String(frame.args?.ticket ?? '')
+                    let offset = 0
+                    let done = false
+                    let landed = null
+                    while (done === false) {
+                      const part = await next()
+                      const bytes = bytesOf(String(part?.data ?? ''))
+                      done = part?.done === true
+                      const answer = await fetch(
+                        `${ROUTE}/grab?ticket=${encodeURIComponent(ticket)}&name=${encodeURIComponent(name)}` // ui-copy-ignore
+                        + `&offset=${offset}&final=${done === true ? 1 : 0}`,
+                        { method: 'POST', body: bytes },
+                      )
+                      landed = await answer.json().catch(() => null)
+                      if (landed?.ok !== true) throw new Error(String(landed?.error ?? 'the file did not reach the folder'))
+                      offset += bytes.length
+                    }
+                    reply({ ok: true, value: `Saved ${landed?.path ?? ''} (${landed?.bytes ?? offset} bytes)` })
+                    return
+                  }
                   if (frame.tool === 'script') {
                     const body = String(frame.args?.code ?? '')
                     /* A bare script returns its completion value, so "1 + 1" and
@@ -785,7 +969,11 @@ window.__ModuleLoader__.load({
                     let result
                     try {
                       result = await webview.executeJavaScript(body, true)
-                    } catch {
+                    } catch (error) {
+                      /* Only a script that will not parse needs the wrapper;
+                         a script that threw must keep the message it threw. */
+                      const why = String(error?.message ?? error)
+                      if (/SyntaxError|Unexpected (token|identifier|end)|await is only valid|Illegal return/i.test(why) !== true) throw error // ui-copy-ignore
                       result = await webview.executeJavaScript('(async () => {\n' + body + '\n})()', true)
                     }
                     const text = typeof result === 'string' ? result : JSON.stringify(result ?? null)
@@ -814,6 +1002,7 @@ window.__ModuleLoader__.load({
       const [phase, setPhase] = React.useState('opening')
       const [error, setError] = React.useState('')
       const [href, setHref] = React.useState('')
+      const [draft, setDraft] = React.useState('')
       React.useEffect(() => {
         if (host.current === null) return undefined // ui-copy-ignore
         currentSession = props.sessionId
@@ -831,12 +1020,37 @@ window.__ModuleLoader__.load({
         })
         return () => guest.dispose()
       }, [props.sessionId])
+      React.useEffect(() => { setDraft(href) }, [href])
       const tone = phase === 'error' ? 'error' : phase === 'ready' ? 'ready' : 'opening'
+      /* An address is only an address once it has a scheme; a bare host is a host. */ // ui-copy-ignore
+      const open = () => {
+        const typed = draft.trim()
+        if (typed === '') return
+        let to = typed
+        if (/^[a-z][a-z0-9+.-]*:/i.test(typed) !== true) to = 'https://' + typed.replace(/^\/+/, '')
+        try {
+          new URL(to)
+        } catch {
+          return
+        }
+        steer.get(props.sessionId)?.(to)
+      }
       return h('div', { className: 'dshib-body' }, [
         h('div', { key: 'state', className: 'dshib-state', 'data-tone': tone }, [
           h('span', { key: 'dot', className: 'dshib-dot' }),
           h('span', { key: 'text' }, error !== '' ? error : L(`phase.${phase}`)),
-          h('span', { key: 'href', className: 'dshib-href', title: href }, href),
+          h('input', {
+            key: 'href',
+            className: 'dshib-href',
+            type: 'text', // ui-copy-ignore
+            value: draft, // ui-copy-ignore
+            title: href, // ui-copy-ignore
+            placeholder: L('pane.address'), // ui-copy-ignore
+            spellCheck: false, // ui-copy-ignore
+            autoComplete: 'off', // ui-copy-ignore
+            onChange: (event) => setDraft(event.target.value),
+            onKeyDown: (event) => { if (event.key === 'Enter') open() },
+          }),
         ]),
         h('div', { key: 'host', ref: host, className: 'dshib-viewport' }), // ui-copy-ignore
       ])

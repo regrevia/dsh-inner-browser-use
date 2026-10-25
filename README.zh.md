@@ -18,6 +18,7 @@
 | `browser_selection` | 返回页面里选中的文字。 |
 | `browser_copy` | 把选中内容、或某个编号控件的文字，复制到剪贴板。 |
 | `browser_screenshot` | 存一张当前画面的 PNG，返回文件路径。 |
+| `browser_download` | 把网页给的文件存进本对话的项目目录。 |
 | `browser_upload` | 把本机文件塞进一个编号的文件框。 |
 
 每次调用都可见：指针先滑到控件上，套一个光圈，页面会先把目标滚进视野。

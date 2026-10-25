@@ -45,6 +45,7 @@ browser_click     { "ref": 1 }
 browser_type      { "ref": 2, "text": "hello", "submit": true }
 browser_script    { "code": "return document.title" }
 browser_screenshot{}
+browser_download  { "url": "https://example.com/report.pdf" }
 browser_upload    { "ref": 3, "file": "/absolute/path/note.txt" }
 ```
 
@@ -63,6 +64,7 @@ Measured in the app on 2026-10-25, nothing clicked, one chat on screen:
 | `browser_copy` | `Copied 917 characters` |
 | `browser_click` | text changed to `clicked` |
 | `browser_type` | `#1 [input] n = hello harness` |
+| `browser_download` | `.dsh-inner-browser-use/downloads/report.pdf` and its size |
 | `browser_upload` | `#2 [input] f = C:\fakepath\dshib-upload.txt` |
 
 ## 4. The tab does not disturb other panes
@@ -153,6 +155,7 @@ returned, not what the code was meant to do.
 | `browser_click` | the added button at 60,140 (120x40) | its label changed to `clicked`, its title to `probe clicked`, and the reply named the point: `at 120,160` |
 | the pointer | read from the page after a click | `translate3d(116px, 158px, 0px)`, opacity `1`, `z-index: 2147483647` — the click point less the pointer's hotspot |
 | `browser_type` | the added text field | the field held the text that was typed |
+| `browser_download` | a page with a "Download" link | the file is in `<chat folder>/.dsh-inner-browser-use/downloads/` and the tool returns that path |
 | `browser_upload` | the added file field | the field held the chosen file's name |
 | `browser_selection` | not yet run in the app | the host half that carries this tool loads on the next start; the bridge is covered by `test/host.test.mjs` |
 | `browser_copy` | not yet run in the app | same |

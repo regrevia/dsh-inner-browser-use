@@ -97,5 +97,16 @@ The host cancels every download: its browser session installs
 folder and nothing for the user to configure, so a page's own download link,
 a `<a download>` click, and a blob URL all do nothing.
 
-Move a big file out of a page by reading its bytes inside the page and writing
-them from the chat side — the sidebar browser is a view, not a file channel.
+The pane is not the app's own browser tab: it is a `<webview>` inside the sidebar, with its own storage
+partition per project folder. Cookies, logins and history therefore stay with the project and are not shared
+with the app's browser tabs, and a narrow sidebar triggers a page's responsive layout. The engine is the same.
+
+`browser_download` is the way out: the page reads the bytes, the plugin writes
+them into `<chat folder>/.dsh-inner-browser-use/downloads/`, and the call returns
+the path. Two limits come from the page, not the plugin:
+
+- A strict `connect-src` blocks the page's own `fetch` of another origin. The
+  plugin then fetches the address from its own half, which has no cookies — a
+  signed address works, one that needs the site's login does not.
+- A file only streams while the page keeps answering; a page that navigates away
+  mid-save ends the transfer, and the tool says so instead of writing half a file.

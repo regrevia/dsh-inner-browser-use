@@ -18,6 +18,7 @@ The agent navigates, reads the page as numbered controls, clicks, types, and run
 | `browser_selection` | Returns the text currently selected in the page. |
 | `browser_copy` | Copies the selection, or one control's text, to the clipboard. |
 | `browser_screenshot` | Saves a PNG of the tab and returns its path. |
+| `browser_download` | Saves a file the page offers into this chat's project folder. |
 | `browser_upload` | Attaches a local file to a numbered file field. |
 
 Every call is visible: the pointer travels to the control, a ring marks it, and the page scrolls the target into view first.

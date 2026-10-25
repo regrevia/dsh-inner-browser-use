@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0
+
+- `browser_download` saves a file the page offers (a deliverable card, a "Download" link, a signed address) into
+  `<chat folder>/.dsh-inner-browser-use/downloads/`, and returns the path. Files reach the disk as bytes over the
+  same relative route: the tab reads them, the plugin writes them, so nothing depends on the app's download handling.
+- A page whose own network rules forbid the address does not stop the save: the plugin's page half fetches the
+  address itself and streams it through the same route. Nothing machine-specific is written into the repository.
+- A transfer only reaches the folder of the call that opened it; the ticket dies with the call, and a name
+  is used once, so an existing file is never overwritten.
+- The pane's address row is an address bar: type a host or a full address and press Enter to load it in this
+  chat's page. Before, the row only reported where the page was.
+- A pane that starts again opens where it was left. The page was remembered in memory only, so a plugin reload
+  or a closed tab came back blank while the chat believed it still had a page open.
+- A page keeps its own storage, one per project folder: cookies and logins are not shared with the app's other
+  browser tabs, which is why a site can look different there.
+- `browser_script` no longer answers `null` when the script throws: a runtime error keeps the message it threw,
+  and only a script that will not parse falls back to the async wrapper.
+
 ## 0.6.13
 
 - `browser_script` answers with the script's completion value again: the guest

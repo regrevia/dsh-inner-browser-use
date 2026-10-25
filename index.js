@@ -24,11 +24,16 @@
  * One transport, two faces, no port, no secret: that is the whole design. // ui-copy-ignore
  */
 
+import { createWriteStream } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 
 /** Where screenshots land inside the chat's working directory. */
 const SHOT_DIR = '.dsh-inner-browser-use'
+
+/** Where files the page offers land inside the chat's working directory. */
+const DOWNLOAD_DIR = join(SHOT_DIR, 'downloads')
 
 /** Largest file the plugin will push into a page. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -64,6 +69,9 @@ const DEFAULT_TIMEOUT_MS = 25_000
 
 /** Navigation waits on the page itself, which is slower than reading it. */
 const NAVIGATE_TIMEOUT_MS = 60_000
+
+/** A file crosses the page, the bridge and the disk inside this budget. */
+const DOWNLOAD_TIMEOUT_MS = 120_000
 
 /** How long a tool waits for the tab it asked for. */
 const OPEN_WAIT_MS = 8_000
@@ -375,6 +383,30 @@ function asValue(text) {
   return { text }
 }
 
+/** @param {string | null} raw - a name the page offered. @returns {string} one safe path segment. */
+function safeName(raw) {
+  const flat = String(raw ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
+  const clean = flat.replace(/[\u0000-\u001f<>:"|?*]/g, '').trim().slice(0, 120)
+  return clean === '' || clean === '.' || clean === '..' ? 'download' : clean
+}
+
+/**
+ * A name the page asked for, unless the folder already holds one.
+ * @param {string} dir - target folder.
+ * @param {string} name - wanted file name.
+ * @returns {Promise<string>} a path no other file holds.
+ */
+async function freePath(dir, name) {
+  const dot = name.lastIndexOf('.')
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  for (let index = 1; index < 1000; index += 1) {
+    const candidate = join(dir, index === 1 ? name : `${stem}-${index}${ext}`)
+    if ((await stat(candidate).catch(() => undefined)) === undefined) return candidate
+  }
+  return join(dir, `${stem}-${Date.now()}${ext}`)
+}
+
 /** Every tool renders as plain text, and every schema is closed. */
 const TEXT_OUTPUT = {
   schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
@@ -387,9 +419,10 @@ const TEXT_OUTPUT = {
 /**
  * Build the tool definitions over one bridge.
  * @param {Bridge} bridge - the live bridge.
+ * @param {Map<string, { dir: string, file: string }>} sinks - folder per live file transfer.
  * @returns {Array<Record<string, unknown>>} tool definitions.
  */
-function tools(bridge) {
+function tools(bridge, sinks) {
   /**
    * Run one Client operation for the calling chat.
    * @param {string} tool - Client operation.
@@ -537,6 +570,47 @@ function tools(bridge) {
       },
     },
     {
+      name: 'browser_download', // ui-copy-ignore
+      description: "Save a file the sidebar browser of this chat offers into this chat's project folder and return its path.",
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          url: { type: 'string', description: 'Address of the file, when the page shows one.' },
+          ref: { type: 'integer', description: 'Number shown by the latest browser_view, for a control that links to the file.' },
+          name: { type: 'string', description: 'File name to save under, when the page offers none.' },
+        },
+        additionalProperties: false,
+      }, // ui-copy-ignore
+      output: TEXT_OUTPUT,
+      timeoutMs: DOWNLOAD_TIMEOUT_MS + 5_000,
+      isConcurrencySafe: () => false,
+      /**
+       * @param {any} args - call arguments.
+       * @param {any} exec - run context.
+       * @returns {Promise<{text: string}>} absolute path of the saved file.
+       */
+      execute: async (args, exec) => {
+        const dir = join(exec.agent?.cwd ?? process.cwd(), DOWNLOAD_DIR)
+        await mkdir(dir, { recursive: true })
+        /* The page never names a folder: this ticket is the one folder its bytes
+           may reach, and it dies with the call. */
+        const ticket = randomUUID() // ui-copy-ignore
+        sinks.set(ticket, { dir, file: '' })
+        try {
+          const value = await bridge.call(
+            String(exec.agent?.id ?? ''),
+            'download',
+            { ticket, url: args?.url, ref: args?.ref, name: args?.name },
+            exec.signal,
+            DOWNLOAD_TIMEOUT_MS,
+          )
+          return asValue(typeof value === 'string' ? value : String(value?.text ?? ''))
+        } finally {
+          sinks.delete(ticket)
+        }
+      },
+    },
+    {
       name: 'browser_upload', // ui-copy-ignore
       description: 'Attach a file from this machine to one numbered file field in the sidebar browser of this chat.',
       parameters: {
@@ -587,6 +661,8 @@ export const inject = ['webServer']
 export function apply(ctx, config = {}) {
   if (typeof config.proofLog === 'string' && config.proofLog !== '') proofLog = config.proofLog
   const bridge = new Bridge()
+  /** @type {Map<string, { dir: string, file: string }>} */
+  const sinks = new Map()
   if (Number.isInteger(config.openWaitMs)) bridge.openWaitMs = config.openWaitMs
   ctx.effect(() => () => bridge.dispose(), 'dsh-inner-browser-use: bridge lifetime')
 
@@ -682,6 +758,34 @@ export function apply(ctx, config = {}) {
       return
     }
 
+    if (path === '/grab' && req.method === 'POST') {
+      const sink = sinks.get(url.searchParams.get('ticket') ?? '')
+      if (sink === undefined) {
+        res.writeHead(404, { 'content-type': 'text/plain' })
+        res.end('unknown transfer')
+        return
+      }
+      const offset = Number(url.searchParams.get('offset') ?? '0')
+      if (sink.file === '') sink.file = await freePath(sink.dir, safeName(url.searchParams.get('name')))
+      const stream = createWriteStream(sink.file, { flags: offset > 0 ? 'a' : 'w' })
+      try {
+        await new Promise((settle, fail) => {
+          stream.on('finish', settle)
+          stream.on('error', fail)
+          req.on('error', fail)
+          req.pipe(stream)
+        })
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'text/plain' })
+        res.end(String(error?.message ?? error))
+        return
+      }
+      const info = await stat(sink.file)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, path: sink.file, bytes: info.size }))
+      return
+    }
+
     res.writeHead(404, { 'content-type': 'text/plain' })
     res.end('not found')
   }
@@ -689,7 +793,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ROUTE, handler }), 'dsh-inner-browser-use: bridge route')
 
   ctx.inject(['tools'], (scope) => {
-    const disposers = tools(bridge).map((definition) => scope.tools.register(definition))
+    const disposers = tools(bridge, sinks).map((definition) => scope.tools.register(definition))
     scope.effect(() => () => {
       for (const dispose of disposers) dispose()
     }, 'dsh-inner-browser-use: tool surface')

@@ -133,6 +133,7 @@ test('registers the page tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
     'browser_click',
     'browser_copy',
+    'browser_download',
     'browser_navigate',
     'browser_screenshot',
     'browser_script',
@@ -235,6 +236,36 @@ test('a client heartbeat is visible in the state route', async () => {
 
 test('an unknown path is a 404, not a hang', async () => {
   const response = await call('/nope')
+  assert.equal(response.status, 404)
+})
+
+test('a file the page offers lands in the chat folder', async () => {
+  const seat = await tab('chat-6')
+  const cwd = await mkdtemp(join(tmpdir(), 'dsh-ib-cwd-'))
+  const pending = defs.get('browser_download').execute(
+    { url: 'https://example.com/files/report.txt' },
+    { agent: { id: 'chat-6', cwd } },
+  )
+  const frame = await seat.next()
+  assert.equal(frame.tool, 'download')
+  const ticket = String(frame.args.ticket)
+  const first = await call(`/grab?ticket=${ticket}&name=report.txt&offset=0&final=0`, { method: 'POST', body: 'hello ' })
+  assert.equal(first.status, 200)
+  const second = await call(`/grab?ticket=${ticket}&name=report.txt&offset=6&final=1`, { method: 'POST', body: 'world' })
+  const landed = await second.json()
+  assert.equal(landed.path, join(cwd, '.dsh-inner-browser-use', 'downloads', 'report.txt'))
+  assert.equal(landed.bytes, 11)
+  await call('/uplink?session=chat-6', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: `Saved ${landed.path} (${landed.bytes} bytes)` }),
+  })
+  assert.deepEqual(await pending, { text: `Saved ${landed.path} (11 bytes)` })
+  assert.equal(await readFile(landed.path, 'utf8'), 'hello world')
+  seat.stop()
+})
+
+test('a transfer nobody opened is refused instead of writing', async () => {
+  const response = await call('/grab?ticket=unknown&name=a.txt&offset=0&final=1', { method: 'POST', body: 'x' })
   assert.equal(response.status, 404)
 })
 
