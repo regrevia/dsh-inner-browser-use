@@ -13,18 +13,52 @@ import { promisify } from 'node:util'
 
 const run = promisify(execFile)
 const ROUTE = '/dsh-inner-browser-use'
-const DEFAULT_BASE = 'http://127.0.0.1:49661'
 const APP = '/Applications/DeepSeek Harness.app/Contents/Resources/app.asar'
 
-/** @param {string} path - route under the bridge. @returns {Promise<any>} parsed body or null. */
-async function get(path) {
+/**
+ * The bridge answers on the same address as the app's own window, and the app
+ * picks that port each time it starts, so the addresses to try are the one that
+ * was asked for, then the one the running app is listening on.
+ * @returns {Promise<string[]>} candidate addresses, without a trailing slash.
+ */
+async function addresses() {
+  const asked = (process.env.DSH_BRIDGE ?? '').trim().replace(/\/+$/, '')
+  const found = asked === '' ? [] : [asked]
+  found.push('http://127.0.0.1:49661')
   try {
-    const response = await fetch(process.env.DSH_BRIDGE ?? DEFAULT_BASE + path, { signal: AbortSignal.timeout(4_000) })
-    if (response.ok !== true) return null
-    return await response.json()
+    const { stdout } = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-c', 'DeepSeek'], { timeout: 4_000 })
+    for (const line of String(stdout).split('\n')) {
+      const hit = /127\.0\.0\.1:(\d{4,5})\s/.exec(line)
+      if (hit !== null) {
+        const address = `http://127.0.0.1:${hit[1]}`
+        if (found.includes(address) === false) found.push(address)
+      }
+    }
   } catch {
-    return null
+    /* no lsof, or nothing listening: the fixed address is all that is left */
   }
+  return found
+}
+
+let base = ''
+
+/**
+ * @param {string} path - route under the bridge.
+ * @returns {Promise<any>} parsed body, or null when no address answers.
+ */
+async function get(path) {
+  const tried = base === '' ? await addresses() : [base]
+  for (const address of tried) {
+    try {
+      const response = await fetch(address + path, { signal: AbortSignal.timeout(4_000) })
+      if (response.ok !== true) continue
+      base = address
+      return await response.json()
+    } catch {
+      /* the next address may be the one this app is on */
+    }
+  }
+  return null
 }
 
 const state = await get(`${ROUTE}/state`)
