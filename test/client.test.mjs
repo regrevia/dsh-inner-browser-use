@@ -301,3 +301,11 @@ test('a sign-in kept for this origin is written back one cookie at a time', asyn
   assert.doesNotMatch(script, /elsewhere/)
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true }) })
 })
+
+test('a page that saves a file on its own has somewhere to put it', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /'dl-watch'/)
+  assert.match(source, /'dl-drain'/)
+  assert.match(source, /__dshib_land/)
+  assert.match(source, /\/land\?session=/)
+})
