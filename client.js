@@ -439,6 +439,12 @@ window.__ModuleLoader__.load({
     function surface(driven) {
       try {
         const r = driven.getBoundingClientRect()
+        let wcid = 0
+        try {
+          wcid = typeof driven.getWebContentsId === 'function' ? (driven.getWebContentsId() ?? 0) : 0
+        } catch {
+          wcid = 0
+        }
         const cx = Math.round(r.left + r.width / 2)
         const cy = Math.round(Math.min(r.top + r.height / 2, window.innerHeight - 4))
         const inside = cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight
@@ -449,6 +455,7 @@ window.__ModuleLoader__.load({
           guests.push([Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)].join(','))
         }
         return {
+          wcid,
           rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(','),
           view: window.innerWidth + 'x' + window.innerHeight,
           covers: hit === null ? 'none' : String(hit.tagName) + '.' + String(hit.className || '').slice(0, 20),
@@ -462,6 +469,35 @@ window.__ModuleLoader__.load({
 
     async function grab(el) {
       const notes = []
+      /* The window owns the view, so it can hand over an image even when the app
+         draws nothing there. Cheap, and the only answer while the tab sits
+         behind the chat, so it is asked first in that case. */
+      const fromWindow = async () => {
+        try {
+          const wcid = typeof el.getWebContentsId === 'function' ? (el.getWebContentsId() ?? 0) : 0
+          if (wcid <= 0) return ''
+          const asked = await fetch(`${ROUTE}/capture?wcid=${wcid}`, { cache: 'no-store' }) // ui-copy-ignore
+          if (asked.ok) {
+            const body = await asked.json().catch(() => null)
+            if (typeof body?.png === 'string' && body.png !== '') return body.png
+          }
+          notes.push('window: ' + asked.status + ' ' + (await asked.text().catch(() => '')).slice(0, 80))
+        } catch (error) {
+          notes.push('window: ' + String(error?.message ?? error).slice(0, 60))
+        }
+        return ''
+      }
+      let drawn = false
+      try {
+        const box = el.getBoundingClientRect()
+        drawn = box.width >= 2 && box.height >= 2 && el.closest('[hidden]') === null
+      } catch {
+        drawn = false
+      }
+      if (drawn !== true) {
+        const early = await fromWindow()
+        if (early !== '') return early
+      }
       let bug = null
       try {
         bug = el.debugger ?? null
@@ -506,19 +542,6 @@ window.__ModuleLoader__.load({
       }
       /* The window owns the view, so it can be read even when the app draws
          nothing there: ask the half that owns it before giving up. */
-      try {
-        const wcid = typeof el.getWebContentsId === 'function' ? el.getWebContentsId() : 0
-        if (wcid > 0) {
-          const asked = await fetch(`${ROUTE}/capture?session=${encodeURIComponent(currentSession)}&wcid=${wcid}`, { cache: 'no-store' }) // ui-copy-ignore
-          if (asked.ok) {
-            const body = await asked.json().catch(() => null)
-            if (typeof body?.png === 'string' && body.png !== '') return body.png
-          }
-          notes.push('window: ' + asked.status)
-        }
-      } catch (error) {
-        notes.push('window: ' + String(error?.message ?? error).slice(0, 60))
-      }
       try {
         el.scrollIntoView?.({ block: 'center', inline: 'nearest' }) // ui-copy-ignore
       } catch {
@@ -581,10 +604,11 @@ window.__ModuleLoader__.load({
          drawn: parked at a negative offset the page keeps its state but has no
          picture. Nearly clear, out of the way of clicks, and under the app's
          own surface, it paints without being seen. */
-      style.textContent = '[hidden]:has(.dshib-guest){display:block !important;position:fixed !important;'
+      const park = '{display:block !important;position:fixed !important;'
         + 'left:0 !important;top:0 !important;z-index:-1 !important;opacity:0.02 !important;'
         + 'pointer-events:none !important;width:var(--dshib-park-w,575px) !important;'
         + 'height:var(--dshib-park-h,1080px) !important;visibility:visible !important}'
+      style.textContent = '[hidden]:has(.dshib-guest), .dshib-guest[hidden], .dshib-stash [hidden]' + park
       document.head.appendChild(style)
     }
 
@@ -748,6 +772,10 @@ window.__ModuleLoader__.load({
        lets a call work with nobody looking. */
     let keyForSession = null
     const residents = new Map()
+    /* Chats whose own pane is open. Their pane owns the wire, so no stashed
+       guest is made for them: two guests on one chat leave the wire pointing at
+       whichever opened last, which is the one nobody can see. */
+    const paneSessions = new Set()
     let stashNode = null
 
     /** @returns {HTMLElement} the container hidden guests live in. */
@@ -764,6 +792,7 @@ window.__ModuleLoader__.load({
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
     function keepResident(sessionId) {
       if (sessionId === '' || keyForSession === null || residents.has(sessionId)) return
+      if (paneSessions.has(sessionId)) return
       beat({ tabType: true, phase: 'resident-open', session: sessionId })
       const guest = mountGuest({
         host: stashHost(), // ui-copy-ignore
@@ -784,6 +813,7 @@ window.__ModuleLoader__.load({
     }
 
     function mountGuest(options) {
+      if (options.pane === true) paneSessions.add(options.sessionId)
       const carrier = globalThis.dshDesktop
       const bridge = carrier?.protocolVersion === 1 ? carrier.browser : undefined
       let disposed = false
@@ -793,6 +823,7 @@ window.__ModuleLoader__.load({
 
       const dispose = () => {
         disposed = true
+        if (options.pane === true) paneSessions.delete(options.sessionId)
         steer.delete(options.sessionId)
         cancel()
         if (webview !== undefined) webview.remove()
@@ -868,7 +899,8 @@ window.__ModuleLoader__.load({
                      without one runs no script. Give it a surface out of sight
                      first, and only bring the chat's tab forward as a second try. */
                   const room = () => webview.getBoundingClientRect()
-                  if (room().width < 2 || room().height < 2) {
+                  const hidden = () => webview.hidden === true || webview.closest?.('[hidden]') !== null
+                  if (hidden() || room().width < 2 || room().height < 2) {
                     parkHiddenViews()
                     for (let wait = 0; wait < 25; wait += 1) {
                       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -972,7 +1004,7 @@ window.__ModuleLoader__.load({
                         }
                       }
                     }
-                    if (webview.getBoundingClientRect().width < 2) {
+                    if (webview.hidden === true || webview.closest?.('[hidden]') !== null || webview.getBoundingClientRect().width < 2) {
                       parkHiddenViews()
                       try {
                         document.documentElement.style.setProperty('--dshib-park-w', '575px')
@@ -1135,6 +1167,7 @@ window.__ModuleLoader__.load({
         currentSession = props.sessionId
         const guest = mountGuest({
           host: host.current, // ui-copy-ignore
+          pane: true,
           sessionId: props.sessionId,
           key: props.workspace, // ui-copy-ignore
           onUrl: setHref,
@@ -1231,14 +1264,6 @@ window.__ModuleLoader__.load({
           reveal = (asking) => {
             /* Another chat's page is never brought forward. */
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
-            /* A view the app is not showing is never brought forward either: the
-               window the person is looking at would open a column with nothing
-               in it, and its own controls would sit where they do not belong. */
-            try {
-              if (webview.closest('[hidden]') !== null) return
-            } catch {
-              return
-            }
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1256,11 +1281,6 @@ window.__ModuleLoader__.load({
           }
           raise = (asking) => {
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
-            try {
-              if (webview.closest('[hidden]') !== null) return
-            } catch {
-              return
-            }
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1322,7 +1342,11 @@ window.__ModuleLoader__.load({
             /* Every open page hears this broadcast, so a page must open the
                asking chat's tab by id. Opening "the current chat" instead is how
                one chat's call used to steer a browser tab in another chat. */
-            if (typeof strip?.openTabIn === 'function') {
+            /* A chat's own pane already holds the page. Opening the tab again
+               rebuilds it, which closes the page a call is about to use. */
+            if (paneSessions.has(sessionId)) {
+              opened = 'kept'
+            } else if (typeof strip?.openTabIn === 'function') {
               try {
                 strip.openTabIn(sessionId, KIND, {}) // ui-copy-ignore
                 opened = 'session'
