@@ -19,7 +19,7 @@
  * @param {{current: string, routed: string, onScreen: Set<string>}} view - who is on screen.
  * @returns {boolean} true when the panel may open for it.
  */
-export function revealAllowed(sessionId, view) {
+function revealAllowed(sessionId, view) {
   if (sessionId === '') return true
   if (view.current !== '' && sessionId === view.current) return true
   if (view.routed !== '' && sessionId === view.routed) return true

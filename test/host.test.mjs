@@ -320,6 +320,24 @@ test('a file lands in the folder the chat works in, not the profile', async () =
   await rm(elsewhere, { recursive: true, force: true })
 })
 
+test('a picture for a chat that is not being read is refused instead of moving the panel', async () => {
+  const seat = await tab('chat-5')
+  await call('/uplink?session=chat-other', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-alive', phase: 'ready', tabType: true, session: 'chat-other' }),
+  })
+  await assert.rejects(
+    () => defs.get('browser_screenshot').execute({}, { agent: { id: 'chat-5', cwd: '/tmp' } }),
+    /not the one being read/,
+  )
+  /* The beat is shared state: put it back so the next test starts unread. */
+  await call('/uplink?session=chat-5', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-alive', phase: 'ready', tabType: true, session: 'chat-5' }),
+  })
+  seat.stop()
+})
+
 test('a transfer nobody opened is refused instead of writing', async () => {
   const response = await call('/grab?ticket=unknown&name=a.txt&offset=0&final=1', { method: 'POST', body: 'x' })
   assert.equal(response.status, 404)

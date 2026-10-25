@@ -7,6 +7,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { Script } from 'node:vm'
 
 /** @type {any} */
 let definition
@@ -86,7 +88,8 @@ globalThis.EventSource = FakeEventSource
 let replyEpoch = 'epoch-1'
 globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, epoch: replyEpoch }) })
 
-await import('../client.js')
+const clientSource = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+new Script(`${clientSource}\nglobalThis.__testRevealAllowed = revealAllowed`).runInThisContext()
 
 test('the tab type is additive: own id, own kind, own guide card', () => {
   /** @type {any[]} */
@@ -178,7 +181,7 @@ function scene({ openTab, openTabIn } = {}) {
 }
 
 test('a page is shown only for the chat the shell says is on screen', async () => {
-  const { revealAllowed } = await import('../client.js')
+  const revealAllowed = globalThis.__testRevealAllowed
   const onScreen = new Set(['chat-shown'])
   const view = (current, routed) => ({ current, routed, onScreen })
   assert.equal(revealAllowed('', view('', '')), true)

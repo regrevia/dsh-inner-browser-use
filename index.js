@@ -92,6 +92,7 @@ const ASK_ALIAS_MS = 30_000
 const NO_TAB = 'No 内置浏览器 tab answered. Open it in the right sidebar from the tab strip, then call again.'
 const ELSEWHERE = "This chat's own tab is in the tab strip of the chat being read. Open that chat, then call again."
 const NO_PANEL = 'The browser panel could not be taken here. Open the 内置浏览器 tab in the right sidebar, then call again.'
+const NOT_DRAWN = "This chat's page is not the one being read. Open this chat, then call again; browser_script reads the page as it is." 
 
 /** @type {string} */
 let proofLog = process.env.DSH_INNER_BROWSER_PROOF ?? '/tmp/dsh-inner-browser-use.log'
@@ -377,6 +378,14 @@ export class Bridge {
    * @returns {Promise<unknown>} the Client's reply value.
    */
   async attempt(sessionId, tool, args, signal, timeoutMs) {
+    /* A picture comes from a painted surface, and the surface belongs to the chat
+       being read. Asking for one from elsewhere would have the page show itself,
+       which takes the column away from whoever is reading; the answer names the
+       chat instead. */
+    if (tool === 'shot' && args?.offscreen !== true) {
+      const screen = typeof this.client?.frame?.session === 'string' ? this.client.frame.session : ''
+      if (screen !== '' && screen !== sessionId) throw new Error(NOT_DRAWN)
+    }
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     if (!this.push(sessionId, { type: 'call', id, tool, args, session: sessionId })) throw new Error(NO_TAB)
     return new Promise((resolve, reject) => {
