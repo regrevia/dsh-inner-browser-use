@@ -228,3 +228,26 @@ grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
 
 The tool result names the tab strip of the chat being read, so the next step is
 the person opening that chat — no empty column, and no eight-second pause.
+
+## Cookies stay, per project
+
+A pane leases the app's own inner-browser tab, and that tab carries a persistent
+Chromium partition keyed by the chat's workspace folder:
+
+```
+node scripts/doctor.mjs
+# cookies  on disk: persist:dsh-platform-
+```
+
+What follows from a persistent partition rather than a fresh one each time:
+
+- a login in one chat is still there in another chat of the same project, and
+  after the app is restarted;
+- two projects never share a jar, so a session from one cannot leak into the
+  other;
+- closing the tab does not clear the jar — only the workspace folder changing
+  picks a different one.
+
+`scripts/doctor.mjs` prints the live state next to that evidence: whether the
+bridge answers, which chat the page reports itself on, which chats have a page,
+how many calls are waiting, and where each chat's files would land.

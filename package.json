@@ -37,7 +37,8 @@
     "dsh": ">=0.2.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "doctor": "node scripts/doctor.mjs"
   },
   "license": "MIT",
   "author": "regrevia",
