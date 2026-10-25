@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4
+
+- `/state` reports the folder each connected chat writes into, so the place a file will land can be seen without
+  asking the model to run a call.
+
 ## 0.8.3
 
 - One work folder per chat, with a folder per kind of file: `.dsh-inner-browser-use/screenshots/` for images and

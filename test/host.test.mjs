@@ -224,6 +224,16 @@ test('the last open tab serves a chat with no tab of its own', async () => {
   seat.stop()
 })
 
+test('the state route says where each chat writes', async () => {
+  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-state-'))
+  const seat = await tab('chat-11', `cwd:${project}`)
+  const state = await call('/state').then((response) => response.json())
+  assert.deepEqual(state.connected, ['chat-11'])
+  assert.equal(state.folders['chat-11'], project)
+  seat.stop()
+  await rm(project, { recursive: true, force: true })
+})
+
 test('a client heartbeat is visible in the state route', async () => {
   await call('/uplink', {
     method: 'POST',

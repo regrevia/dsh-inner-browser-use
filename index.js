@@ -825,7 +825,13 @@ export function apply(ctx, config = {}) {
 
     if (path === '/state' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ connected: bridge.connected(), pending: bridge.waiters.size, client: clientState(bridge.client) }))
+      res.end(JSON.stringify({
+        connected: bridge.connected(),
+        pending: bridge.waiters.size,
+        client: clientState(bridge.client),
+        /* Where a chat's files would land, when its tab told us the folder. */
+        folders: Object.fromEntries(bridge.connected().map((chat) => [chat, bridge.cwdOf(chat) ?? ''])),
+      }))
       return
     }
 
