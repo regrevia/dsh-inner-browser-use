@@ -5,7 +5,7 @@ Two halves, one wire.
 ```
 Host (plugin index.js)                Client (client.js, in the page)
 ──────────────────────                ────────────────────────────────
-tools.register(browser_*)             sidebar.right.pane.tab  → <webview>
+tools.register(browser_*)             the product's browser tab → <webview>
         │                                       │
         │  bridge.call(chat, op, args)          │  executeJavaScript(RUNTIME)
         ▼                                       ▼
@@ -62,8 +62,9 @@ apart instead of both falling back to the single-seat rule.
 
 A tool cannot ask a user to click `+`, so the call carries the ask: when no seat
 exists, the Host pushes `wanted` down `/watch`, the page opens this chat's tab
-through `ctx.sidebarRight.openTabIn(sessionId, "inner-browser-use")`, and the
-call waits up to `openWaitMs` (8 s) for the seat to appear before it fails.
+through `ctx.sidebarRight.openTabIn(sessionId, "browser")` — the product's own
+kind, the one with the address bar — and the call waits up to `openWaitMs` (8 s)
+for the seat to appear before it fails.
 
 `/watch` is per page rather than per tab on purpose: a page with no tab open has
 no `/downlink` stream, and it is exactly that page which must be able to obey.
@@ -126,7 +127,13 @@ sequence) so frameworks that listen on any of them react.
 
 ## The lease
 
-The tab does not create its own browser. It asks the Desktop main process:
+Only the rollback path (`NATIVE_MODE = false`) uses this. In the shipped mode the
+page drives the `<webview>` the product's browser tab already holds — it finds
+that node (right of the chat, `[data-sidebar-browser-frame="webview"]`, or a
+`webview` no other half parked) and never creates, moves, or disposes one.
+
+On the rollback path the tab does not create its own browser. It asks the Desktop
+main process:
 
 ```js
 const reservation = await dshDesktop.browser.acquire("cwd:/path/to/workspace")
@@ -142,8 +149,9 @@ loosely never attaches — it silently shows nothing. The partition is
 for a chat in a workspace, `session:<id>` for an ungrouped one. Same key, same
 cookies as the built-in browser tab.
 
-Because that partition is in memory, the page half files the cookies the page
-itself can read under `~/.dsh/inner-browser-use/cookies/<hash>.json`, mode 0600,
+In the shipped mode the partition is the product's own and outlives a restart, so
+no cookie bookkeeping is needed. On the rollback path that partition is in memory,
+so the page half files the cookies the page itself can read under `~/.dsh/inner-browser-use/cookies/<hash>.json`, mode 0600,
 keyed by the same workspace key: name, value, and the origin the page reported,
 nothing else, on this machine only. When that workspace's pane opens again, its
 remembered page loads, the kept cookies for that origin are written back, and the

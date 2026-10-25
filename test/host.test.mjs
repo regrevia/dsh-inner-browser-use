@@ -170,7 +170,7 @@ test('reports an empty bridge before any tab opens', async () => {
 test('a tool without a tab says how to open one', async () => {
   await assert.rejects(
     defs.get('browser_view').execute({}, { agent: { id: 'chat-1' } }),
-    /No 内置浏览器 tab answered/,
+    /The built-in browser is not open for this chat yet/,
   )
 })
 

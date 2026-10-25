@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.1
+
+- A call with no browser open for its chat says what happens next instead of
+  pointing at a tab strip this plugin no longer uses.
+- Every heartbeat names whether the page drives the product's own tab, so an
+  older page is visible in the state route instead of guessing why a call hangs.
+- The docs read the shipped model: one browser tab, the product's, found and
+  driven rather than created.
+
 ## 0.11.0
 
 - A file the page starts saving by itself needs no second call: the bytes land in
