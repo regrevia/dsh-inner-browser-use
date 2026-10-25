@@ -2210,7 +2210,7 @@ window.__ModuleLoader__.load({
        */
       apply(ctx) {
         let registered = false
-        beat({ tabType: false, phase: 'loaded' })
+        beat({ tabType: false, phase: 'loaded', v: '0.11.24' })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
         /* A page still running an older bundle replaces itself: the build it
