@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6
+
+- A PNG now comes from the guest's own debugger, which answers with base64 in
+  this page. The panel's capture is still the fallback.
+
 ## 0.3.5
 
 - `browser_screenshot` works again: the first capture of a guest that has not

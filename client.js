@@ -241,6 +241,52 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Read the guest as a PNG, base64-encoded.
+     *
+     * The panel's own capture hands back an image object whose conversion runs
+     * outside this page and fails there, so the debugger answers in base64
+     * directly; the panel's capture stays as the fallback.
+     * @param {HTMLWebViewElement} el - guest.
+     * @returns {Promise<string>} base64 PNG.
+     */
+    async function grab(el) {
+      let bug = null
+      try {
+        bug = el.debugger ?? null
+      } catch {
+        bug = null
+      }
+      if (bug !== null) {
+        let attached = false
+        try {
+          await bug.attach('1.3')
+          attached = true
+          const shot = await bug.sendCommand('Page.captureScreenshot', { format: 'png' })
+          const data = shot?.data
+          if (typeof data === 'string' && data !== '') return data
+        } catch {
+          /* the panel's capture is tried next */
+        } finally {
+          if (attached) {
+            try {
+              await bug.detach()
+            } catch {
+              /* already gone */
+            }
+          }
+        }
+      }
+      let image
+      try {
+        image = await el.capturePage()
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        image = await el.capturePage()
+      }
+      return image.toPNG().toString('base64')
+    }
+
+    /**
      * Tell the Host this half is alive, and later what it managed to register. // ui-copy-ignore
      * Nothing else in the Client runs until a tab opens, so this is the only
      * proof the module itself executed.
@@ -417,16 +463,7 @@ window.__ModuleLoader__.load({
                     return
                   }
                   if (frame.tool === 'shot') {
-                    /* The first capture of a guest that has not painted yet fails
-                       inside the compositor; the frame after it succeeds. */
-                    let image
-                    try {
-                      image = await webview.capturePage()
-                    } catch {
-                      await new Promise((resolve) => setTimeout(resolve, 250))
-                      image = await webview.capturePage()
-                    }
-                    reply({ ok: true, value: { png: image.toPNG().toString('base64') } })
+                    reply({ ok: true, value: { png: await grab(webview) } })
                     return
                   }
                   if (frame.tool === 'script') {
