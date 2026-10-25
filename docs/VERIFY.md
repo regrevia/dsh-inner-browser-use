@@ -261,6 +261,10 @@ Three flows were driven against the app itself, each one visible in its own outp
 - **The page and its cookies stay.** A guest reopened with `"why":"reopen"` on the
   page it had been on, and a cookie set before a full navigation was still there
   after it.
+- **A file the chat made goes back to the page.** A file input took the caller's
+  own saved image: `Attached <image>.png to #1`, and the page reported
+  `<image>.png 17033 bytes`. So a page reaches the chat, the chat reaches the
+  folder, and the folder reaches the page again without anyone moving it by hand.
 
 The caller sat in one chat while the person read another, and the page work
 happened in the background chat's own guest: no pane was taken from the reader.
