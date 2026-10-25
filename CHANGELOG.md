@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.6
+
+- The measurement behind an empty capture reaches the page root, so a pane that
+  is closed and a tab that is merely behind another can be told apart.
+
 ## 0.4.5
 
 - A capture that finds no pixels now writes the page's own layout chain to the

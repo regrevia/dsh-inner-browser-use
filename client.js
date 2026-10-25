@@ -340,10 +340,10 @@ window.__ModuleLoader__.load({
       try {
         const chain = []
         let node = el
-        for (let up = 0; up < 7 && node !== null; up += 1) {
+        for (let up = 0; up < 16 && node !== null; up += 1) {
           const box2 = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : { width: 0, height: 0 }
           const style = getComputedStyle(node)
-          chain.push(String(node.tagName) + '.' + String(node.className ?? '').slice(0, 28) + ' '
+          chain.push(String(node.tagName) + '.' + String(node.dataset?.open ?? '') + '.' + String(node.className ?? '').slice(0, 28) + ' '
             + Math.round(box2.width) + 'x' + Math.round(box2.height) + ' ' + style.display + '/' + style.visibility)
           node = node.parentElement
         }
