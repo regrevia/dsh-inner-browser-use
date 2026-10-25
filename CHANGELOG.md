@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.9
+
+- The chat on screen is read from its header once, without a diagnostic pass, and the panel is taken only for that chat or
+  for a chat that already has a page here.
+
 ## 0.8.8
 
 - The panel is taken only for the chat the person is looking at, and the watch that tells which chat that is now measures
