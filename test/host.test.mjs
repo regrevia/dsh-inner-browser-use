@@ -377,3 +377,31 @@ test('a page that just came back takes the call on the second try', async () => 
   assert.deepEqual(await pending, { text: 'Clicked #2' })
   seat.stop()
 })
+
+test('the selection comes back as the text it holds', async () => {
+  const seat = await tab('chat-sel')
+  const pending = defs.get('browser_selection').execute({}, { agent: { id: 'chat-sel' } })
+  const frame = await seat.next()
+  assert.equal(frame.tool, 'selection')
+  await call('/uplink?session=chat-sel', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { text: 'the quoted paragraph' } }),
+  })
+  assert.deepEqual(await pending, { text: 'the quoted paragraph' })
+  seat.stop()
+})
+
+test('copy carries the control it was given, and its failure reaches the model', async () => {
+  const seat = await tab('chat-copy')
+  const pending = defs.get('browser_copy').execute({ ref: 4 }, { agent: { id: 'chat-copy' } })
+  const settled = assert.rejects(pending, /nothing is selected on this page/)
+  const frame = await seat.next()
+  assert.equal(frame.tool, 'copy')
+  assert.equal(frame.args.ref, 4)
+  await call('/uplink?session=chat-copy', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: false, error: 'nothing is selected on this page' }),
+  })
+  await settled
+  seat.stop()
+})

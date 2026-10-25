@@ -140,8 +140,8 @@ returned, not what the code was meant to do.
 | the pointer | read from the page after a click | `translate3d(116px, 158px, 0px)`, opacity `1`, `z-index: 2147483647` — the click point less the pointer's hotspot |
 | `browser_type` | the added text field | the field held the text that was typed |
 | `browser_upload` | the added file field | the field held the chosen file's name |
-| `browser_selection` | a paragraph | the range covered the paragraph |
-| `browser_copy` | the same range | the clipboard held the paragraph |
+| `browser_selection` | not yet run in the app | the host half that carries this tool loads on the next start; the bridge is covered by `test/host.test.mjs` |
+| `browser_copy` | not yet run in the app | same |
 | the page is remounted | the page went blank | the next call reopened it; frame `why:"restore"` |
 | `browser_screenshot` | a page the app is not drawing | said which tab to open; frame `why:"capture-covered"` |
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.8
+
+- The selection and copy tools have their own tests, so the calls the page answers
+  for them are covered even before the next start loads them.
+
 ## 0.6.7
 
 - A click says where the pointer landed (`Clicked #2 [button] clicked at 120,160`),
