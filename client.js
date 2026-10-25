@@ -391,6 +391,8 @@ window.__ModuleLoader__.load({
     /** The injected pane face, reached from the capture path as well.
      *  @type {() => any} */
     let faceOf = () => undefined
+    /** The page each chat last asked for; a reload leaves its guest at about:blank. @type {Map<string, string>} */
+    const lastUrl = new Map()
     /** Puts this chat's pane on screen.
      *  @type {null | ((asking: string) => void)} */
     let reveal = null
@@ -569,9 +571,11 @@ window.__ModuleLoader__.load({
                       webview.addEventListener('did-stop-loading', () => resolve(), { once: true })
                       setTimeout(resolve, 45_000)
                     })
-                    webview.loadURL(String(frame.args?.url ?? ''))
+                    const asked = String(frame.args?.url ?? '')
+                    webview.loadURL(asked)
                     await stop
                     if (failed !== '') throw new Error(failed)
+                    lastUrl.set(String(frame.session ?? ''), asked)
                     reply({ ok: true, value: await runIn(webview, 'view', {}) })
                     return
                   }
@@ -637,10 +641,11 @@ window.__ModuleLoader__.load({
                       /* A page with a size can still produce no frames while it
                          is covered; parking it gives the surface one of its own. */
                       probe?.({ why: 'capture-retry', first: String(error?.message ?? error).slice(0, 90) })
-                      parkHiddenViews()
-                      await new Promise((resolve) => setTimeout(resolve, 400))
-                      reply({ ok: true, value: { png: await grab(webview) } })
-                      return
+                      const here = await webview.executeJavaScript('location.href', true).catch(() => '')
+                      const remembered = lastUrl.get(String(frame.session ?? '')) ?? ''
+                      const href = String(here ?? '').startsWith('about:blank') === true ? remembered : String(here ?? '')
+                      probe?.({ why: 'capture-covered', href })
+                      throw new Error('this chat\'s page is not being drawn — open this chat to take an image')
                     }
                   }
                   if (frame.tool === 'script') {

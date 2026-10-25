@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3
+
+- A capture of a page the app is not drawing gives up in a couple of seconds and
+  says which chat to open, instead of a sentence about panels and timers.
+- A guest the plugin adds to the page is never attached by the app, so the
+  out-of-sight renderer that 0.6.0 described is gone rather than shipped broken.
+
 ## 0.6.2
 
 - A capture that cannot get pixels gives up in a few seconds instead of

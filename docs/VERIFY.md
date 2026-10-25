@@ -83,8 +83,14 @@ guest keeps a real size (`575x1015`) and `capturePage` never answers at all, so
 the tool tries twice for a short time and then reports what it got, rather than
 waiting fifteen seconds. `browser_script` still reads that page.
 
-A view the app has hidden outright is parked out of sight at a real size instead,
-which keeps it drawn; the frame `why:"capture-parked"` records the size it got.
+Two things were measured here, and both say the same: the app draws only the pane
+it is showing. `capturePage` on the covered guest fails with
+`UnknownVizError` — a surface with no frame — and a guest the plugin appends to
+the page itself is never attached at all: every accessor throws
+`The WebView must be attached to the DOM and the dom-ready event emitted`.
+Rendering the page out of sight is therefore not something the page half can do,
+so the tool reports the chat to open and stops. The frame
+`why:"capture-covered"` records the page it was asked to draw.
 
 The proof log carries the reason in the frame next to it:
 
