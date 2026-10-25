@@ -643,6 +643,15 @@ window.__ModuleLoader__.load({
      *  fall back to "the current chat" when this is the chat asking.
      *  @type {string} */
     let currentSession = ''
+    /* Chats whose page is actually on screen. A page kept mounted behind another
+       chat is not: opening the right column for it takes the panel away from
+       what the person is looking at. */
+    const onScreen = new Set()
+    /* Set when this page was showing one of our pages; a panel we opened and
+       left empty is given back instead of staying as a blank strip. */
+    let openedByUs = false
+    /** @type {null | ((open: boolean) => void)} right panel, once this page can reach it */
+    let column = null
 
     function beat(frame) {
       void fetch(`${ROUTE}/uplink?session=`, {
@@ -1146,6 +1155,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (host.current === null) return undefined // ui-copy-ignore
         currentSession = props.sessionId
+        onScreen.add(props.sessionId)
         const guest = mountGuest({
           host: host.current, // ui-copy-ignore
           pane: true,
@@ -1159,7 +1169,11 @@ window.__ModuleLoader__.load({
             beat({ tabType: true, phase: `guest-${next}`, session: props.sessionId, error: message ?? '' })
           },
         })
-        return () => guest.dispose()
+        return () => {
+          onScreen.delete(props.sessionId)
+          if (currentSession === props.sessionId) currentSession = ''
+          guest.dispose()
+        }
       }, [props.sessionId])
       React.useEffect(() => { setDraft(href) }, [href])
       /* A selection is read from the page while the pane is on screen, so the
@@ -1168,7 +1182,34 @@ window.__ModuleLoader__.load({
         let live = true
         const tick = setInterval(() => {
           const el = host.current?.querySelector('webview') // ui-copy-ignore
-          if (live !== true || !el || el.getBoundingClientRect().width < 2) return
+          if (live !== true) return
+          if (!el) return
+          /* Who is on screen is decided here, from the pixels the pane is given,
+             not from who mounted last. */
+          const wide = el.getBoundingClientRect().width >= 2 && el.closest('[hidden]') === null // ui-copy-ignore
+          if (wide) {
+            onScreen.add(props.sessionId)
+            currentSession = props.sessionId
+            openedByUs = true
+          } else {
+            onScreen.delete(props.sessionId)
+            if (currentSession === props.sessionId) currentSession = ''
+            if (openedByUs && onScreen.size === 0) {
+              /* Our page went behind another chat and nothing of ours is left
+                 on screen: the panel we opened now shows nothing. */
+              openedByUs = false
+              setTimeout(() => {
+                if (onScreen.size !== 0) return
+                try {
+                  column?.(false)
+                  beat({ tabType: registered, phase: 'open', step: 'autoclose' })
+                } catch {
+                  /* nothing to close */
+                }
+              }, 900).unref?.()
+            }
+            return
+          }
           el.executeJavaScript('(() => String(window.getSelection() || "").slice(0, 4000))()', true)
             .then((text) => {
               if (live !== true) return
@@ -1277,9 +1318,17 @@ window.__ModuleLoader__.load({
           /* A capture may be the first thing a chat asks for, so these exist from
              mount; before, only an ask could create them and a shot had nothing
              to call. */
+          column = (open) => {
+            try {
+              scope.layout.openRightbar(open, false) // ui-copy-ignore
+            } catch {
+              /* nothing to open without a right pane */
+            }
+          }
           reveal = (asking) => {
             /* Another chat's page is never brought forward. */
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            if (asking !== '' && paneSessions.has(asking) && onScreen.has(asking) !== true) return
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1297,6 +1346,7 @@ window.__ModuleLoader__.load({
           }
           raise = (asking) => {
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            if (asking !== '' && paneSessions.has(asking) && onScreen.has(asking) !== true) return
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
@@ -1327,6 +1377,10 @@ window.__ModuleLoader__.load({
             if (frame?.type !== 'wanted') return
             const sessionId = String(frame.session ?? '')
             if (sessionId === '') return
+            /* A page for a chat that is not on screen stays where it is; taking
+               the right panel for it would hide what the person is reading. */
+            if (paneSessions.has(sessionId) && onScreen.has(sessionId) !== true) return
+            const bare = onScreen.size === 0
             try {
               /* `layout` is in this plugin's inject list; a scope that lists it
                  alone still cannot read it, which is why the pane never opened.
@@ -1334,7 +1388,20 @@ window.__ModuleLoader__.load({
                  whatever the person is looking at. */
               /* The pane may open for the chat that asked; a chat that is not on
                  screen still gets its own page, never someone else's. */
-              if (sessionId === currentSession || currentSession === '') scope.layout.openRightbar(true, false) // ui-copy-ignore
+              if (bare && (sessionId === currentSession || currentSession === '')) scope.layout.openRightbar(true, false) // ui-copy-ignore
+              /* Opened on the chance this chat's page would appear in it. If the
+                 page never gets a surface the panel is left as it was found. */
+              if (bare) {
+                setTimeout(() => {
+                  if (onScreen.has(sessionId) === true) return
+                  try {
+                    scope.layout.openRightbar(false, false) // ui-copy-ignore
+                    beat({ tabType: registered, phase: 'open', step: 'selfheal' })
+                  } catch {
+                    /* nothing to close */
+                  }
+                }, 1800).unref?.()
+              }
             } catch (error) {
               beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
             }

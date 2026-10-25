@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1
+
+- The right panel no longer opens for a chat you are not looking at. Whether a page is on screen is read from the
+  space the pane is given, not from which tab mounted last, so a call from a background chat leaves the panel alone.
+- A panel opened on the chance that a page would appear is given back if the page never does, and a panel left
+  showing nothing after you switch chats is closed instead of staying as a blank strip.
+
 ## 0.8.0
 
 - Select text on the page and a **Drag to chat** handle appears in the tab's status row. Drag it into the
