@@ -107,6 +107,7 @@ const ASK_ALIAS_MS = 30_000
 const NO_TAB = 'The built-in browser is not open for this chat yet. The next call opens it in the right sidebar.'
 const ELSEWHERE = "This chat's own tab is in the tab strip of the chat being read. Open that chat, then call again."
 const NO_PANEL = 'The browser panel could not be taken here. Open the 内置浏览器 tab in the right sidebar, then call again.'
+const LEGACY_PAGE = 'The window is still running the previous copy of this plugin. Reload the page once, then call again.'
 const NOT_DRAWN = "This chat's page is not the one being read. Open this chat, then call again; browser_script reads the page as it is." 
 
 /** @type {string} */
@@ -230,6 +231,8 @@ export class Bridge {
     this.refused = new Map()
     /** @type {{at: string, frame: unknown} | undefined} */
     this.client = undefined
+    /** Whether the page said it drives the product's own browser; undefined until it says. @type {boolean | undefined} */
+    this.native = undefined
     /** @type {Set<import('node:http').ServerResponse>} open watch streams: the page's listener that can open tabs. */
     this.watchers = new Set()
     /** When each chat last asked for a tab, so one ask per call burst. @type {Map<string, number>} */
@@ -398,7 +401,11 @@ export class Bridge {
   /** @param {string} sessionId - owning chat. @param {import('node:http').ServerResponse} res - response being closed. */
   detach(sessionId, res) {
     const seat = this.seats.get(sessionId)
-    if (seat !== undefined && seat.res === res) this.seats.delete(sessionId)
+    if (seat !== undefined && seat.res === res) {
+      this.seats.delete(sessionId)
+      /* The page that answers next may be a different copy. */
+      this.native = undefined
+    }
   }
 
   /** @returns {string[]} chats with a live tab. */
@@ -429,6 +436,7 @@ export class Bridge {
    * @returns {Promise<unknown>} the Client's reply value.
    */
   async call(sessionId, tool, args, signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    if (this.native === false) throw new Error(LEGACY_PAGE)
     if (!this.hasSeat(sessionId)) {
       this.refused.delete(sessionId)
       this.want(sessionId)
@@ -938,6 +946,9 @@ export function apply(ctx, config = {}) {
       }
       await record({ kind: 'uplink', session: sessionId, frame })
       if (frame?.type === 'client-alive') {
+        /* A heartbeat taken on load carries this; a page that never says it
+           drives the product's browser is a copy loaded before that existed. */
+        if (frame.phase === 'alive') bridge.native = frame.native === true
       bridge.client = { ms: Date.now(), frame }
       bridge.noteOpen(frame)
       bridge.noteStep(frame)
