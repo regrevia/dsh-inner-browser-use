@@ -1430,8 +1430,7 @@ window.__ModuleLoader__.load({
     }
 
     /** @param {string} sessionId - chat whose page is out of sight. @returns {Promise<HTMLWebViewElement>} the guest. */
-    async function ownGuest(sessionId, host) {
-      const shelf = host ?? stashHost()
+    async function ownGuest(sessionId, shelf) {
       const view = document.createElement('webview')
       view.className = 'dshib-guest'
       const part = productPartition()
@@ -1458,7 +1457,7 @@ window.__ModuleLoader__.load({
       }
       beat({ tabType: true, phase: 'resident-open', session: sessionId })
       const guest = mountGuest({
-        host: stashHost(), // ui-copy-ignore
+        shelf: stashHost(), // ui-copy-ignore
         hidden: true,
         sessionId,
         key: () => keyForSession(sessionId),
@@ -1525,7 +1524,7 @@ window.__ModuleLoader__.load({
                  made here: in the column when this chat's column is up, out of
                  sight when it is not. */
               owns = true
-              webview = await ownGuest(options.sessionId, options.host ?? stashHost())
+              webview = await ownGuest(options.sessionId, options.shelf ?? stashHost())
             }
             options.onPhase(webview === undefined ? 'waiting' : 'ready')
             /* A chat with no column up gets its page made here instead, and the
@@ -1592,7 +1591,7 @@ window.__ModuleLoader__.load({
             webview.setAttribute('allowpopups', '')
             webview.setAttribute('src', `about:blank#${lease.lease}`)
             const ready = waitEvent(webview, 'dom-ready', 20_000)
-            options.host.appendChild(webview) // ui-copy-ignore
+            options.shelf.appendChild(webview) // ui-copy-ignore
             if ((await ready) === false) throw new Error(L('error.lease'))
             if (disposed) return
             options.onPhase('ready')
@@ -1841,7 +1840,7 @@ window.__ModuleLoader__.load({
                       for (let wait = 0; wait < 12; wait += 1) {
                         await new Promise((resolve) => setTimeout(resolve, 150))
                         if (mine) raise?.(asking)
-                        const live = options.host.querySelector('webview') // ui-copy-ignore
+                        const live = options.shelf.querySelector('webview') // ui-copy-ignore
                         if (live !== null && live.getBoundingClientRect().width > 1) {
                           target = live // ui-copy-ignore
                           break
@@ -2054,7 +2053,7 @@ window.__ModuleLoader__.load({
         currentSession = props.sessionId
         onScreen.add(props.sessionId)
         const guest = mountGuest({
-          host: host.current, // ui-copy-ignore
+          shelf: host.current, // ui-copy-ignore
           pane: true,
           sessionId: props.sessionId,
           key: props.workspace, // ui-copy-ignore
