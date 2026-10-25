@@ -5,6 +5,8 @@
 - Tools open the tab themselves: a call with no tab asks the page over a new
   `GET /watch` stream, and the page opens this chat's tab before the call runs.
   A call waits `openWaitMs` (8 s) for that tab, then fails with one sentence.
+- One tab ask per burst: a second call for the same chat within 3 s does not ask
+  again, and a call with no page listening never silences the next ask.
 - The tab type no longer contributes a card to the guide pane, so the plugin
   adds nothing to any pane it does not own; `test/client.test.mjs` asserts that.
 - Client-half tests run the page module in Node with a fake module loader, so

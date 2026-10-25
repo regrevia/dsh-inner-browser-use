@@ -67,7 +67,7 @@ JSON line per lifecycle event: `downlink-open`, `uplink`, `watch-open`.
 
 ## Exit codes
 
-`npm test` runs both halves: 14 host tests over a real socket, 2 client tests
+`npm test` runs both halves: 15 host tests over a real socket, 2 client tests
 that load the page module with a fake module loader and a fake `EventSource`.
 `node ~/.dsh/skills/ui-restraint/scripts/ui-copy-lint.mjs .` must print
 `ui-copy-lint: clean.`

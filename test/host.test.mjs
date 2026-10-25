@@ -295,3 +295,16 @@ test('a waiting call gives up when no tab opens', async () => {
   assert.equal(await bridge.waitSeat('chat-none', 120, undefined), false)
   assert.ok(Date.now() - started < 2_000)
 })
+
+test('one ask per burst, and no ask when no page is listening', async () => {
+  const bridge = new Bridge()
+  const seen = []
+  bridge.want('chat-1')
+  assert.equal(seen.length, 0)
+  bridge.watch({ write: (chunk) => seen.push(String(chunk)), end() {} })
+  bridge.want('chat-1')
+  bridge.want('chat-1')
+  assert.equal(seen.length, 1)
+  bridge.want('chat-2')
+  assert.equal(seen.length, 2)
+})

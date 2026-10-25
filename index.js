@@ -69,6 +69,7 @@ const NAVIGATE_TIMEOUT_MS = 60_000
 const OPEN_WAIT_MS = 8_000
 
 /** Shown when a tool runs without the tab that owns the guest. */
+const ASK_GAP_MS = 3_000
 const NO_TAB = 'No 内置浏览器 tab answered. Open it in the right sidebar from the tab strip, then call again.'
 
 /** @type {string} */
@@ -112,6 +113,8 @@ export class Bridge {
     this.client = undefined
     /** @type {Set<import('node:http').ServerResponse>} open watch streams: the page's listener that can open tabs. */
     this.watchers = new Set()
+    /** When each chat last asked for a tab, so one ask per call burst. @type {Map<string, number>} */
+    this.asked = new Map()
     /** @type {number} how long a call waits for the tab it asked for. */
     this.openWaitMs = OPEN_WAIT_MS
   }
@@ -134,6 +137,11 @@ export class Bridge {
    * @param {string} sessionId - chat that needs a tab.
    */
   want(sessionId) {
+    const now = Date.now()
+    const last = this.asked.get(sessionId)
+    if (last !== undefined && now - last < ASK_GAP_MS) return
+    if (this.watchers.size === 0) return
+    this.asked.set(sessionId, now)
     const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId })}\n\n`
     for (const res of this.watchers) res.write(frame)
   }
