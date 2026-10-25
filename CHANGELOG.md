@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.15
+
+- A chat that named no project keeps its files under the account's home,
+  instead of the folder the app was started in.
+
 ## 0.11.14
 
 - The send-button lookup that runs inside the page is lifted out of the shipped

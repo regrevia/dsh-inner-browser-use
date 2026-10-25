@@ -9,13 +9,13 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const proofDir = await mkdtemp(join(tmpdir(), 'dsh-ib-test-'))
 process.env.DSH_INNER_BROWSER_PROOF = join(proofDir, 'proof.jsonl')
 
-const { Bridge, ROUTE, apply, clientState } = await import('../index.js')
+const { Bridge, ROUTE, apply, clientState, workBase } = await import('../index.js')
 
 /** @type {Array<{path: string, handler: any}>} */
 const routes = []
@@ -612,4 +612,19 @@ test('a page is asked for a chat only when the ask carries its gate', async () =
   const asked = await call('/want?session=chat-want', { method: 'POST', headers: { 'x-dshib-want': '1' } })
   assert.equal(asked.status, 200)
   assert.deepEqual(await asked.json(), { ok: true, session: 'chat-want', watchers: 0 })
+})
+
+test('a chat that named no project still lands in a folder a person can find', () => {
+  const bridge = {
+    cwdOf: () => '/home/somebody/project',
+    folderOf: () => '/home/somebody/other',
+  }
+  assert.equal(workBase(bridge, 'chat-1'), '/home/somebody/project')
+  assert.equal(workBase(bridge, 'chat-1', '/tmp/run'), '/home/somebody/project')
+  assert.equal(workBase({ cwdOf: () => undefined, folderOf: () => '/home/somebody/other' }, 'chat-2'), '/home/somebody/other')
+  /* Nothing named at all: the answer is the account's home, never the folder
+     the app happened to start in. */
+  const nothing = workBase({ cwdOf: () => undefined, folderOf: () => undefined }, 'chat-3')
+  assert.equal(nothing, homedir())
+  assert.notEqual(nothing, process.cwd())
 })

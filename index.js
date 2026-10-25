@@ -147,6 +147,25 @@ function readBody(req) {
  * @param {string} key - workspace key the guest was leased with.
  * @returns {string} absolute path of its cookie file.
  */
+/**
+ * The folder a chat's files land under: its project, else the folder the run
+ * works in, else the folder the person's account calls home, so a chat that
+ * named no project still leaves a file where it can be found.
+ * @param {any} bridge - the bridge, for the folders a chat already named.
+ * @param {string} chat - chat asking.
+ * @param {string} [agentCwd] - folder the run works in, when it has one.
+ * @returns {string} absolute folder.
+ */
+export function workBase(bridge, chat, agentCwd) {
+  const known = bridge?.cwdOf?.(chat)
+  if (String(known ?? '') !== '') return String(known)
+  if (String(agentCwd ?? '') !== '') return String(agentCwd)
+  const named = bridge?.folderOf?.(chat)
+  if (String(named ?? '') !== '') return String(named)
+  const home = homedir()
+  return String(home ?? '') === '' ? process.cwd() : home
+}
+
 export function cookiePath(key) {
   const digest = createHash('sha256').update(String(key)).digest('hex').slice(0, 24)
   return join(cookieDir(), `${digest}.json`)
@@ -757,7 +776,7 @@ function tools(bridge, sinks) {
         const png = value?.png
         if (typeof png !== 'string' || png === '') throw new Error('the page returned no image')
         const chat = String(exec.agent?.id ?? '')
-        const base = bridge.cwdOf(chat) ?? exec.agent?.cwd ?? bridge.folderOf(chat) ?? process.cwd()
+        const base = workBase(bridge, chat, exec.agent?.cwd)
         const dir = await bridge.room(base, SHOT_DIR)
         const file = join(dir, `shot-${Date.now()}.png`)
         await writeFile(file, decodeBase64(png))
@@ -786,7 +805,7 @@ function tools(bridge, sinks) {
        */
       execute: async (args, exec) => {
         const chat = String(exec.agent?.id ?? '')
-        const base = bridge.cwdOf(chat) ?? exec.agent?.cwd ?? bridge.folderOf(chat) ?? process.cwd()
+        const base = workBase(bridge, chat, exec.agent?.cwd)
         const dir = await bridge.room(base, DOWNLOAD_DIR)
         /* The page never names a folder: this ticket is the one folder its bytes
            may reach, and it dies with the call. */
@@ -1110,7 +1129,7 @@ export function apply(ctx, config = {}) {
       const offset = Number(url.searchParams.get('offset') ?? '0')
       let landing = landings.get(id)
       if (landing === undefined) {
-        const base = bridge.cwdOf(chat) ?? bridge.folderOf(chat) ?? process.cwd()
+        const base = workBase(bridge, chat)
         const dir = await bridge.room(base, DOWNLOAD_DIR)
         landing = { dir, file: await freePath(dir, safeName(url.searchParams.get('name'))) }
         landings.set(id, landing)
