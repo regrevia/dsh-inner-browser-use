@@ -73,3 +73,25 @@ JSON line per lifecycle event: `downlink-open`, `uplink`, `watch-open`.
 that load the page module with a fake module loader and a fake `EventSource`.
 `node ~/.dsh/skills/ui-restraint/scripts/ui-copy-lint.mjs .` must print
 `ui-copy-lint: clean.`
+
+## A capture needs that chat's page on screen
+
+Reading, clicking and typing drive the page itself, so they work while you are
+looking at another chat. Pixels are different: the page has to be drawn by the
+app for a capture to exist.
+
+Ask for a screenshot in a chat that is not on screen and the tool answers
+`this chat's page is not on screen`. The proof log carries the reason in the
+frame next to it:
+
+```bash
+tail -5 /tmp/dsh-inner-browser-use.log   # look for "why":"shot-geometry"
+```
+
+- `columnBefore` / `columnAfter` — the right column's size. `0x…` means the
+  column is closed; the tool tried to open it and this is what it got.
+- `body` — the page body's own size. Two zeros with a wide column mean the tab
+  exists but is not the one the pane is showing.
+- `active` — which view the pane had in front.
+- `rooms` — the visible session containers and their sizes.
+

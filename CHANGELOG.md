@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5
+
+- The readme says plainly that pixels need that chat's page on screen, while
+  reading, clicking and typing do not.
+- A test covers the second try after a page came back.
+
 ## 0.5.4
 
 - A capture that cannot find its page now records which view was in front and

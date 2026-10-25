@@ -50,6 +50,9 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 
 - **Page → chat:** `browser_script` returns strings and `browser_screenshot` saves a PNG, so the agent can read what the page shows and quote it — or hand you the image path — in the conversation.
 - **Chat → page:** `browser_type` puts text into a field; `browser_script` can set values the page cannot be typed into.
+- **Selection → chat:** `browser_selection` reads what is selected and `browser_copy` copies it through the page's own
+  clipboard, so the model can quote it or you can paste it. There is no drag handle yet: sending a page fragment
+  into the conversation goes through those two tools.
 
 ## What it will not do
 
@@ -59,6 +62,9 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 - **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
 - **No downloads, popups, or permission prompts.** The guest runs sandboxed. To get bytes out of a page (an image, a file), read them in-page with `browser_script`.
 - **It needs the tab open.** Tools fail with a one-line instruction rather than opening the tab for you.
+- **A capture needs that chat's page on screen.** Reading, clicking and typing work while you are looking at
+  another chat, because they drive the page itself. Pixels can only be taken from a page the app is drawing,
+  so a screenshot from a chat you are not looking at says the page is not on screen instead of taking it over.
 
 ## Compatibility
 

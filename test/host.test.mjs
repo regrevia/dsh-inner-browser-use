@@ -353,3 +353,27 @@ test('two halves never share an epoch, and every heartbeat reply names one', () 
   assert.notEqual(one.epoch, two.epoch)
   assert.match(one.epoch, /^[a-z0-9]+-[a-z0-9]+$/)
 })
+
+test('a page that just came back takes the call on the second try', async () => {
+  const seat = await tab('chat-7')
+  const pending = defs.get('browser_click').execute({ ref: 2 }, { agent: { id: 'chat-7' } })
+  const first = await seat.next()
+  await call('/uplink?session=chat-7', {
+    method: 'POST',
+    body: JSON.stringify({
+      type: 'reply',
+      id: first.id,
+      ok: false,
+      error: 'The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.',
+    }),
+  })
+  const second = await seat.next()
+  assert.notEqual(second.id, first.id)
+  assert.equal(second.tool, 'click')
+  await call('/uplink?session=chat-7', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: second.id, ok: true, value: 'Clicked #2' }),
+  })
+  assert.deepEqual(await pending, { text: 'Clicked #2' })
+  seat.stop()
+})
