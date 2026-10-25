@@ -1302,7 +1302,9 @@ window.__ModuleLoader__.load({
         stashNode = document.createElement('div')
         stashNode.className = 'dshib-stash'
         stashNode.setAttribute('aria-hidden', 'true')
-        document.body.appendChild(stashNode)
+        /* The product's page is driven where it is; nothing is parked, so no
+           container of ours goes into the page. */
+        if (NATIVE_MODE === false) document.body.appendChild(stashNode)
       }
       return stashNode
     }
