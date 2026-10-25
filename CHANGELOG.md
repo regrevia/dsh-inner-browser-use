@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+- The tab has a real height. The guest was laid out inside a column that had no
+  height to give it, so the page rendered at 0×0 and every capture came back
+  empty. The body is now a flex item of the pane, with a viewport between it and
+  the guest — the same chain the shipped browser pane uses.
+- A capture puts the pane on screen first when the guest has no size, and a guest
+  that is still off screen reports its size instead of "no image".
+
 ## 0.4.0
 
 - `browser_screenshot` returns again. The panel's PNG is handed back as a data

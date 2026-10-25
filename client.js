@@ -55,9 +55,10 @@ window.__ModuleLoader__.load({
     const L = (key) => DICT[LANG][key] ?? key
 
     const CSS = [
-      '.dshib-body{display:flex;flex-direction:column;min-height:0;height:100%;position:relative;background:var(--dsw-alias-bg-base)}',
-      '.dshib-guest{flex:1 1 auto;min-height:0;width:100%;border:0;display:flex;background:var(--dsw-alias-bg-base)}',
-      '.dshib-state{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-subtle)}',
+      '.dshib-body{display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;height:100%;position:relative;background:var(--dsw-alias-bg-base)}',
+      '.dshib-viewport{display:flex;flex:1 1 auto;min-width:0;min-height:0;position:relative}',
+      '.dshib-guest{flex:1 1 auto;min-width:0;min-height:0;width:100%;height:100%;border:0;display:flex;background:var(--dsw-alias-bg-base)}',
+      '.dshib-state{flex:none;display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-subtle)}',
       '.dshib-state[data-tone="error"]{color:var(--dsw-alias-label-danger)}',
       '.dshib-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);flex:none}',
       '.dshib-state[data-tone="ready"] .dshib-dot{background:var(--dsw-alias-label-success)}',
@@ -297,6 +298,9 @@ window.__ModuleLoader__.load({
      */
     async function grab(el) {
       const notes = []
+      const wide = el.clientWidth
+      const tall = el.clientHeight
+      if (wide < 2 || tall < 2) throw new Error('the tab has no size on screen (' + wide + '×' + tall + '); open it and try again')
       let bug = null
       try {
         bug = el.debugger ?? null
@@ -344,6 +348,10 @@ window.__ModuleLoader__.load({
      * proof the module itself executed.
      * @param {Record<string, unknown>} frame - what to report.
      */
+    /** Puts this pane on screen; a guest with no viewport paints nothing to capture.
+     *  @type {null | (() => void)} */
+    let reveal = null
+
     /** The chat whose sidebar pane is mounted here: a broadcast ask may only
      *  fall back to "the current chat" when this is the chat asking.
      *  @type {string} */
@@ -520,6 +528,14 @@ window.__ModuleLoader__.load({
                     return
                   }
                   if (frame.tool === 'shot') {
+                    if (webview.clientWidth < 2 || webview.clientHeight < 2) {
+                      try {
+                        reveal?.()
+                      } catch {
+                        /* the pane stays closed; the capture reports the size */
+                      }
+                      await new Promise((resolve) => setTimeout(resolve, 400))
+                    }
                     reply({ ok: true, value: { png: await grab(webview) } })
                     return
                   }
@@ -571,7 +587,7 @@ window.__ModuleLoader__.load({
           h('span', { key: 'dot', className: 'dshib-dot' }),
           h('span', { key: 'text' }, error !== '' ? error : L(`phase.${phase}`)),
         ]),
-        h('div', { key: 'host', ref: host, className: 'dshib-guest', style: { display: 'flex' } }), // ui-copy-ignore
+        h('div', { key: 'host', ref: host, className: 'dshib-viewport' }), // ui-copy-ignore
       ])
     }
 
@@ -620,6 +636,13 @@ window.__ModuleLoader__.load({
             if (sessionId === '') return
             try {
               scope.layout?.openRightbar?.(true, false) // ui-copy-ignore
+              reveal = () => {
+                try {
+                  scope.layout?.openRightbar?.(true, false)
+                } catch {
+                  /* nothing to reveal without a right pane */
+                }
+              }
             } catch (error) {
               beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
             }
