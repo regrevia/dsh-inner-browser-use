@@ -298,9 +298,6 @@ window.__ModuleLoader__.load({
      */
     async function grab(el) {
       const notes = []
-      const wide = el.clientWidth
-      const tall = el.clientHeight
-      if (wide < 2 || tall < 2) throw new Error('the tab has no size on screen (' + wide + '×' + tall + '); open it and try again')
       let bug = null
       try {
         bug = el.debugger ?? null
@@ -324,22 +321,26 @@ window.__ModuleLoader__.load({
           if (attached) bug.detach().catch(() => {})
         }
       }
-      try {
-        let image
+      const tries = []
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
-          image = await tick(el.capturePage(), 5000, 'panel')
-        } catch {
-          await new Promise((resolve) => setTimeout(resolve, 250))
-          image = await tick(el.capturePage(), 5000, 'panel')
+          const image = await tick(el.capturePage(), 5000, 'panel')
+          const empty = typeof image?.isEmpty === 'function' ? image.isEmpty() : false
+          /* A data URL crosses the desktop bridge as a plain string; the PNG
+             Buffer does not cross it at all. */
+          const dataUrl = typeof image?.toDataURL === 'function' ? image.toDataURL() : ''
+          const png = dataUrl.startsWith('data:') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : ''
+          tries.push(attempt + ':' + (empty === true ? 'empty' : png.length + 'B'))
+          if (empty !== true && png !== '') return png
+        } catch (error) {
+          tries.push(attempt + ':' + String(error?.message ?? error))
         }
-        /* A data URL crosses the desktop bridge as a plain string; the PNG
-           Buffer does not cross it at all. */
-        const dataUrl = typeof image?.toDataURL === 'function' ? image.toDataURL() : ''
-        if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) return dataUrl.slice(dataUrl.indexOf(',') + 1)
-        return image.toPNG().toString('base64')
-      } catch (error) {
-        throw new Error(String(error?.message ?? error) + ' (' + notes.join('; ') + ')')
+        await new Promise((resolve) => setTimeout(resolve, 400))
       }
+      const box = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : {}
+      throw new Error('no pixels (' + tries.join(' ') + '; rect=' + Math.round(box.width ?? 0) + 'x' + Math.round(box.height ?? 0)
+        + ' offset=' + (el.offsetWidth ?? 0) + 'x' + (el.offsetHeight ?? 0) + ' connected=' + String(el.isConnected)
+        + '; ' + notes.join('; ') + ')')
     }
 
     /**
@@ -528,15 +529,24 @@ window.__ModuleLoader__.load({
                     return
                   }
                   if (frame.tool === 'shot') {
-                    if (webview.clientWidth < 2 || webview.clientHeight < 2) {
+                    let target = webview
+                    const box = target.getBoundingClientRect()
+                    if (box.width < 2 || box.height < 2 || target.isConnected === false) {
                       try {
                         reveal?.()
                       } catch {
-                        /* the pane stays closed; the capture reports the size */
+                        /* the pane stays closed; the capture reports the geometry */
                       }
-                      await new Promise((resolve) => setTimeout(resolve, 400))
+                      for (let wait = 0; wait < 12; wait += 1) {
+                        await new Promise((resolve) => setTimeout(resolve, 150))
+                        const live = options.host.querySelector('webview') // ui-copy-ignore
+                        if (live !== null && live.getBoundingClientRect().width > 1) {
+                          target = live // ui-copy-ignore
+                          break
+                        }
+                      }
                     }
-                    reply({ ok: true, value: { png: await grab(webview) } })
+                    reply({ ok: true, value: { png: await grab(target) } })
                     return
                   }
                   if (frame.tool === 'script') {

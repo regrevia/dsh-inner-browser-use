@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2
+
+- A capture no longer trusts the webview element's own width. The element
+  reported 0×0 while its page was 575×1080, so a screenshot failed before it
+  tried. The capture now measures the box, opens the pane when the box is empty,
+  follows the guest that is actually mounted, and tries three times.
+- A capture that still comes back empty names the geometry it saw, so the next
+  report is a measurement rather than "no image".
+
 ## 0.4.1
 
 - The tab has a real height. The guest was laid out inside a column that had no
