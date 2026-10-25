@@ -1,4 +1,7 @@
 node_modules/
 .pnpm-store/
 *.log
+*.tgz
+.env
+.env.*
 .DS_Store

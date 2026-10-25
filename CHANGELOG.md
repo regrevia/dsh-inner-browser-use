@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.12
+
+- The package declares the host it needs (`>=0.2.0`), so the card can say which
+  hosts it runs on instead of leaving it unknown.
+- `.gitignore` covers tarballs and env files; `files[]` no longer names a
+  directory that does not exist.
+
 ## 0.6.11
 
 - A chat with no pane showing still answers: when a call arrives and no page is
