@@ -4,6 +4,14 @@ The column that a call needs is expanded through the control the product already
 
 # Changelog
 
+## 0.11.17
+
+- A call made from a chat the app is not showing no longer opens that chat or
+  its right column: it stops there and names the chat to open, so a
+  conversation someone is reading keeps the page and the column it has.
+- The product's browser tab is empty until a page is asked for, so a call for a
+  tab holding nothing gives it the page that chat last had before driving it.
+
 ## 0.11.16
 
 - A file name a page asks for is flattened to its last part, and a test now
