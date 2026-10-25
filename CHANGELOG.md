@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.9
+
+- The package is installable from the registry: it is no longer marked private,
+  and `npm pack` produces thirteen files.
+
 ## 0.6.8
 
 - The selection and copy tools have their own tests, so the calls the page answers
