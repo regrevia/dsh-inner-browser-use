@@ -10,7 +10,7 @@ The agent navigates, reads the page as numbered controls, clicks, types, and run
 
 | Tool | What it does |
 | --- | --- |
-| `browser_navigate` | Opens a URL in this chat's sidebar tab and returns the page. |
+| `browser_navigate` | Opens a URL in this chat's built-in browser and returns the page. |
 | `browser_view` | Returns the address, title, visible text, and every control as `#1 … #80`. |
 | `browser_click` | Clicks one numbered control and returns the page it leads to. |
 | `browser_type` | Types into one numbered field, optionally pressing Enter. |
@@ -18,12 +18,12 @@ The agent navigates, reads the page as numbered controls, clicks, types, and run
 | `browser_selection` | Returns the text currently selected in the page. |
 | `browser_copy` | Copies the selection, or one control's text, to the clipboard. |
 | `browser_screenshot` | Saves a PNG of the tab and returns its path. |
-| `browser_download` | Saves a file the page offers into this chat's project folder. |
+| `browser_download` | Saves a file the page offers into this chat's project folder. A file the page starts saving on its own lands there too, and the call that caused it reports the path. |
 | `browser_upload` | Attaches a local file to a numbered file field. |
 
 Every call is visible: the pointer travels to the control, a ring marks it, and the page scrolls the target into view first.
 
-The first call opens the tab for you: the page half hears that a chat needs one and opens **内置浏览器** in the right sidebar. Nothing else in that sidebar changes — this plugin adds its own tab type and nothing to the guide pane.
+The first call opens the tab for you: the page half hears that a chat needs one and opens **内置浏览器** in the right sidebar. That tab is the product's own — same tab kind, same address bar, same partition — and this plugin adds nothing to the guide pane. A tab you opened by hand is the tab the agent drives.
 
 ## Where files land
 
@@ -54,10 +54,9 @@ The plugin appears under **Plugins** as *内置浏览器*. It needs the Desktop 
 ## Use
 
 1. Open the chat you want the agent to browse for.
-2. In the right panel, press **+** and choose **内置浏览器**.
-3. Ask the agent for something on a page: *"打开 example.com，告诉我标题"*.
+2. Ask the agent for something on a page: *"打开 example.com，告诉我标题"*. The first call opens the built-in browser in the right panel; pressing **+ → 内置浏览器** yourself lands on the same tab.
 
-The tab is per chat. If a chat has no tab, a tool call says so instead of guessing.
+The tab is per chat: each chat has its own in the same built-in browser. A call for a chat that never opened one opens it there.
 
 ## Drag data both ways
 
@@ -77,7 +76,8 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 - **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
 - **No popups or permission prompts.** A link that wants a new window stays in the tab it is in. A file the page
   offers comes out through `browser_download`, which saves it into this chat's project folder and hands the path
-  back to the conversation.
+  back to the conversation. A file the page starts saving by itself needs no call: it lands in the same folder,
+  and the call that pressed the link reports where it went.
 - **It opens the tab only when a call needs it.** A call for the chat you are reading may open the right
   panel; a call for any other chat gets a page out of sight instead, so the panel stays as you arranged it.
   At most three such pages are kept, and the oldest goes first.
@@ -92,7 +92,7 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 | | |
 | --- | --- |
 | Harness | Desktop app, sidebar browser present |
-| Tab kind | `inner-browser-use` — never shadows the built-in `browser` kind |
+| Tab kind | `browser` — the built-in browser's own kind |
 | Host | Node 20+ |
 | License | MIT |
 

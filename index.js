@@ -24,11 +24,12 @@
  * One transport, two faces, no port, no secret: that is the whole design. // ui-copy-ignore
  */
 
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, readFileSync, statSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Everything this plugin writes lands under this one folder of the chat's working
@@ -858,6 +859,8 @@ export function apply(ctx, config = {}) {
   const bridge = new Bridge()
   /** @type {Map<string, { dir: string, file: string }>} */
   const sinks = new Map()
+  /* Files a page saved on its own: one row per transfer, gone when the bytes are in. */
+  const landings = new Map()
   if (Number.isInteger(config.openWaitMs)) bridge.openWaitMs = config.openWaitMs
   ctx.effect(() => () => bridge.dispose(), 'dsh-inner-browser-use: bridge lifetime')
   /* Each chat works in a folder the app already knows; asking it is cheaper
@@ -996,6 +999,8 @@ export function apply(ctx, config = {}) {
         client: clientState(bridge.client),
         /* Where a chat's files would land, when its tab told us the folder. */
         folders: Object.fromEntries(bridge.connected().map((chat) => [chat, bridge.cwdOf(chat) ?? bridge.folderOf(chat) ?? ''])),
+        /* Lets a page that is still running an older bundle replace itself. */
+        clientBuild: clientBuild(),
       }))
       return
     }
@@ -1028,8 +1033,67 @@ export function apply(ctx, config = {}) {
       return
     }
 
+    if (path === '/land' && req.method === 'POST') {
+      /* A file the page saved on its own, written where that chat works. The
+         header keeps another site out; the chat names the folder it works in. */
+      if (req.headers['x-dshib-land'] !== '1') {
+        res.writeHead(403, { 'content-type': 'text/plain' })
+        res.end('forbidden')
+        return
+      }
+      const chat = url.searchParams.get('session') ?? ''
+      const id = url.searchParams.get('id') ?? ''
+      const offset = Number(url.searchParams.get('offset') ?? '0')
+      let landing = landings.get(id)
+      if (landing === undefined) {
+        const base = bridge.cwdOf(chat) ?? bridge.folderOf(chat) ?? process.cwd()
+        const dir = await bridge.room(base, DOWNLOAD_DIR)
+        landing = { dir, file: await freePath(dir, safeName(url.searchParams.get('name'))) }
+        landings.set(id, landing)
+        if (landings.size > 32) {
+          const oldest = landings.keys().next()
+          if (oldest.done !== true) landings.delete(oldest.value)
+        }
+      }
+      const stream = createWriteStream(landing.file, { flags: offset > 0 ? 'a' : 'w' })
+      try {
+        await new Promise((settle, fail) => {
+          stream.on('finish', settle)
+          stream.on('error', fail)
+          req.on('error', fail)
+          req.pipe(stream)
+        })
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'text/plain' })
+        res.end(String(error?.message ?? error))
+        return
+      }
+      const info = await stat(landing.file)
+      if (url.searchParams.get('final') === '1') landings.delete(id)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, path: landing.file, bytes: info.size }))
+      return
+    }
+
     res.writeHead(404, { 'content-type': 'text/plain' })
     res.end('not found')
+  }
+
+  /* The page compares this with what it last loaded: a page still running an
+     older bundle reloads itself once instead of waiting for a manual refresh. */
+  const clientFile = join(dirname(fileURLToPath(import.meta.url)), 'client.js')
+  let buildMark = ''
+  let buildStamp = -1
+  const clientBuild = () => {
+    try {
+      const stamp = statSync(clientFile).mtimeMs
+      if (stamp === buildStamp && buildMark !== '') return buildMark
+      buildMark = createHash('sha256').update(readFileSync(clientFile)).digest('hex').slice(0, 16)
+      buildStamp = stamp
+    } catch {
+      buildMark = buildMark === '' ? 'unknown' : buildMark
+    }
+    return buildMark
   }
 
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ROUTE, handler }), 'dsh-inner-browser-use: bridge route')

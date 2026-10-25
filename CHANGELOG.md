@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.11.0
+
+- A file the page starts saving by itself needs no second call: the bytes land in
+  this chat's project folder, and the call that pressed the link reports where
+  they went. The header keeps another site from writing into that folder.
+
+## 0.10.1
+
+- The column the person is reading is never widened or overlaid by this plugin: in the native model the panel is the product's own, opened by opening its tab, so this plugin no longer asks for a presentation mode.
+- A page from a build that parked its own guest can no longer cover the chat: leftovers are removed at boot, and a parked guest is never taken for the product's page.
+- The first probe after a page load reports the window it landed in, so a column that looks wrong names the node that caused it.
+
+## 0.10.0
+
+- The tools drive the browser the product ships: the page lives in the sidebar's
+  own browser tab, with its address bar, its back and forward buttons and its
+  corner menu, instead of a second browser this plugin drew.
+- That tab keeps the sign-ins itself, in the partition the product gives each
+  workspace, so a page opens signed in across sessions without the plugin
+  writing cookies.
+- The plugin no longer offers a browser tab of its own; a browser-like tab drawn
+  by a plugin is not the browser.
+
 ## 0.9.0
 
 - A sign-in survives the app closing when the site keeps it in a cookie the page
