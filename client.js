@@ -1997,8 +1997,18 @@ window.__ModuleLoader__.load({
               const build = String(state?.clientBuild ?? '')
               if (build === '' || build === 'unknown') return
               if (String(sessionStorage.getItem('dshib.build') ?? '') === build) return
+              /* A page mid-dialog keeps its place; the next tick asks again. */
+              if (document.querySelector('[aria-modal="true"], dialog[open]') !== null) return
               sessionStorage.setItem('dshib.build', build)
-              location.reload()
+              try {
+                /* The address carries this build so the shell fetches the graph
+                   that serves it instead of answering from its cache. */
+                const next = new URL(location.href)
+                next.searchParams.set('interface', `dshib-${build}`)
+                location.replace(next.href)
+              } catch {
+                location.reload()
+              }
             })
             .catch(() => {})
         }
@@ -2056,10 +2066,24 @@ window.__ModuleLoader__.load({
              tabs; a call that arrives before it was ever opened brings it up
              here, docked, so the page has a place to be seen. */
           showColumn = () => {
+            /* The product already owns the control that expands the column;
+               a person's press is what the column is built to follow, and it
+               leaves the product's own state in charge afterwards. */
+            try {
+              const button = document.querySelector('[data-sidebar-right-expand]')
+              if (button !== null && button !== undefined && typeof button.click === 'function') {
+                button.click()
+                return 'expanded'
+              }
+            } catch {
+              /* a page without a header falls back to the layout service */
+            }
             try {
               scope.layout.openRightbar(true, false) // ui-copy-ignore
+              return 'layout'
             } catch {
               /* nothing to open without a right pane */
+              return 'none'
             }
           }
           reveal = (asking) => {
@@ -2183,10 +2207,11 @@ window.__ModuleLoader__.load({
             } else if (take && NATIVE_MODE === true && panelOf(sessionId).length === 0) {
               /* The product only opens a tab in a column it has already adopted,
                  so the column comes up first and the tab lands inside it. */
-              showColumn?.()
-              for (let wait = 0; wait < 25 && panelOf(sessionId).length === 0; wait += 1) {
-                await new Promise((resolve) => setTimeout(resolve, 20))
+              const how = showColumn?.()
+              for (let wait = 0; wait < 40 && panelOf(sessionId).length === 0; wait += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 40))
               }
+              if (panelOf(sessionId).length === 0) beat({ tabType: registered, phase: 'open', step: 'no-column', how, session: sessionId })
             }
             if (paneSessions.has(sessionId)) {
               opened = 'kept'

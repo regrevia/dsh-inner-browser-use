@@ -959,6 +959,21 @@ export function apply(ctx, config = {}) {
       return
     }
 
+    if (path === '/want' && req.method === 'POST') {
+      /* Asks the page to open this chat's browser tab, the same ask a tool makes.
+         Gated so a page cannot be steered by another site. */
+      if (req.headers['x-dshib-want'] !== '1') {
+        res.writeHead(403, { 'content-type': 'text/plain' })
+        res.end('forbidden')
+        return
+      }
+      const asked = url.searchParams.get('session') ?? ''
+      bridge.want(asked)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, session: asked, watchers: bridge.watchers.size }))
+      return
+    }
+
     if (path === '/push' && req.method === 'POST') {
       let frame
       try {
@@ -1041,6 +1056,44 @@ export function apply(ctx, config = {}) {
       const info = await stat(sink.file)
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, path: sink.file, bytes: info.size }))
+      return
+    }
+
+    if (path === '/page-reload' && req.method === 'POST') {
+      /* The window's own reload, so a page that cannot replace itself yet is
+         replaced without anyone pressing anything. It answers with how it got
+         there; a process that cannot reach a window says so and does nothing. */
+      if (req.headers['x-dshib-page'] !== '1') {
+        res.writeHead(403, { 'content-type': 'text/plain' })
+        res.end('forbidden')
+        return
+      }
+      let how = 'no-electron'
+      let why = ''
+      try {
+        /* The packaged main process answers to a plain require; the module form
+           is tried first because an ES module elsewhere can only see that one. */
+        let electron = null
+        try {
+          electron = await import('electron')
+        } catch (error) {
+          const { createRequire } = await import('node:module')
+          electron = createRequire(import.meta.url)('electron')
+        }
+        const api = electron?.BrowserWindow === undefined ? electron?.default : electron
+        const windows = api?.BrowserWindow?.getAllWindows?.() ?? []
+        why = `${api?.BrowserWindow === undefined ? 'no-BrowserWindow' : 'windows:' + windows.length}`
+        const win = windows.find((each) => each?.webContents !== undefined && each.webContents.isDestroyed?.() !== true)
+        if (win !== undefined) {
+          how = 'window'
+          setTimeout(() => win.webContents.reload(), 50).unref?.()
+        }
+      } catch (error) {
+        how = 'no-electron'
+        why = String(error?.message ?? error).slice(0, 120)
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: how !== 'no-electron', how, why, electron: process.versions.electron ?? null }))
       return
     }
 
