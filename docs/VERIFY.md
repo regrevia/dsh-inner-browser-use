@@ -168,6 +168,7 @@ returned, not what the code was meant to do.
 | `browser_type` | the added text field | the field held the text that was typed |
 | `browser_download` | a page with a "Download" link | the file is in `<chat folder>/.dsh-inner-browser-use/downloads/` and the tool returns that path |
 | `browser_upload` | the added file field | the field held the chosen file's name |
+| a link the page saves itself | a page whose own script saves a file | the reply names the file under the chat's folder; `POST /land` without the page's header answers 403 |
 | `browser_selection` | not yet run in the app | the host half that carries this tool loads on the next start; the bridge is covered by `test/host.test.mjs` |
 | `browser_copy` | not yet run in the app | same |
 | the page is remounted | the page went blank | the next call reopened it; frame `why:"restore"` |
@@ -184,12 +185,17 @@ load at different moments, and both get there on their own:
 
 - `index.js` (the host half) is re-imported as soon as the file changes. A route
   added or removed answers at once: `curl -s -o /dev/null -w '%{http_code}'
-  http://127.0.0.1:49661/dsh-inner-browser-use/<route>` flips from 404 to 200 on
+  http://127.0.0.1:49631/dsh-inner-browser-use/<route>` flips from 404 to 200 on
   the next request, with no app restart.
-- `client.js` (the page half) is re-imported about twenty seconds after a save.
-  To prove which copy is loaded without a restart, put a temporary field in the
-  probe and read it back instead of guessing:
-  `grep -o '"rev":"[^"]*"' /tmp/dsh-inner-browser-use.log | tail -1`.
+- `client.js` (the page half) replaces itself on its own: a loaded copy asks
+  `/state` every four seconds and reloads when the served build differs from its
+  own. A copy loaded before that self-check existed cannot replace itself, so the
+  window's refresh control is the one step that is not automatic; after it, the
+  page half keeps itself current. To prove which copy is loaded, read the hash
+  the page reports instead of guessing: `curl -s
+  http://127.0.0.1:49631/dsh-inner-browser-use/state | python3 -c "import json,sys;
+  print(json.load(sys.stdin)['client'])"` — `native: true` means the page runs a
+  copy that drives the product's own browser.
 
 So: no restart to check a behaviour, and no restart to see the result of one.
 
@@ -233,7 +239,7 @@ heartbeat instead of opening anything, and the Host turns that into the call's
 answer rather than waiting out `openWaitMs`:
 
 ```
-curl -s http://127.0.0.1:49661/dsh-inner-browser-use/state | grep -o '"pending":[0-9]*'
+curl -s http://127.0.0.1:49631/dsh-inner-browser-use/state | grep -o '"pending":[0-9]*'
 grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
 ```
 
