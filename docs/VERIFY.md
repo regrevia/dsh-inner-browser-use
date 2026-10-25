@@ -188,3 +188,29 @@ To skip the wait, a reloader plugin mounted in the same app can be asked directl
 running, so a request made from inside a turn answers `{"status":"busy"}` — leave
 a waiter behind that asks again once the turn ends, and the next check runs on
 the new code.
+
+## The panel is taken only for the chat the person is looking at
+
+A tool call can arrive for a chat whose page is not open. Taking the right panel
+then would put an empty column in front of the chat the person is reading, so the
+page half first asks which chat is on screen and answers only that one.
+
+The answer comes from an occupant this plugin puts in the conversation header:
+it renders nothing, measures the nearest header container that has a size, and
+watches whether that container is on screen. Its beats name the chat:
+
+```
+grep -o '"phase":"seen","session":"[^"]*"' /tmp/dsh-inner-browser-use.log | tail -1
+```
+
+Switch chats in the app and the named chat follows, one line per switch. When the
+call is for another chat, its tab is placed in that chat's strip and the call
+answers that the tab is there — the panel is left alone:
+
+```
+grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
+```
+
+A frame naming no chat at all, when no header reports, keeps the older behaviour:
+the tab is placed and the panel may open, then closes itself after three seconds
+unless a page of ours mounted in it (`"step":"selfheal"`).
