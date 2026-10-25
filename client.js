@@ -1175,6 +1175,8 @@ window.__ModuleLoader__.load({
     let openedByUs = false
     /** @type {null | ((open: boolean) => void)} right panel, once this page can reach it */
     let column = null
+    /** Opens the chat's right column docked: the way the product's own tab does. */
+    let showColumn = null
 
     function beat(frame) {
       void fetch(`${ROUTE}/uplink?session=`, {
@@ -2050,15 +2052,21 @@ window.__ModuleLoader__.load({
               /* nothing to open without a right pane */
             }
           }
+          /* There is one column per chat and the product opens it for its own
+             tabs; a call that arrives before it was ever opened brings it up
+             here, docked, so the page has a place to be seen. */
+          showColumn = () => {
+            try {
+              scope.layout.openRightbar(true, false) // ui-copy-ignore
+            } catch {
+              /* nothing to open without a right pane */
+            }
+          }
           reveal = (asking) => {
             /* Another chat's page is never brought forward. */
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
             if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
-            try {
-              if (NATIVE_MODE === false) scope.layout.openRightbar(true, false) // ui-copy-ignore
-            } catch {
-              /* nothing to open without a right pane */
-            }
+            showColumn?.()
             try {
               /* A kept-mounted tab stays hidden behind the pane's active tab;
                  opening this kind brings it forward. */
@@ -2073,11 +2081,7 @@ window.__ModuleLoader__.load({
           raise = (asking) => {
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
             if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
-            try {
-              if (NATIVE_MODE === false) scope.layout.openRightbar(true, false) // ui-copy-ignore
-            } catch {
-              /* the capture reports the geometry it saw */
-            }
+            showColumn?.()
           }
           if (!probed) {
             probed = true
@@ -2174,6 +2178,16 @@ window.__ModuleLoader__.load({
                one chat's call used to steer a browser tab in another chat. */
             /* A chat's own pane already holds the page. Opening the tab again
                rebuilds it, which closes the page a call is about to use. */
+            if (paneSessions.has(sessionId)) {
+              opened = 'kept'
+            } else if (take && NATIVE_MODE === true && panelOf(sessionId).length === 0) {
+              /* The product only opens a tab in a column it has already adopted,
+                 so the column comes up first and the tab lands inside it. */
+              showColumn?.()
+              for (let wait = 0; wait < 25 && panelOf(sessionId).length === 0; wait += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 20))
+              }
+            }
             if (paneSessions.has(sessionId)) {
               opened = 'kept'
             } else if (typeof strip?.openTabIn === 'function') {

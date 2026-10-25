@@ -79,7 +79,9 @@ globalThis.document = {
   body: { appendChild() {} },
   createElement: () => ({ ...style, dataset: {} }),
   querySelector: () => null,
+  querySelectorAll: (selector) => (selector === '[data-sidebar-right-session]' ? globalThis.__panels : []),
 }
+globalThis.__panels = []
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
 const ticks = []
 globalThis.setInterval = (fn) => { ticks.push(fn); return ticks.length }
@@ -123,6 +125,7 @@ test('the product browser tab is the only tab opened, so no look-alike is added'
 })
 
 function scene({ openTab, openTabIn } = {}) {
+  globalThis.__panels = []
   /** @type {any[]} */
   const opened = []
   /** @type {string[]} */
@@ -192,6 +195,7 @@ test('a tool that needs a page opens the product browser tab for this chat', () 
   const { opened, bars, source } = scene()
   source.send({ type: 'client-alive', phase: 'ready' })
   assert.deepEqual(opened, [])
+  globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-9' } }]
   source.send({ type: 'wanted', session: 'chat-9' })
   assert.deepEqual(opened, [['session', 'chat-9', 'browser', {}]])
   /* The panel is the product's: opening a tab opens it, and forcing the panel
@@ -203,6 +207,7 @@ test('a tool that needs a page opens the product browser tab for this chat', () 
 
 test('the asking chat id is the only way to open, so no other chat is touched', () => {
   const { opened, source } = scene({ openTab: () => {} })
+  globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-4' } }]
   source.send({ type: 'wanted', session: 'chat-4' })
   assert.deepEqual(opened, [['session', 'chat-4', 'browser', {}]])
 })
@@ -326,4 +331,19 @@ test('a tab that never appeared is not reported as open', () => {
 test('driving the product page puts no container of ours into the page', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /if \(NATIVE_MODE === false\) document\.body\.appendChild\(stashNode\)/)
+})
+
+test('a chat whose column was never opened gets one before its tab', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /showColumn = \(\) => \{/)
+  assert.match(source, /panelOf\(sessionId\)\.length === 0\) \{\n {14}\/\* The product only opens a tab/)
+})
+
+test('a chat whose column was never opened gets one, docked, before its tab', async () => {
+  const { opened, bars, source } = scene()
+  globalThis.__panels = []
+  source.send({ type: 'wanted', session: 'chat-7' })
+  assert.deepEqual(bars, ['true,false'])
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  assert.deepEqual(opened, [['session', 'chat-7', 'browser', {}]])
 })

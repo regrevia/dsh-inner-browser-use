@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.5
+
+- A chat whose right column was never opened now gets it, docked, before the
+  page goes in, so a call does not end at a column that was never there. The
+  chat keeps its width; nothing is covered.
+
 ## 0.11.4
 
 - The page the product owns is driven where it is: no hidden container of ours
