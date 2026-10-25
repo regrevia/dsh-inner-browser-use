@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.14
+
+- The send-button lookup that runs inside the page is lifted out of the shipped
+  code and tested: near, far, absent, and disabled all answer as intended.
+
 ## 0.11.13
 
 - Every column still up gets its tab back after an update, once per chat, and

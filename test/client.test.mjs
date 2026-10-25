@@ -486,3 +486,62 @@ test('an update that closed the tab brings it back for the chat on screen', asyn
     globalThis.__panels = []
   }
 })
+
+/* The guest code that runs inside the page is a string; a copy of it is lifted
+   out by braces so its send-button lookup is tested as it ships. */
+function guestFunction(name) {
+  const start = clientSource.indexOf('const ' + name + ' =')
+  assert.notEqual(start, -1, name + ' is in the guest code')
+  const open = clientSource.indexOf('{', start)
+  let depth = 0
+  for (let at = open; at < clientSource.length; at += 1) {
+    if (clientSource[at] === '{') depth += 1
+    if (clientSource[at] === '}') {
+      depth -= 1
+      if (depth === 0) return clientSource.slice(start, at + 1)
+    }
+  }
+  throw new Error('no end for ' + name)
+}
+
+function node(marks, children = []) {
+  const all = (from) => from.flatMap((child) => [child, ...all(child.children)])
+  const el = {
+    parentElement: null,
+    children,
+    disabled: undefined,
+    className: '',
+    textContent: '',
+    getAttribute: (given) => (given in marks ? marks[given] : null),
+    querySelectorAll: (selector) => (selector === 'button,[role="button"]' ? all(children) : []),
+  }
+  for (const child of children) child.parentElement = el
+  return el
+}
+
+test('the send button wins over an unmarked one, near or far', () => {
+  const D = { body: {}, querySelectorAll: () => [] }
+  const visible = () => true
+  const sendControl = new Function('D', 'visible', guestFunction('sendControl') + '\nreturn sendControl')(D, visible)
+  const plain = node({})
+  const form = node({}, [plain, node({ 'aria-label': '发送' })])
+  /* The lookup climbs four ancestors, so a real composer has a few above it. */
+  let above = form
+  for (let up = 0; up < 5; up += 1) above = node({}, [above])
+  assert.equal(sendControl(plain).getAttribute('aria-label'), '发送')
+  assert.equal(plain.parentElement, form)
+  /* Outside the four ancestors a marked button is still found, because a bar
+     above the composer is where the send control usually lives. */
+  const loose = node({})
+  const far = node({ title: 'Send message' })
+  D.querySelectorAll = () => [far]
+  assert.equal(sendControl(loose), far)
+  /* Nothing marked means no press: the caller falls back to Enter. */
+  D.querySelectorAll = () => [node({})]
+  assert.equal(sendControl(loose), null)
+  /* A disabled control is not a press either. */
+  const off = node({ 'aria-label': 'Send' })
+  off.disabled = true
+  D.querySelectorAll = () => [off]
+  assert.equal(sendControl(loose), null)
+})
