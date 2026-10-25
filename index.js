@@ -339,6 +339,18 @@ async function record(line) {
  * @param {string} text - what the model reads.
  * @returns {{text: string}} tool value.
  */
+/**
+ * Turn base64 into bytes. A plugin runs without Node globals in some hosts, so
+ * `Buffer` is used when present and the page's own decoder otherwise.
+ * @param {string} value - base64 text.
+ * @returns {any} bytes a write accepts.
+ */
+function decodeBase64(value) {
+  const text = String(value)
+  if (typeof Buffer !== 'undefined') return Buffer.from(text, 'base64')
+  return Uint8Array.from(atob(text), (character) => character.charCodeAt(0))
+}
+
 function asValue(text) {
   return { text }
 }
@@ -463,7 +475,7 @@ function tools(bridge) {
         const dir = join(exec.agent?.cwd ?? process.cwd(), SHOT_DIR)
         await mkdir(dir, { recursive: true })
         const file = join(dir, `shot-${Date.now()}.png`)
-        await writeFile(file, Buffer.from(png, 'base64'))
+        await writeFile(file, decodeBase64(png))
         return asValue(file)
       },
     },

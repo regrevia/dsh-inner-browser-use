@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.5
+
+- `browser_screenshot` works again: the first capture of a guest that has not
+  painted yet fails inside the compositor, so it is retried once, and the PNG is
+  written without depending on a Node global the plugin context may not expose.
+
 ## 0.3.4
 
 - Fixed the ask stream going to a half that no longer exists: after the host half

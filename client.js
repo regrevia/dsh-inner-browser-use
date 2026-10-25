@@ -417,7 +417,15 @@ window.__ModuleLoader__.load({
                     return
                   }
                   if (frame.tool === 'shot') {
-                    const image = await webview.capturePage()
+                    /* The first capture of a guest that has not painted yet fails
+                       inside the compositor; the frame after it succeeds. */
+                    let image
+                    try {
+                      image = await webview.capturePage()
+                    } catch {
+                      await new Promise((resolve) => setTimeout(resolve, 250))
+                      image = await webview.capturePage()
+                    }
                     reply({ ok: true, value: { png: image.toPNG().toString('base64') } })
                     return
                   }
