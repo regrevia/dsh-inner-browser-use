@@ -137,11 +137,19 @@ loosely never attaches — it silently shows nothing. The partition is
 for a chat in a workspace, `session:<id>` for an ungrouped one. Same key, same
 cookies as the built-in browser tab.
 
-Because that partition is in memory, the page half reads the guest's cookies over
-the debugger and files them under `~/.dsh/inner-browser-use/cookies/<hash>.json`,
-mode 0600, keyed by the same workspace key; the next guest for that workspace gets
-them back before its first page loads. Nothing but a name, a value, and where the
-cookie belongs is kept, and the file is local to this machine.
+Because that partition is in memory, the page half files the cookies the page
+itself can read under `~/.dsh/inner-browser-use/cookies/<hash>.json`, mode 0600,
+keyed by the same workspace key: name, value, and the origin the page reported,
+nothing else, on this machine only. When that workspace's pane opens again, its
+remembered page loads, the kept cookies for that origin are written back, and the
+page loads once more — a cookie set from the page cannot affect a document that is
+already open. A workspace holds several sites, so a save replaces only the origin
+the page is on.
+
+The debugger is not an option for this: a `<webview>` element in the shipped app
+does not expose one, and the main process keeps the guest session to itself.
+Cookies marked `HttpOnly` are invisible to the page, so a login that relies only on
+those does not survive; anything the page reads from `document.cookie` does.
 
 ## Failure modes, by design
 

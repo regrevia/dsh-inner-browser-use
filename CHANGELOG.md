@@ -2,9 +2,9 @@
 
 ## 0.9.0
 
-- A sign-in survives the app closing: the cookies a workspace signed in with are
-  kept in a file only its user can read and put back the next time that
-  workspace's page opens.
+- A sign-in survives the app closing when the site keeps it in a cookie the page
+  can read: those are filed per workspace in a file only its user can read, and
+  put back the next time that workspace's pane opens.
 - A chat you are not reading is told the page is not the one being read, instead
   of the column moving to show it.
 

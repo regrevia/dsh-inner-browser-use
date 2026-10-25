@@ -43,7 +43,7 @@ Installing this plugin changes nothing a user already had:
 
 | Limit | Why | Workaround |
 | --- | --- | --- |
-| Login is kept per workspace, not per page | Cookies are filed under the workspace key | Use the same workspace to stay signed in |
+| A login is kept only if the page can read its cookie | `HttpOnly` cookies are not visible to the page half | Stay in one workspace; sites that keep the session in a readable cookie come back signed in |
 | One storage partition per workspace | The lease key is the workspace CWD | Use one workspace per account you need isolated |
 | No downloads, popups, permission prompts | The guest attaches sandboxed | Read bytes in-page with `browser_script` |
 | Tools need the tab open | A tool cannot mount UI on your behalf | Open **内置浏览器** once per chat |

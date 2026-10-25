@@ -89,7 +89,7 @@ let replyEpoch = 'epoch-1'
 globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, epoch: replyEpoch }) })
 
 const clientSource = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-new Script(`${clientSource}\nglobalThis.__testRevealAllowed = revealAllowed`).runInThisContext()
+new Script(`${clientSource}\nglobalThis.__testRevealAllowed = revealAllowed\nglobalThis.__testCookies = { cookiesOf, cookiesSave, cookiesRestore }`).runInThisContext()
 
 test('the tab type is additive: own id, own kind, own guide card', () => {
   /** @type {any[]} */
@@ -239,4 +239,74 @@ test('a heartbeat naming a new half reopens the ask stream once', async () => {
   for (const tick of ticks) tick()
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(sources.length, before + 1)
+})
+
+/** A guest whose page answers as this one does. */
+function guest(cookies, origin) {
+  return {
+    executeJavaScript: async (code) => {
+      if (code.includes('document.cookie')) return cookies
+      if (code.includes('location.origin')) return origin
+      return ''
+    },
+  }
+}
+
+test('the cookies this page can see are read back with the origin they belong to', async () => {
+  const { cookiesOf } = /** @type {any} */ (globalThis).__testCookies
+  const seen = await cookiesOf(guest('sid=alice; theme=dark', 'https://example.test'))
+  assert.deepEqual(seen, [
+    { name: 'sid', value: 'alice', url: 'https://example.test' },
+    { name: 'theme', value: 'dark', url: 'https://example.test' },
+  ])
+  assert.deepEqual(await cookiesOf(guest('', 'about:blank')), [])
+  assert.deepEqual(await cookiesOf(guest('sid=alice', 'null')), [])
+})
+
+test('a page keeps its own sign-in and leaves another site alone', async () => {
+  const { cookiesSave } = /** @type {any} */ (globalThis).__testCookies
+  /** @type {any[]} */
+  const posted = []
+  globalThis.fetch = async (url, init) => {
+    if (init?.method === 'POST') {
+      posted.push(JSON.parse(String(init.body)))
+      return { ok: true, json: async () => ({ kept: posted.at(-1).cookies.length }) }
+    }
+    return { ok: true, json: async () => ({ cookies: [{ name: 'other', value: 'x', url: 'https://elsewhere.test' }] }) }
+  }
+  const kept = await cookiesSave(guest('sid=alice', 'https://example.test'), 'session:chat-1', () => {})
+  assert.equal(kept, 2)
+  assert.deepEqual(posted.at(-1).cookies, [
+    { name: 'other', value: 'x', url: 'https://elsewhere.test' },
+    { name: 'sid', value: 'alice', url: 'https://example.test' },
+  ])
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true }) })
+})
+
+test('a sign-in kept for this origin is written back one cookie at a time', async () => {
+  const { cookiesRestore } = /** @type {any} */ (globalThis).__testCookies
+  /** @type {string[]} */
+  const written = []
+  const el = {
+    executeJavaScript: async (code) => {
+      if (code.includes('document.cookie =')) written.push(code)
+      if (code.includes('location.origin')) return 'https://example.test'
+      return ''
+    },
+  }
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ cookies: [
+      { name: 'sid', value: 'alice', url: 'https://example.test' },
+      { name: 'theme', value: 'dark', url: 'https://example.test' },
+      { name: 'other', value: 'x', url: 'https://elsewhere.test' },
+    ] }),
+  })
+  const restored = await cookiesRestore(el, 'session:chat-1', () => {})
+  assert.equal(restored, 2)
+  const script = written.join('')
+  assert.match(script, /"sid=alice; path=\//)
+  assert.match(script, /"theme=dark; path=\//)
+  assert.doesNotMatch(script, /elsewhere/)
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true }) })
 })

@@ -26,6 +26,112 @@ function revealAllowed(sessionId, view) {
   return view.onScreen.has(sessionId)
 }
 
+/**
+ * One bridge route, named once: both halves of this page answer on the same path.
+ */
+const BRIDGE_ROUTE = '/dsh-inner-browser-use'
+
+/**
+ * Wait for `work`, but not forever.
+ * @param {Promise<any>} work - what to wait for.
+ * @param {number} ms - how long it may take.
+ * @param {string} label - what timed out, for the log.
+ * @returns {Promise<any>} the answer.
+ */
+function within(work, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label + ' timed out')), ms)
+    work.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
+  })
+}
+
+/**
+ * The cookies the guest itself can read, keyed to the origin it is on.
+ * @param {any} el - the guest webview.
+ * @returns {Promise<Record<string, unknown>[]>} cookies worth keeping.
+ */
+async function cookiesOf(el) {
+  const raw = await within(el.executeJavaScript('document.cookie', true), 2000, 'cookie read')
+  const origin = await within(el.executeJavaScript('location.origin', true), 2000, 'origin')
+  if (typeof raw !== 'string' || raw === '' || typeof origin !== 'string') return []
+  if (origin === '' || origin === 'null' || origin.startsWith('about:')) return []
+  const out = []
+  for (const part of raw.split(';')) {
+    const at = part.indexOf('=')
+    if (at <= 0) continue
+    out.push({ name: part.slice(0, at).trim(), value: part.slice(at + 1).trim(), url: origin })
+  }
+  return out
+}
+
+/**
+ * Keep the cookies the guest holds now, so the next run starts signed in.
+ * @param {any} el - the guest webview.
+ * @param {string} key - workspace key the guest was leased with.
+ * @returns {Promise<number>} how many cookies were kept.
+ */
+async function cookiesSave(el, key, probe) {
+  if (key === '') return 0
+  try {
+    const cookies = await cookiesOf(el)
+    if (cookies.length === 0) return 0
+    /* One workspace holds the pages of several sites: this page replaces what
+       it holds itself, and leaves every other site's sign-in alone. */
+    const origin = String(cookies[0].url)
+    let others = []
+    try {
+      const read = await within(fetch(`${BRIDGE_ROUTE}/cookies?key=${encodeURIComponent(key)}`), 3000, 'cookie read')
+      if (read.ok) {
+        const body = await read.json()
+        others = (Array.isArray(body?.cookies) ? body.cookies : []).filter((each) => each?.url !== origin)
+      }
+    } catch {
+      /* an unreadable store is replaced, not merged into */
+    }
+    const response = await within(fetch(`${BRIDGE_ROUTE}/cookies?key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      body: JSON.stringify({ cookies: [...others, ...cookies] }),
+    }), 3000, 'cookie write')
+    if (!response.ok) return 0
+    const body = await response.json()
+    return Number(body?.kept ?? 0)
+  } catch (error) {
+    probe?.({ why: 'cookies-save-failed', message: String(error?.message ?? error).slice(0, 80) })
+    return 0
+  }
+}
+
+/**
+ * Put back the cookies kept for this workspace's current origin.
+ * @param {any} el - the guest webview.
+ * @param {string} key - workspace key the guest was leased with.
+ * @returns {Promise<number>} how many cookies were put back.
+ */
+async function cookiesRestore(el, key, probe) {
+  if (key === '') return 0
+  try {
+    const origin = await within(el.executeJavaScript('location.origin', true), 2000, 'origin')
+    if (typeof origin !== 'string' || origin === '' || origin === 'null') return 0
+    const response = await within(fetch(`${BRIDGE_ROUTE}/cookies?key=${encodeURIComponent(key)}`), 3000, 'cookie read')
+    if (!response.ok) return 0
+    const body = await response.json()
+    const cookies = (Array.isArray(body?.cookies) ? body.cookies : []).filter(
+      (each) => typeof each?.url === 'string' && each.url === origin,
+    )
+    if (cookies.length === 0) return 0
+    /* One assignment per cookie: a joined string sets only its first pair. */
+    const script = cookies
+      .map((each) => `document.cookie = ${JSON.stringify(`${String(each.name)}=${String(each.value)}; path=/`)}`)
+      .join('; ')
+    await within(el.executeJavaScript(script, true), 2000, 'cookie restore')
+    probe?.({ why: 'cookies-restored', origin, count: cookies.length })
+    return cookies.length
+  } catch (error) {
+    probe?.({ why: 'cookies-restore-failed', message: String(error?.message ?? error).slice(0, 80) })
+    return 0
+  }
+}
+
 window.__ModuleLoader__.load({
   id: 'dsh-inner-browser-use',
   factory(require) {
@@ -35,7 +141,7 @@ window.__ModuleLoader__.load({
     const NS = 'inner-browser-use'
     const KIND = 'inner-browser-use'
     const ID = 'dsh-inner-browser-use'
-    const ROUTE = '/dsh-inner-browser-use'
+    const ROUTE = BRIDGE_ROUTE
     const STYLE_ID = 'dsh-inner-browser-use-css'
     const ALIVE_MS = 20_000
     /* The ask stream belongs to the half that was serving when it opened. After
@@ -481,92 +587,6 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => reject(new Error(label + ' timed out')), ms)
         work.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
       })
-    }
-
-    /* One debugger per guest, one user at a time: a capture and a cookie read that
-       overlap would be told the guest is already being inspected. */
-    const debuggerQueue = new WeakMap()
-
-    /**
-     * Run one debugger session on a guest, queued behind whatever is already using it.
-     * @param {any} el - the guest webview.
-     * @param {(bug: any) => Promise<any>} run - the commands to send.
-     * @returns {Promise<any>} whatever `run` answered.
-     */
-    function withDebugger(el, run) {
-      const before = debuggerQueue.get(el) ?? Promise.resolve()
-      const work = before.then(async () => {
-        const bug = el?.debugger
-        if (bug === null || bug === undefined) throw new Error('debugger: absent')
-        let attached = false
-        try {
-          await tick(bug.attach('1.3'), 4000, 'attach')
-          attached = true
-        } catch (error) {
-          if (!/already attached/i.test(String(error?.message ?? error))) throw error
-        }
-        try {
-          return await run(bug)
-        } finally {
-          if (attached) bug.detach().catch(() => {})
-        }
-      })
-      debuggerQueue.set(el, work.catch(() => {}))
-      return work
-    }
-
-    /**
-     * Put back the cookies a workspace signed in with, before anything is loaded.
-     * @param {any} el - the guest webview.
-     * @param {string} key - workspace key the guest was leased with.
-     * @returns {Promise<number>} how many cookies were put back.
-     */
-    async function cookiesRestore(el, key) {
-      if (key === '') return 0
-      try {
-        const response = await tick(fetch(`${ROUTE}/cookies?key=${encodeURIComponent(key)}`), 3000, 'cookie read')
-        if (!response.ok) return 0
-        const body = await response.json()
-        const cookies = Array.isArray(body?.cookies) ? body.cookies : []
-        if (cookies.length === 0) return 0
-        await withDebugger(el, async (bug) => {
-          await tick(bug.sendCommand('Network.enable'), 2000, 'network')
-          await tick(bug.sendCommand('Network.setCookies', { cookies }), 3000, 'cookie restore')
-        })
-        probe?.({ why: 'cookies-restored', count: cookies.length })
-        return cookies.length
-      } catch (error) {
-        probe?.({ why: 'cookies-restore-failed', message: String(error?.message ?? error).slice(0, 80) })
-        return 0
-      }
-    }
-
-    /**
-     * Keep the cookies the guest holds now, so the next app run starts signed in.
-     * @param {any} el - the guest webview.
-     * @param {string} key - workspace key the guest was leased with.
-     * @returns {Promise<number>} how many cookies were kept.
-     */
-    async function cookiesSave(el, key) {
-      if (key === '') return 0
-      try {
-        const cookies = await withDebugger(el, async (bug) => {
-          await tick(bug.sendCommand('Network.enable'), 2000, 'network')
-          const answer = await tick(bug.sendCommand('Network.getAllCookies'), 3000, 'cookie list')
-          return Array.isArray(answer?.cookies) ? answer.cookies : []
-        })
-        if (cookies.length === 0) return 0
-        const response = await tick(fetch(`${ROUTE}/cookies?key=${encodeURIComponent(key)}`, {
-          method: 'POST',
-          body: JSON.stringify({ cookies }),
-        }), 3000, 'cookie write')
-        if (!response.ok) return 0
-        const body = await response.json()
-        return Number(body?.kept ?? 0)
-      } catch (error) {
-        probe?.({ why: 'cookies-save-failed', message: String(error?.message ?? error).slice(0, 80) })
-        return 0
-      }
     }
 
     /**
@@ -1040,26 +1060,28 @@ window.__ModuleLoader__.load({
           if ((await ready) === false) throw new Error(L('error.lease'))
           if (disposed) return
           options.onPhase('ready')
-          /* A sign-in is put back before the first page loads. */
-          await Promise.race([
-            cookiesRestore(webview, key),
-            new Promise((resolve) => setTimeout(resolve, 1500)),
-          ])
           /* Cookies change without a reload, so they are kept while the guest is alive. */
           cookieTimer = setInterval(() => {
             if (disposed) return
-            void cookiesSave(webview, key)
+            void cookiesSave(webview, key, probe)
           }, 30_000)
           webview.addEventListener('did-stop-loading', () => {
-            if (!disposed) void cookiesSave(webview, key)
+            if (!disposed) void cookiesSave(webview, key, probe)
           })
           /* A tab that was closed on a page opens on that page again, without
              waiting for the chat to ask for anything. */
           const kept = rememberedPage(options.sessionId)
           if (kept !== '') {
             try {
+              const loaded = waitEvent(webview, 'did-stop-loading', 12_000)
               webview.loadURL(kept)
               probe?.({ why: 'reopen', url: kept })
+              /* A sign-in can only be written once the page it belongs to is loaded,
+                 and writing it does not redraw the page, so it is loaded once more. */
+              if ((await loaded) !== false) {
+                const restored = await cookiesRestore(webview, key, probe)
+                if (restored > 0) webview.loadURL(kept)
+              }
             } catch (error) {
               probe?.({ why: 'reopen-failed', url: kept, error: String(error?.message ?? error).slice(0, 80) })
             }
