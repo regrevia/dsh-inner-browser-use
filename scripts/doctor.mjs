@@ -44,8 +44,8 @@ for (const [chat, folder] of Object.entries(state.folders ?? {})) {
 }
 
 const jars = existsSync(APP)
-  ? await run('grep', ['-ao', 'persist:dsh-platform-[a-z-]*', APP], { maxBuffer: 1 << 22 })
-      .then((out) => [...new Set(out.stdout.split('\n').filter((line) => line !== ''))])
-      .catch(() => [])
-  : []
-console.log(`cookies  ${jars.length === 0 ? 'no on-disk jar found' : `on disk: ${jars.join(', ')}`}`)
+  ? await run('grep', ['-m2', '-ao', 'dsh-sidebar-browser-', APP], { maxBuffer: 1 << 22 })
+      .then((out) => out.stdout.trim() !== '')
+      .catch(() => false)
+  : false
+console.log(`memory   ${jars ? 'a login lasts until the app quits' : 'the app bundle is not where expected'}`)

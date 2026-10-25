@@ -148,6 +148,7 @@ window.__ModuleLoader__.load({
         chrome()
         const r = el.getBoundingClientRect()
         const x = r.left + r.width / 2, y = r.top + r.height / 2
+        W.__dsh_ib_last = { x: x, y: y }
         const ptr = D.getElementById('__dsh_ib_ptr')
         const rip = D.getElementById('__dsh_ib_rip')
         clearTimeout(away)
@@ -267,6 +268,18 @@ window.__ModuleLoader__.load({
       const run = async (op, a) => {
         chrome()
         if (op === 'view') return view()
+        /* An image taken after the arrow faded should still show where the last
+           action landed, so put it back where it was. */
+        if (op === 'pointer') {
+          const last = W.__dsh_ib_last
+          const ptr = last === undefined ? null : D.getElementById('__dsh_ib_ptr')
+          if (ptr === null) return ''
+          clearTimeout(away)
+          ptr.classList.remove('away')
+          ptr.style.transform = 'translate3d(' + (last.x - 4) + 'px,' + (last.y - 2) + 'px,0)'
+          away = setTimeout(() => ptr.classList.add('away'), 8000)
+          return ''
+        }
         if (op === 'click') {
           const el = find(a.ref)
           el.scrollIntoView({ block: 'center', inline: 'center' })
@@ -1068,6 +1081,7 @@ window.__ModuleLoader__.load({
                     if (target.getBoundingClientRect().width < 2 || target.getBoundingClientRect().height < 2) {
                       throw new Error("this chat's page is not on screen")
                     }
+                    await runIn(target, 'pointer', {}).catch(() => {})
                     try {
                       reply({ ok: true, value: { png: await grab(target) } })
                       return

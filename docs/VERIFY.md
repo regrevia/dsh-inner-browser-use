@@ -229,25 +229,38 @@ grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
 The tool result names the tab strip of the chat being read, so the next step is
 the person opening that chat — no empty column, and no eight-second pause.
 
-## Cookies stay, per project
+## Where a login lives
 
-A pane leases the app's own inner-browser tab, and that tab carries a persistent
-Chromium partition keyed by the chat's workspace folder:
+A pane leases the app's own sidebar guest, and the shell decides which storage
+partition that guest gets. The shipped code reserves it like this:
 
 ```
-node scripts/doctor.mjs
-# cookies  on disk: persist:dsh-platform-
+partition = `dsh-sidebar-browser-${randomUUID()}`
+// "Reserve one guest in a workspace's process-lifetime partition."
 ```
 
-What follows from a persistent partition rather than a fresh one each time:
+So a login is shared by every chat of the same project and survives closing the
+tab or the chat — and it does not survive quitting the app, because the name is
+chosen fresh each run and nothing is written to disk. `node scripts/doctor.mjs`
+prints that as `memory   a login lasts until the app quits`.
 
-- a login in one chat is still there in another chat of the same project, and
-  after the app is restarted;
-- two projects never share a jar, so a session from one cannot leak into the
-  other;
-- closing the tab does not clear the jar — only the workspace folder changing
-  picks a different one.
+Keeping cookies across a restart would need a `persist:` partition, and the
+shell refuses any guest whose partition differs from the lease it issued, so it
+cannot be done from this plugin: it is an app-side change.
 
-`scripts/doctor.mjs` prints the live state next to that evidence: whether the
-bridge answers, which chat the page reports itself on, which chats have a page,
-how many calls are waiting, and where each chat's files would land.
+## What a running app showed
+
+Three flows were driven against the app itself, each one visible in its own output:
+
+- **The arrow is in the image.** A click answered `at 101,167`, and the saved
+  image showed the pointer over that control — the capture puts the arrow back
+  even when the action is older than the arrow's own timeout.
+- **A download lands in the chat's folder and arrives in the chat.** Following a
+  file link answered `Saved <chat folder>/.dsh-inner-browser-use/downloads/report.txt
+  (21 bytes)` and printed the file's contents in the same answer.
+- **The page and its cookies stay.** A guest reopened with `"why":"reopen"` on the
+  page it had been on, and a cookie set before a full navigation was still there
+  after it.
+
+The caller sat in one chat while the person read another, and the page work
+happened in the background chat's own guest: no pane was taken from the reader.

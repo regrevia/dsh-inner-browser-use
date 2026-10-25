@@ -25,7 +25,7 @@ let server
 let origin
 
 /** A chat's folder, as the Host knows it. */
-const HOST_FOLDER = '/Users/somebody/project'
+const HOST_FOLDER = '/home/somebody/project'
 
 /** What the Host answers when a chat's tab never named its folder. */
 const services = {

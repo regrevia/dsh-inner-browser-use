@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.13
+
+- A saved image shows where the assistant acted, even when the action finished
+  before the image was taken.
+
 ## 0.8.12
 
 - A call that cannot get the panel now answers with the reason and what to do about it, instead of waiting out the opening
