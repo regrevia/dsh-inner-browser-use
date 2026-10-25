@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.3
+
+- A tab the product did not actually open is reported as not opened, so a call
+  stops waiting on a page that will never answer.
+
 ## 0.11.2
 
 - A call finds its own chat's page. It reads the browser tab the product keeps
