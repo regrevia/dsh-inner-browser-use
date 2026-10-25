@@ -378,6 +378,12 @@ window.__ModuleLoader__.load({
         for (let i = 0; i < all.length; i += 8192) s += String.fromCharCode.apply(null, all.subarray(i, i + 8192))
         return W.btoa(s)
       }
+      const blob64 = async (blob) => {
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        let s = ''
+        for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192))
+        return W.btoa(s)
+      }
       const fileUrl = (a) => {
         if (typeof a.url === 'string' && a.url !== '') return a.url
         if (a.ref === undefined) throw new Error('give a url, or the control that links to the file')
@@ -527,9 +533,77 @@ window.__ModuleLoader__.load({
           }
           return { data: join64(parts), done: false }
         }
+        if (op === 'dl-watch') {
+          /* A file the page starts on its own is read here, so the chat gets it
+             without being told to save it twice. The page's own network rules
+             still decide whether the bytes can be read at all. */
+          if (W.__dshib_watch === true) return 'watching'
+          W.__dshib_watch = true
+          W.__dshib_land = []
+          const take = async (url, name) => {
+            try {
+              if (W.__dshib_land.length >= 3) return
+              const res = await fetch(url, { credentials: 'include', redirect: 'follow' })
+              if (res.ok !== true) return
+              const blob = await res.blob()
+              if (blob.size === 0 || blob.size > 8 * 1024 * 1024) return
+              W.__dshib_land.push({ name: name !== '' ? name : fileName({}, url, res), size: blob.size, data: await blob64(blob) })
+            } catch {
+              /* a page that forbids reading its own file keeps its own save */
+            }
+          }
+          D.addEventListener('click', (event) => {
+            const node = event.target
+            const link = node !== null && typeof node.closest === 'function' ? node.closest('a[download]') : null
+            if (link === null) return
+            event.preventDefault()
+            event.stopPropagation()
+            take(link.href, String(link.getAttribute('download') || ''))
+          }, true)
+          return 'watching'
+        }
+        if (op === 'dl-drain') {
+          const kept = Array.isArray(W.__dshib_land) ? W.__dshib_land.splice(0, W.__dshib_land.length) : []
+          return kept
+        }
         throw new Error('unknown operation ' + op)
       }
     `
+
+    /**
+     * Files the page saved on its own, written to the chat's folder.
+     *
+     * The page keeps what it captured; this half is the only one allowed to
+     * write, and it names the chat so the file lands where that chat works.
+     * @param {any} el - guest. @param {string} sessionId - chat the page belongs to.
+     * @returns {Promise<Array<{name: string, path: string, bytes: number}>>} what landed.
+     */
+    async function landFiles(el, sessionId) {
+      let list
+      try {
+        list = await runIn(el, 'dl-drain', {})
+      } catch {
+        return []
+      }
+      if (Array.isArray(list) !== true || list.length === 0) return []
+      const landed = []
+      for (const item of list) {
+        const name = String(item?.name ?? 'download')
+        try {
+          const answer = await fetch(
+            `${ROUTE}/land?session=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(String(globalThis.crypto?.randomUUID?.() ?? Date.now()))}&name=${encodeURIComponent(name)}&final=1`, // ui-copy-ignore
+            { method: 'POST', headers: { 'x-dshib-land': '1' }, body: bytesOf(String(item?.data ?? '')) },
+          )
+          const wrote = await answer.json().catch(() => null)
+          if (wrote?.ok !== true) throw new Error(String(wrote?.error ?? 'the file did not reach the folder'))
+          landed.push({ name, path: String(wrote.path ?? ''), bytes: Number(wrote.bytes ?? item?.size ?? 0) })
+        } catch (error) {
+          probe?.({ why: 'land-failed', name, error: String(error?.message ?? error).slice(0, 120) })
+        }
+      }
+      if (landed.length > 0) probe?.({ why: 'auto-land', files: landed.map((file) => file.path).join(', ').slice(0, 300) })
+      return landed
+    }
 
     /** @param {string} base64 - bytes as base64. @returns {Uint8Array} the bytes. */
     function bytesOf(base64) {
@@ -779,6 +853,190 @@ window.__ModuleLoader__.load({
     /** The injected pane face, reached from the capture path as well.
      *  @type {() => any} */
     let faceOf = () => undefined
+
+    /* The product's own browser tab: the page these tools drive lives in it, so
+       the chrome, the partition and the address bar are the ones it draws. */
+    const NATIVE_KIND = 'browser'
+    const NATIVE_MODE = true
+    const GUEST_SELECTOR = 'webview, [data-sidebar-browser-frame="webview"]'
+
+    /** Depth-first query that also walks a root's shadow children. */
+    function deepFind(root, selector) {
+      if (root === null || root === undefined) return null
+      try {
+        const direct = root.querySelector(selector)
+        if (direct !== null) return direct
+      } catch {
+        return null
+      }
+      const queue = [root]
+      while (queue.length > 0) {
+        const node = queue.pop()
+        for (const child of node.querySelectorAll('*')) {
+          const shadow = child.shadowRoot
+          if (shadow === null || shadow === undefined) continue
+          try {
+            const hit = shadow.querySelector(selector)
+            if (hit !== null) return hit
+          } catch {
+            /* a closed root answers nothing */
+          }
+          queue.push(shadow)
+        }
+      }
+      return null
+    }
+
+    /** True when a guest is laid out in the right part of the window. */
+    function onRight(node) {
+      try {
+        const rect = node.getBoundingClientRect()
+        return rect.width > 80 && rect.height > 80 && rect.left > window.innerWidth * 0.35
+      } catch {
+        return false
+      }
+    }
+
+    /** That chat's page in the product's browser tab, once the tab made one. */
+    function nativeElement() {
+      /* Ours is never the page: a guest this plugin parked is out of the flow of
+         the column and answers nothing the person is reading. */
+      const ours = (node) => {
+        try {
+          return node.closest('.dshib-stash') !== null
+        } catch {
+          return false
+        }
+      }
+      const known = deepFind(document.body, '[data-sidebar-browser-frame="webview"]')
+      if (known !== null && onRight(known) && !ours(known)) return known
+      const guests = Array.from(document.querySelectorAll('webview'))
+        .filter((node) => onRight(node) && !ours(node))
+      return guests.length > 0 ? guests.at(-1) : null
+    }
+
+    /** The box holding a guest and its address bar, for priming the address bar. */
+    function nativeBox(webview) {
+      let node = webview ?? null
+      for (let i = 0; i < 12 && node !== null; i += 1) {
+        if (typeof node.querySelector === 'function' && node.querySelector('form') !== null && node.querySelector('input') !== null) return node
+        node = node.parentElement ?? null
+      }
+      return null
+    }
+
+    /** The address bar of the browser tab the guest belongs to. */
+    function addressOf(webview) {
+      const root = nativeBox(webview) ?? document.body
+      try {
+        const named = root.querySelector('input[class*="address"]')
+        if (named !== null) return { form: named.closest('form') ?? null, input: named }
+        const candidates = Array.from(root.querySelectorAll('input')).filter((node) => /http|地址|url/i.test(String(node.placeholder ?? '') + String(node.getAttribute?.('aria-label') ?? '')))
+        if (candidates.length > 0) return { form: candidates[0].closest('form') ?? null, input: candidates[0] }
+      } catch {
+        /* a bar this version does not name is reported by the caller */
+      }
+      return { form: null, input: null }
+    }
+
+    /** Wait for that page to exist. */
+    async function nativeReady(tries) {
+      const rounds = tries ?? 25
+      for (let i = 0; i < rounds; i += 1) {
+        const found = nativeElement()
+        if (found !== null) return found
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+      beat({ phase: 'native-missing', ...domDump() })
+      return undefined
+    }
+
+    /** A small description of what the window holds, for a call that cannot find its page. */
+    function domDump() {
+      try {
+        return dumpNow()
+      } catch {
+        return { width: 0 }
+      }
+    }
+
+    /** The description itself; a window without the usual pieces reports nothing. */
+    function dumpNow() {
+      const box = (node) => {
+        try {
+          const rect = node.getBoundingClientRect()
+          return { tag: String(node.tagName ?? '').toLowerCase(), cls: String(node.className ?? '').slice(0, 70), w: Math.round(rect.width), h: Math.round(rect.height), x: Math.round(rect.left) }
+        } catch {
+          return { tag: '?', cls: '', w: 0, h: 0, x: 0 }
+        }
+      }
+      const guests = Array.from(document.querySelectorAll('webview')).slice(0, 5).map(box)
+      const frames = Array.from(document.querySelectorAll('[data-sidebar-browser-frame]')).slice(0, 5).map(box)
+      const inputs = Array.from(document.querySelectorAll('input')).slice(0, 8).map((node) => {
+        const rect = node.getBoundingClientRect()
+        return { cls: String(node.className ?? '').slice(0, 60), ph: String(node.placeholder ?? '').slice(0, 40), w: Math.round(rect.width), x: Math.round(rect.left) }
+      })
+      const rights = Array.from(document.querySelectorAll('[class*="sidebar" i], [class*="rightbar" i]')).slice(0, 8).map(box)
+      const own = document.querySelectorAll('#dshib-park, .dshib-stash, .dshib-body, .dshib-guest').length
+      const root = document.documentElement
+      return {
+        guests,
+        frames,
+        inputs,
+        rights,
+        own,
+        width: Math.round(window.innerWidth),
+        scroll: Math.round(Number(root?.scrollWidth ?? 0)),
+        rootStyle: String(root?.getAttribute?.('style') ?? '').slice(0, 120),
+      }
+    }
+
+    /** Type into the product's address bar: how an empty tab is made to hold a page. */
+    async function nativeOpen(sessionId, url) {
+      if (url === '') return 'no-url'
+      try {
+        let face
+        try {
+          face = faceOf?.()
+        } catch {
+          face = undefined
+        }
+        if (face !== undefined && face !== null) {
+          try {
+            if (typeof face.openTabIn === 'function') face.openTabIn(sessionId, NATIVE_KIND, {}) // ui-copy-ignore
+            else if (typeof face.openTab === 'function') face.openTab(NATIVE_KIND, {}) // ui-copy-ignore
+          } catch {
+            /* the address bar below reports what the pane shows */
+          }
+        }
+        let webview = nativeElement()
+        let slot = { form: null, input: null }
+        for (let i = 0; i < 20; i += 1) {
+          webview = nativeElement()
+          slot = webview === null ? { form: null, input: null } : addressOf(webview)
+          if (slot.input !== null) break
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        }
+        if (slot.input === null) {
+          beat({ phase: 'native-address', session: sessionId, guest: webview !== null, ...domDump() })
+          return 'no-address'
+        }
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        slot.input.focus()
+        if (setter !== undefined) setter.call(slot.input, url)
+        else slot.input.value = url
+        slot.input.dispatchEvent(new Event('input', { bubbles: true }))
+        const form = slot.form
+        if (form !== null && typeof form.requestSubmit === 'function') form.requestSubmit()
+        else if (form !== null) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+        else slot.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
+        beat({ phase: 'native-typed', session: sessionId, url: url.slice(0, 120), value: String(slot.input.value ?? '').slice(0, 120), form: form !== null })
+        return 'typed'
+      } catch (error) {
+        return 'failed:' + String(error?.message ?? error).slice(0, 80)
+      }
+    }
+
     /** The pane's own way into its guest, for an address typed by hand. @type {Map<string, (url: string) => void>} */
     const steer = new Map()
     /** The page each chat last asked for; a reload leaves its guest at about:blank. @type {Map<string, string>} */
@@ -1043,6 +1301,7 @@ window.__ModuleLoader__.load({
       let key = ''
       let lease
       let webview
+      let owns = true
       let cancel = () => {}
       let cookieTimer
 
@@ -1052,90 +1311,116 @@ window.__ModuleLoader__.load({
         steer.delete(options.sessionId)
         cancel()
         clearInterval(cookieTimer)
-        if (webview !== undefined) webview.remove()
+        if (webview !== undefined && owns === true) webview.remove()
         if (bridge !== undefined && lease !== undefined) bridge.release(lease)
         options.onPhase('closed')
       }
 
       void (async () => {
-        if (bridge === undefined) {
+        if (NATIVE_MODE === false && bridge === undefined) {
           options.onPhase('error', L('error.desktopOnly'))
           return
         }
         options.onPhase('opening')
         try {
-          key = await options.key()
-          lease = await bridge.acquire(key)
-          if (disposed) return
-          webview = document.createElement('webview')
-          webview.className = 'dshib-guest'
-          webview.setAttribute('name', lease.lease)
-          webview.setAttribute('partition', lease.partition)
-          webview.setAttribute('allowpopups', '')
-          webview.setAttribute('src', `about:blank#${lease.lease}`)
-          const ready = waitEvent(webview, 'dom-ready', 20_000)
-          options.host.appendChild(webview) // ui-copy-ignore
-          if ((await ready) === false) throw new Error(L('error.lease'))
-          if (disposed) return
-          options.onPhase('ready')
-          /* Cookies change without a reload, so they are kept while the guest is alive;
-             a page that has not touched them since the last save is not written again. */
-          let saved = ''
-          const saveIfChanged = async () => {
-            if (disposed || key === '') return
-            try {
-              const now = String(await within(webview.executeJavaScript('document.cookie', true), 4000, 'cookie read'))
-              if (now === saved) return
-              saved = now
-              await cookiesSave(webview, key, probe)
-            } catch {
-              /* a page mid-load is saved on its next stop */
-            }
-          }
-          cookieTimer = setInterval(() => {
-            void saveIfChanged()
-          }, 30_000)
-          webview.addEventListener('did-stop-loading', () => {
-            void saveIfChanged()
-          })
-          /* A tab that was closed on a page opens on that page again, without
-             waiting for the chat to ask for anything. */
-          const kept = rememberedPage(options.sessionId)
-          if (kept !== '') {
-            try {
-              const loaded = waitEvent(webview, 'did-stop-loading', 12_000)
-              webview.loadURL(kept)
-              probe?.({ why: 'reopen', url: kept })
-              /* A sign-in can only be written once the page it belongs to is loaded,
-                 and writing it does not redraw the page, so it is loaded once more. */
-              if ((await loaded) !== false) {
-                const restored = await cookiesRestore(webview, key, probe)
-                if (restored > 0) webview.loadURL(kept)
+          if (NATIVE_MODE === true) {
+            /* The product's tab owns the page. This end answers that page's
+               wire and nothing else: no lease, no element of its own. */
+            owns = false
+            const early = await nativeReady(8)
+            webview = early
+            if (webview === undefined) {
+              const first = rememberedPage(options.sessionId)
+              if (first !== '') {
+                await nativeOpen(options.sessionId, first)
+                webview = await nativeReady(40)
               }
-            } catch (error) {
-              probe?.({ why: 'reopen-failed', url: kept, error: String(error?.message ?? error).slice(0, 80) })
             }
-          }
-          steer.set(options.sessionId, (to) => {
-            rememberPage(options.sessionId, to)
-            try {
-              webview.loadURL(to)
-            } catch (error) {
-              probe?.({ why: 'steer-failed', url: to, error: String(error?.message ?? error).slice(0, 80) })
+            options.onPhase(webview === undefined ? 'waiting' : 'ready')
+            if (webview !== undefined) {
+              steer.set(options.sessionId, (to) => {
+                rememberPage(options.sessionId, to)
+                try {
+                  webview.loadURL(to)
+                } catch (error) {
+                  probe?.({ why: 'steer-failed', url: to, error: String(error?.message ?? error).slice(0, 80) })
+                }
+              })
             }
-          })
-          /* The pane shows which page it holds; the guest is the only one that
-             knows, so it reports every navigation it makes. */
-          const tellUrl = () => {
-            try {
-              const here = String(webview.getURL?.() ?? '')
-              if (here !== '') options.onUrl?.(here)
-            } catch { /* a guest mid-teardown has no URL */ }
-          }
-          webview.addEventListener('did-navigate', tellUrl)
-          webview.addEventListener('did-navigate-in-page', tellUrl)
-          tellUrl()
+          } else {
+            key = await options.key()
+            lease = await bridge.acquire(key)
+            if (disposed) return
+            webview = document.createElement('webview')
+            webview.className = 'dshib-guest'
+            webview.setAttribute('name', lease.lease)
+            webview.setAttribute('partition', lease.partition)
+            webview.setAttribute('allowpopups', '')
+            webview.setAttribute('src', `about:blank#${lease.lease}`)
+            const ready = waitEvent(webview, 'dom-ready', 20_000)
+            options.host.appendChild(webview) // ui-copy-ignore
+            if ((await ready) === false) throw new Error(L('error.lease'))
+            if (disposed) return
+            options.onPhase('ready')
+            /* Cookies change without a reload, so they are kept while the guest is alive;
+               a page that has not touched them since the last save is not written again. */
+            let saved = ''
+            const saveIfChanged = async () => {
+              if (disposed || key === '') return
+              try {
+                const now = String(await within(webview.executeJavaScript('document.cookie', true), 4000, 'cookie read'))
+                if (now === saved) return
+                saved = now
+                await cookiesSave(webview, key, probe)
+              } catch {
+                /* a page mid-load is saved on its next stop */
+              }
+            }
+            cookieTimer = setInterval(() => {
+              void saveIfChanged()
+            }, 30_000)
+            webview.addEventListener('did-stop-loading', () => {
+              void saveIfChanged()
+            })
+            /* A tab that was closed on a page opens on that page again, without
+               waiting for the chat to ask for anything. */
+            const kept = rememberedPage(options.sessionId)
+            if (kept !== '') {
+              try {
+                const loaded = waitEvent(webview, 'did-stop-loading', 12_000)
+                webview.loadURL(kept)
+                probe?.({ why: 'reopen', url: kept })
+                /* A sign-in can only be written once the page it belongs to is loaded,
+                   and writing it does not redraw the page, so it is loaded once more. */
+                if ((await loaded) !== false) {
+                  const restored = await cookiesRestore(webview, key, probe)
+                  if (restored > 0) webview.loadURL(kept)
+                }
+              } catch (error) {
+                probe?.({ why: 'reopen-failed', url: kept, error: String(error?.message ?? error).slice(0, 80) })
+              }
+            }
+            steer.set(options.sessionId, (to) => {
+              rememberPage(options.sessionId, to)
+              try {
+                webview.loadURL(to)
+              } catch (error) {
+                probe?.({ why: 'steer-failed', url: to, error: String(error?.message ?? error).slice(0, 80) })
+              }
+            })
+            /* The pane shows which page it holds; the guest is the only one that
+               knows, so it reports every navigation it makes. */
+            const tellUrl = () => {
+              try {
+                const here = String(webview.getURL?.() ?? '')
+                if (here !== '') options.onUrl?.(here)
+              } catch { /* a guest mid-teardown has no URL */ }
+            }
+            webview.addEventListener('did-navigate', tellUrl)
+            webview.addEventListener('did-navigate-in-page', tellUrl)
+            tellUrl()
 
+          }
           cancel = readFrames(
             (await fetch(`${ROUTE}/downlink?session=${encodeURIComponent(options.sessionId)}&workspace=${encodeURIComponent(keyForSession?.(options.sessionId) ?? '')}`, { cache: 'no-store' })).body,
             (frame) => {
@@ -1150,12 +1435,22 @@ window.__ModuleLoader__.load({
               setActing(options.sessionId, String(frame.tool ?? ''))
               void (async () => {
                 try {
+                  if (NATIVE_MODE === true && (webview === undefined || webview.isConnected !== true)) {
+                    const ask = String(frame.args?.url ?? '')
+                    if (frame.tool === 'navigate' && ask !== '') await nativeOpen(options.sessionId, ask)
+                    webview = await nativeReady(40)
+                    if (webview === undefined) {
+                      reply({ ok: false, error: L('error.background') })
+                      return
+                    }
+                    options.onPhase('ready')
+                  }
                   /* A view the app is not drawing has no surface, and a guest
                      without one runs no script. Give it a surface out of sight
                      first, and only bring the chat's tab forward as a second try. */
                   const room = () => webview.getBoundingClientRect()
                   const hidden = () => webview.hidden === true || webview.closest?.('[hidden]') !== null
-                  if (hidden() || room().width < 2 || room().height < 2) {
+                  if (NATIVE_MODE === false && (hidden() || room().width < 2 || room().height < 2)) {
                     parkHiddenViews()
                     for (let wait = 0; wait < 25; wait += 1) {
                       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -1226,7 +1521,7 @@ window.__ModuleLoader__.load({
                     /* A site this workspace signed in to before opens signed in, one
                        silent reload later: a cookie written from the page cannot
                        affect the document already on screen. */
-                    try {
+                    if (NATIVE_MODE === false) try {
                       const before = String(await within(
                         webview.executeJavaScript('document.cookie', true), 4000, 'cookie read',
                       ))
@@ -1443,7 +1738,15 @@ window.__ModuleLoader__.load({
                     reply({ ok: true, value: text.slice(0, 8000) })
                     return
                   }
-                  reply({ ok: true, value: await runIn(webview, frame.tool, frame.args ?? {}) })
+                  await runIn(webview, 'dl-watch', {}).catch(() => '')
+                  const answer = await runIn(webview, frame.tool, frame.args ?? {})
+                  const landed = await landFiles(webview, String(frame.session ?? ''))
+                  if (landed.length === 0) {
+                    reply({ ok: true, value: answer })
+                  } else {
+                    const tail = landed.map((file) => `\nSaved ${file.path} (${file.bytes} bytes)`).join('')
+                    reply({ ok: true, value: typeof answer === 'string' ? answer + tail : { text: tail.trim(), files: landed } })
+                  }
                 } catch (error) {
                   reply({ ok: false, error: String(error?.message ?? error) })
                 } finally {
@@ -1638,6 +1941,22 @@ window.__ModuleLoader__.load({
         beat({ tabType: false, phase: 'loaded' })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
+        /* A page still running an older bundle replaces itself: the build it
+           switched to is remembered first, so a reload can never repeat. */
+        const watchBuild = () => {
+          void fetch(`${ROUTE}/state`, { cache: 'no-store' })
+            .then((response) => (response?.ok === true ? response.json() : null))
+            .then((state) => {
+              const build = String(state?.clientBuild ?? '')
+              if (build === '' || build === 'unknown') return
+              if (String(sessionStorage.getItem('dshib.build') ?? '') === build) return
+              sessionStorage.setItem('dshib.build', build)
+              location.reload()
+            })
+            .catch(() => {})
+        }
+        setTimeout(watchBuild, 2_000)
+        setInterval(() => { if (!document.hidden) watchBuild() }, 4_000)
         ctx.effect(() => {
           const tick = setInterval(() => {
             const seen = routedSession()
@@ -1681,7 +2000,7 @@ window.__ModuleLoader__.load({
              to call. */
           column = (open) => {
             try {
-              scope.layout.openRightbar(open, false) // ui-copy-ignore
+              if (NATIVE_MODE === false) scope.layout.openRightbar(open, false) // ui-copy-ignore
             } catch {
               /* nothing to open without a right pane */
             }
@@ -1691,7 +2010,7 @@ window.__ModuleLoader__.load({
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
             if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
             try {
-              scope.layout.openRightbar(true, false) // ui-copy-ignore
+              if (NATIVE_MODE === false) scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
               /* nothing to open without a right pane */
             }
@@ -1699,8 +2018,9 @@ window.__ModuleLoader__.load({
               /* A kept-mounted tab stays hidden behind the pane's active tab;
                  opening this kind brings it forward. */
               const face = faceOf()
-              if (typeof face?.openTabIn === 'function') face.openTabIn(asking === '' ? currentSession : asking, KIND, {}) // ui-copy-ignore
-              else if (typeof face?.openTab === 'function') face.openTab(KIND, {}) // ui-copy-ignore
+              const kind = NATIVE_MODE === true ? NATIVE_KIND : KIND
+              if (typeof face?.openTabIn === 'function') face.openTabIn(asking === '' ? currentSession : asking, kind, {}) // ui-copy-ignore
+              else if (typeof face?.openTab === 'function') face.openTab(kind, {}) // ui-copy-ignore
             } catch {
               /* the capture reports the geometry it saw */
             }
@@ -1709,7 +2029,7 @@ window.__ModuleLoader__.load({
             if (asking !== '' && asking !== currentSession && currentSession !== '') return
             if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
             try {
-              scope.layout.openRightbar(true, false) // ui-copy-ignore
+              if (NATIVE_MODE === false) scope.layout.openRightbar(true, false) // ui-copy-ignore
             } catch {
               /* the capture reports the geometry it saw */
             }
@@ -1767,7 +2087,7 @@ window.__ModuleLoader__.load({
               try {
                 /* A mounted page that lost its surface (a closed panel) is shown
                    again; the panel opens only when nothing is on screen. */
-                if (bare || hidden) scope.layout.openRightbar(true, false) // ui-copy-ignore
+                if (bare || hidden) if (NATIVE_MODE === false) scope.layout.openRightbar(true, false) // ui-copy-ignore
                 /* Opened on the chance this chat's page would appear in it. If the
                    page never gets a surface the panel is left as it was found. */
                 if (bare) {
@@ -1776,7 +2096,7 @@ window.__ModuleLoader__.load({
                        again would hide the very page the call is about. */
                     if (paneSessions.has(sessionId) || onScreen.has(sessionId) === true) return
                     try {
-                      scope.layout.openRightbar(false, false) // ui-copy-ignore
+                      if (NATIVE_MODE === false) scope.layout.openRightbar(false, false) // ui-copy-ignore
                       beat({ tabType: registered, phase: 'open', step: 'selfheal' })
                     } catch {
                       /* nothing to close */
@@ -1813,7 +2133,7 @@ window.__ModuleLoader__.load({
               opened = 'kept'
             } else if (typeof strip?.openTabIn === 'function') {
               try {
-                strip.openTabIn(sessionId, KIND, {}) // ui-copy-ignore
+                strip.openTabIn(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
                 opened = 'session'
               } catch (error) {
                 opened = `failed: ${String(error?.message ?? error)}`
@@ -1821,13 +2141,14 @@ window.__ModuleLoader__.load({
             }
             if (opened === '' && currentSession === sessionId && typeof strip?.openTab === 'function') {
               try {
-                strip.openTab(KIND, {}) // ui-copy-ignore
+                strip.openTab(NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
                 opened = 'current'
               } catch (error) {
                 opened = `failed: ${String(error?.message ?? error)}`
               }
             }
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })
+            if (NATIVE_MODE === true) setTimeout(() => beat({ phase: 'dom-probe', session: sessionId, ...domDump() }), 1_500)
             keepResident(sessionId)
           }
           const open = () => {
@@ -1847,19 +2168,20 @@ window.__ModuleLoader__.load({
           const tabs = scope.sidebarRightTabs
           const workspaces = scope.workspaces
           keyForSession = (sessionId) => workspaceKey(workspaces, sessionId)
-          scope.effect(() => tabs.register({
-            id: ID, // ui-copy-ignore
-            kind: KIND, // ui-copy-ignore
-            multiple: false, // ui-copy-ignore
-            keepMounted: true,
-            title: () => L('type.label'),
-            description: () => L('guide.description'),
-            /* The guide page lists one card per registered type; without this the
-               column has no door to this tab. */
-            guide: [{ id: KIND, title: () => L('type.label'), description: () => L('guide.description'), order: 60 }],
-          }), 'dsh-inner-browser-use: tab type')
+          /* The driven page is the product's own browser tab, so this plugin
+             registers no tab of its own: a second browser in the column would be
+             a look-alike, not the browser the product ships. */
           registered = true
-          beat({ tabType: true, phase: 'registered' })
+          beat({ tabType: true, phase: 'registered', native: NATIVE_MODE })
+          /* A build that parked its own guest left a column that belongs to
+             nobody; it goes before anything else is measured. */
+          try {
+            document.getElementById('dshib-park')?.remove()
+            for (const node of Array.from(document.querySelectorAll('.dshib-stash'))) node.remove()
+          } catch {
+            /* a page that cannot be cleaned is reported by the probe */
+          }
+          setTimeout(() => beat({ phase: 'boot-dom', ...domDump() }), 2_500)
 
           scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore

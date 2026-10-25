@@ -293,6 +293,33 @@ test('a file the page offers lands in the chat folder', async () => {
   seat.stop()
 })
 
+test('a page that saves a file on its own lands it in the chat folder', async () => {
+  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-auto-'))
+  const seat = await tab('chat-auto', `cwd:${project}`)
+  const refused = await call('/land?session=chat-auto&id=a&name=r.bin&offset=0&final=1', {
+    method: 'POST',
+    body: 'x',
+  })
+  assert.equal(refused.status, 403)
+  const id = 'auto-1'
+  const first = await call(`/land?session=chat-auto&id=${id}&name=r.bin&offset=0&final=0`, {
+    method: 'POST',
+    body: 'ab',
+    headers: { 'x-dshib-land': '1' },
+  })
+  assert.equal(first.status, 200)
+  const second = await call(`/land?session=chat-auto&id=${id}&name=r.bin&offset=2&final=1`, {
+    method: 'POST',
+    body: 'cd',
+    headers: { 'x-dshib-land': '1' },
+  })
+  const landed = await second.json()
+  assert.equal(landed.path, join(project, '.dsh-inner-browser-use', 'downloads', 'r.bin'))
+  assert.equal(landed.bytes, 4)
+  assert.equal(await readFile(landed.path, 'utf8'), 'abcd')
+  seat.stop()
+})
+
 test('a file lands in the folder the chat works in, not the profile', async () => {
   const project = await mkdtemp(join(tmpdir(), 'dsh-ib-project-'))
   const elsewhere = await mkdtemp(join(tmpdir(), 'dsh-ib-elsewhere-'))

@@ -91,7 +91,7 @@ globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, epoch
 const clientSource = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 new Script(`${clientSource}\nglobalThis.__testRevealAllowed = revealAllowed\nglobalThis.__testCookies = { cookiesOf, cookiesSave, cookiesRestore }`).runInThisContext()
 
-test('the tab type is additive: own id, own kind, own guide card', () => {
+test('the product browser tab is the only tab opened, so no look-alike is added', () => {
   /** @type {any[]} */
   const opened = []
   const scope = {
@@ -119,18 +119,7 @@ test('the tab type is additive: own id, own kind, own guide card', () => {
     sidebarRight: { openTabIn: () => {} },
   }
   definition.apply(ctx)
-  assert.equal(opened.length, 1)
-  const tab = opened[0]
-  assert.equal(tab.id, 'dsh-inner-browser-use')
-  assert.equal(tab.kind, 'inner-browser-use')
-  assert.equal(Array.isArray(tab.guide), true)
-  assert.equal(tab.guide.length, 1)
-  assert.equal(tab.guide[0].kind === undefined || tab.guide[0].kind === 'inner-browser-use', true)
-  assert.equal(typeof tab.guide[0].title, 'function')
-  assert.equal(tab.guide[0].title(), '内置浏览器')
-  assert.equal(typeof tab.title, 'function')
-  assert.equal(tab.title(), '内置浏览器')
-  assert.equal(tab.multiple, false)
+  assert.deepEqual(opened, [])
 })
 
 function scene({ openTab, openTabIn } = {}) {
@@ -199,13 +188,15 @@ test('the ask reaches the strip as an injected service', () => {
   assert.equal(source.url, '/dsh-inner-browser-use/watch')
 })
 
-test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
+test('a tool that needs a page opens the product browser tab for this chat', () => {
   const { opened, bars, source } = scene()
   source.send({ type: 'client-alive', phase: 'ready' })
   assert.deepEqual(opened, [])
   source.send({ type: 'wanted', session: 'chat-9' })
-  assert.deepEqual(opened, [['session', 'chat-9', 'inner-browser-use', {}]])
-  assert.deepEqual(bars, ['true,false'])
+  assert.deepEqual(opened, [['session', 'chat-9', 'browser', {}]])
+  /* The panel is the product's: opening a tab opens it, and forcing the panel
+     here put it into a width mode the person had not asked for. */
+  assert.deepEqual(bars, [])
   source.send({ type: 'wanted', session: '' })
   assert.equal(opened.length, 1)
 })
@@ -213,7 +204,7 @@ test('a tool that needs a tab opens this chat tab in the right sidebar', () => {
 test('the asking chat id is the only way to open, so no other chat is touched', () => {
   const { opened, source } = scene({ openTab: () => {} })
   source.send({ type: 'wanted', session: 'chat-4' })
-  assert.deepEqual(opened, [['session', 'chat-4', 'inner-browser-use', {}]])
+  assert.deepEqual(opened, [['session', 'chat-4', 'browser', {}]])
 })
 
 test('a strip without the id path opens nothing rather than steering the current chat', () => {
