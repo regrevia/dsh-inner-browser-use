@@ -1386,6 +1386,8 @@ window.__ModuleLoader__.load({
        guest is made for them: two guests on one chat leave the wire pointing at
        whichever opened last, which is the one nobody can see. */
     const paneSessions = new Set()
+    /** Pages mounted by a column, so a dead one can be told from a live one. @type {Map<string, {alive: () => boolean}>} */
+    const paneGuests = new Map()
     let stashNode = null
 
     /** @returns {HTMLElement} the container hidden guests live in. */
@@ -1453,7 +1455,8 @@ window.__ModuleLoader__.load({
       const kept = residents.get(sessionId)
       if (kept !== undefined && kept.alive() !== false) return
       if (kept !== undefined) dropResident(sessionId)
-      if (paneSessions.has(sessionId)) return
+      const shown = paneGuests.get(sessionId)
+      if (shown !== undefined && shown.alive() === true) return
       /* Three pages out of sight is enough to answer what is being asked; the
          oldest one goes so a long session cannot pile them up. */
       if (residents.size >= 3) {
@@ -2024,11 +2027,13 @@ window.__ModuleLoader__.load({
         }
       })()
 
-      return {
+      const held = {
         dispose,
         /** @returns {boolean} true while this guest still holds a live page. */
         alive: () => disposed !== true && webview !== undefined && webview.isConnected !== false,
       }
+      if (options.pane === true) paneGuests.set(options.sessionId, held)
+      return held
     }
 
     /** @param {{sessionId: string, key: () => Promise<string>}} props - slot props. @returns {any} element. */
