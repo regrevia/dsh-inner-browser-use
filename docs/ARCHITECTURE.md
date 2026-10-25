@@ -92,6 +92,11 @@ than a misleading success.
 { "type": "client-alive", "phase": "registered", "tabType": true }
 ```
 
+A navigation to the address the tab already shows is answered by `reloadIgnoringCache()`
+rather than `loadURL()`: a browser serves that second request from its own cache, so a
+page whose file changed on the machine would otherwise come back stale and the numbers
+handed to the model would point at text that no longer exists.
+
 Frames are JSON, not binary, and they carry text, not screenshots. A page
 observation is a few kilobytes of text; a screenshot would be megabytes over the
 same socket, and it is not what the model needs to decide where to click.

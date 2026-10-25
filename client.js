@@ -1212,7 +1212,15 @@ window.__ModuleLoader__.load({
                       setTimeout(resolve, 45_000)
                     })
                     const asked = String(frame.args?.url ?? '')
-                    webview.loadURL(asked)
+                    /* Asked for the page already on screen: a browser answers that
+                       from its own cache, so the network is what has to be asked
+                       again, and a page the machine changed shows its new text. */
+                    if (webview.getURL() === asked) {
+                      webview.reloadIgnoringCache()
+                      probe({ why: 'reloaded', url: asked })
+                    } else {
+                      webview.loadURL(asked)
+                    }
                     await stop
                     if (failed !== '') throw new Error(failed)
                     /* A site this workspace signed in to before opens signed in, one
