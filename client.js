@@ -393,6 +393,26 @@ window.__ModuleLoader__.load({
     let faceOf = () => undefined
     /** The page each chat last asked for; a reload leaves its guest at about:blank. @type {Map<string, string>} */
     const lastUrl = new Map()
+    const pageKey = (session) => 'dshib:url:' + String(session ?? '')
+    /** The page this chat was last told to open, remembered past a remount. */
+    function rememberedPage(session) {
+      const key = pageKey(session)
+      try {
+        const kept = window.localStorage.getItem(key)
+        if (kept !== null && kept !== '') return kept
+      } catch {
+        /* storage is not always reachable; the in-memory map is enough */
+      }
+      return lastUrl.get(String(session ?? '')) ?? ''
+    }
+    function rememberPage(session, url) {
+      lastUrl.set(String(session ?? ''), url)
+      try {
+        window.localStorage.setItem(pageKey(session), url)
+      } catch {
+        /* see rememberedPage */
+      }
+    }
     /** Puts this chat's pane on screen.
      *  @type {null | ((asking: string) => void)} */
     let reveal = null
@@ -560,6 +580,28 @@ window.__ModuleLoader__.load({
               }
               void (async () => {
                 try {
+                  if (frame.tool !== 'navigate' && frame.tool !== 'shot') {
+                    const asked = rememberedPage(frame.session)
+                    let here = ''
+                    try {
+                      here = String(webview.getURL?.() ?? '')
+                    } catch {
+                      here = ''
+                    }
+                    const blank = here === '' || here.startsWith('about:blank')
+                    if (blank === true && asked !== '') {
+                      try {
+                        await new Promise((resolve) => {
+                          webview.addEventListener('did-stop-loading', () => resolve(), { once: true })
+                          webview.loadURL(asked)
+                          setTimeout(resolve, 20_000)
+                        })
+                        probe?.({ why: 'restore', url: asked })
+                      } catch (error) {
+                        probe?.({ why: 'restore-failed', url: asked, error: String(error?.message ?? error).slice(0, 80) })
+                      }
+                    }
+                  }
                   if (frame.tool === 'navigate') {
                     let failed = ''
                     const stop = new Promise((resolve) => {
@@ -575,7 +617,7 @@ window.__ModuleLoader__.load({
                     webview.loadURL(asked)
                     await stop
                     if (failed !== '') throw new Error(failed)
-                    lastUrl.set(String(frame.session ?? ''), asked)
+                    rememberPage(frame.session, asked)
                     reply({ ok: true, value: await runIn(webview, 'view', {}) })
                     return
                   }
@@ -642,7 +684,7 @@ window.__ModuleLoader__.load({
                          is covered; parking it gives the surface one of its own. */
                       probe?.({ why: 'capture-retry', first: String(error?.message ?? error).slice(0, 90) })
                       const here = await webview.executeJavaScript('location.href', true).catch(() => '')
-                      const remembered = lastUrl.get(String(frame.session ?? '')) ?? ''
+                      const remembered = rememberedPage(frame.session)
                       const href = String(here ?? '').startsWith('about:blank') === true ? remembered : String(here ?? '')
                       /* A page can keep its size and still be behind another tab of
                          this chat's pane: the app draws what it shows. Showing this

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5
+
+- A chat's page comes back by itself after the pane is remounted: the next tool
+  call reopens the page that chat was last told to open, instead of acting on a
+  blank view. The frame `why:"restore"` records it.
+
 ## 0.6.4
 
 - A capture brings this chat's browser tab to the front before it gives up, and

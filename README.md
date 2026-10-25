@@ -87,6 +87,9 @@ node --test test/*.test.mjs
 
 The host half is plain ESM with no dependencies; the client half is a dynamic client module with no build step. Both are loaded by the app as-is.
 
+- **The page comes back on its own.** The pane is rebuilt from time to time; when that leaves the view blank, the
+  next tool call reopens the page that chat was last told to open, so a run is not interrupted by it.
+
 ## License
 
 MIT © regrevia
