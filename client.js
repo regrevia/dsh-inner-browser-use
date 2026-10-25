@@ -1543,17 +1543,34 @@ window.__ModuleLoader__.load({
             order: 90, // ui-copy-ignore
             locale: NS, // ui-copy-ignore
           }, (props) => {
+            const mark = React.useRef(null)
             React.useEffect(() => {
               const id = String(props?.sessionId ?? '')
-              if (id === '') return undefined
-              currentSession = id
-              beat({ tabType: registered, phase: 'seen', session: id })
-              return () => {
+              const node = mark.current
+              /* A chat the person is not looking at may still be kept mounted, so
+                 being in the page is not enough: the header has to be on screen. */
+              const row = node?.parentElement ?? null
+              if (id === '' || row === null || typeof IntersectionObserver !== 'function') return undefined
+              const see = (on) => {
+                if (on) {
+                  currentSession = id
+                  beat({ tabType: registered, phase: 'seen', session: id })
+                  return
+                }
                 if (currentSession === id) currentSession = ''
                 beat({ tabType: registered, phase: 'unseen', session: id })
               }
+              const watch = new IntersectionObserver((entries) => {
+                const last = entries[entries.length - 1]
+                if (last !== undefined) see(last.isIntersecting === true)
+              })
+              watch.observe(row)
+              return () => {
+                watch.disconnect()
+                if (currentSession === id) currentSession = ''
+              }
             }, [props?.sessionId])
-            return null
+            return React.createElement('span', { ref: mark, style: { display: 'contents' } })
           }))
 
           scope.slots.inject(TITLE_SLOT, () => scope.slots.register({

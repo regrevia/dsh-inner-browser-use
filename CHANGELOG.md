@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.7
+
+- A chat whose header is kept mounted but off screen no longer counts as the chat on screen, so the panel is taken only
+  when the person is actually looking at the chat that asked.
+
 ## 0.8.6
 
 - The right panel is only taken for the chat on screen. A chat that is not on screen leaves the panel as it is, so no
