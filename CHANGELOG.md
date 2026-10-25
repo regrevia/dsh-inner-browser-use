@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.3
+
+- One work folder per chat, with a folder per kind of file: `.dsh-inner-browser-use/screenshots/` for images and
+  `.dsh-inner-browser-use/downloads/` for files the page offered. A project's root gains a single hidden name.
+- That folder carries its own `.gitignore`, so a chat reading pages never shows up in your project's `git status`.
+
+## 0.8.2
+
+- Files the page offers and screenshots of it now land in the folder the chat works in, under
+  `.dsh-inner-browser-use/`, instead of the app's own profile. The tab reports its workspace when it connects, so the
+  call knows where the chat lives without asking.
+
 ## 0.8.1
 
 - The right panel no longer opens for a chat you are not looking at. Whether a page is on screen is read from the

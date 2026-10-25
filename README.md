@@ -25,6 +25,18 @@ Every call is visible: the pointer travels to the control, a ring marks it, and 
 
 The first call opens the tab for you: the page half hears that a chat needs one and opens **内置浏览器** in the right sidebar. Nothing else in that sidebar changes — this plugin adds its own tab type and nothing to the guide pane.
 
+## Where files land
+
+The tab reports the folder its chat works in when it connects, and everything this plugin writes goes under one
+folder of that working directory:
+
+```
+.dsh-inner-browser-use/
+  .gitignore     keeps the folder out of your project's own version control
+  screenshots/   PNGs from browser_screenshot
+  downloads/     files the page offered to browser_download
+```
+
 ## Install
 
 ```bash

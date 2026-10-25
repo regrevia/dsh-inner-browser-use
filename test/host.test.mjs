@@ -8,7 +8,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -64,9 +64,10 @@ const call = (path, init) => fetch(`${origin}${ROUTE}${path}`, init)
  * @param {string} session - chat the tab belongs to.
  * @returns {Promise<{frames: any[], stop: () => void}>} frames seen so far.
  */
-async function tab(session) {
+async function tab(session, workspace = '') {
   const controller = new AbortController()
-  const response = await fetch(`${origin}${ROUTE}/downlink?session=${encodeURIComponent(session)}`, {
+  const query = workspace === '' ? '' : `&workspace=${encodeURIComponent(workspace)}`
+  const response = await fetch(`${origin}${ROUTE}/downlink?session=${encodeURIComponent(session)}${query}`, {
     signal: controller.signal,
   })
   const reader = response.body.getReader()
@@ -265,6 +266,33 @@ test('a file the page offers lands in the chat folder', async () => {
   seat.stop()
 })
 
+test('a file lands in the folder the chat works in, not the profile', async () => {
+  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-project-'))
+  const elsewhere = await mkdtemp(join(tmpdir(), 'dsh-ib-elsewhere-'))
+  const seat = await tab('chat-9', `cwd:${project}`)
+  const pending = defs.get('browser_download').execute(
+    { url: 'https://example.com/files/n.txt' },
+    { agent: { id: 'chat-9', cwd: elsewhere } },
+  )
+  const frame = await seat.next()
+  const ticket = String(frame.args.ticket)
+  const done = await call(`/grab?ticket=${ticket}&name=n.txt&offset=0&final=1`, { method: 'POST', body: 'x' })
+  const landed = await done.json()
+  assert.equal(landed.path, join(project, '.dsh-inner-browser-use', 'downloads', 'n.txt'))
+  assert.deepEqual(await readdir(join(project, '.dsh-inner-browser-use')).then((rows) => rows.sort()), [
+    '.gitignore',
+    'downloads',
+  ])
+  await call('/uplink?session=chat-9', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: landed }),
+  })
+  await pending
+  seat.stop()
+  await rm(project, { recursive: true, force: true })
+  await rm(elsewhere, { recursive: true, force: true })
+})
+
 test('a transfer nobody opened is refused instead of writing', async () => {
   const response = await call('/grab?ticket=unknown&name=a.txt&offset=0&final=1', { method: 'POST', body: 'x' })
   assert.equal(response.status, 404)
@@ -282,9 +310,11 @@ test('a screenshot lands on disk and the tool returns its path', async () => {
     body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { png } }),
   })
   const { text } = await pending
-  assert.ok(text.startsWith(cwd), text)
+  assert.ok(text.startsWith(join(cwd, '.dsh-inner-browser-use', 'screenshots')), text)
   const bytes = await readFile(text)
   assert.equal(bytes.length, 8)
+  /* The work folder keeps itself out of the project's own version control. */
+  assert.equal(await readFile(join(cwd, '.dsh-inner-browser-use', '.gitignore'), 'utf8').then((t) => t.includes('*')), true)
   seat.stop()
   await rm(cwd, { recursive: true, force: true })
 })

@@ -29,11 +29,20 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
-/** Where screenshots land inside the chat's working directory. */
-const SHOT_DIR = '.dsh-inner-browser-use'
+/**
+ * Everything this plugin writes lands under this one folder of the chat's working
+ * directory, so a project's root gains nothing but a single hidden name.
+ */
+const WORK_DIR = '.dsh-inner-browser-use'
 
-/** Where files the page offers land inside the chat's working directory. */
-const DOWNLOAD_DIR = join(SHOT_DIR, 'downloads')
+/** Screenshots of the page. */
+const SHOT_DIR = join(WORK_DIR, 'screenshots')
+
+/** Files the page offers. */
+const DOWNLOAD_DIR = join(WORK_DIR, 'downloads')
+
+/** Makes that folder keep itself out of the project's own version control. */
+const KEEP = '# written by the chat while it reads pages\n*\n'
 
 /** Largest file the plugin will push into a page. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -242,11 +251,40 @@ export class Bridge {
     })
   }
 
-  /** @param {string} sessionId - owning chat. @param {import('node:http').ServerResponse} res - open SSE response. */
-  attach(sessionId, res) {
+  /**
+   * @param {string} sessionId - owning chat.
+   * @param {import('node:http').ServerResponse} res - open SSE response.
+   * @param {string} workspace - lease key of the chat's workspace, as the tab reports it.
+   */
+  attach(sessionId, res, workspace) {
     const previous = this.seats.get(sessionId)
     if (previous !== undefined && previous.res !== res) previous.res.end()
-    this.seats.set(sessionId, { res, sessionId })
+    this.seats.set(sessionId, { res, sessionId, workspace })
+  }
+
+  /**
+   * Make a folder under the chat's work root, keeping it out of the project's git.
+   * @param {string} base - chat's working directory.
+   * @param {string} inner - folder under the work root.
+   * @returns {Promise<string>} absolute folder to write into.
+   */
+  async room(base, inner) {
+    const dir = join(base, inner)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(base, WORK_DIR, '.gitignore'), KEEP).catch(() => {})
+    return dir
+  }
+
+  /**
+   * The folder the chat works in, when its tab said so.
+   * @param {string} sessionId - chat asking.
+   * @returns {string | undefined} absolute folder.
+   */
+  cwdOf(sessionId) {
+    const key = String(this.seatFor(sessionId)?.workspace ?? '')
+    if (key.startsWith('cwd:') !== true) return undefined
+    const dir = key.slice(4)
+    return dir === '' ? undefined : dir
   }
 
   /** @param {string} sessionId - owning chat. @param {import('node:http').ServerResponse} res - response being closed. */
@@ -587,8 +625,8 @@ function tools(bridge, sinks) {
         )
         const png = value?.png
         if (typeof png !== 'string' || png === '') throw new Error('the page returned no image')
-        const dir = join(exec.agent?.cwd ?? process.cwd(), SHOT_DIR)
-        await mkdir(dir, { recursive: true })
+        const base = bridge.cwdOf(String(exec.agent?.id ?? '')) ?? exec.agent?.cwd ?? process.cwd()
+        const dir = await bridge.room(base, SHOT_DIR)
         const file = join(dir, `shot-${Date.now()}.png`)
         await writeFile(file, decodeBase64(png))
         return asValue(file)
@@ -615,8 +653,8 @@ function tools(bridge, sinks) {
        * @returns {Promise<{text: string}>} absolute path of the saved file.
        */
       execute: async (args, exec) => {
-        const dir = join(exec.agent?.cwd ?? process.cwd(), DOWNLOAD_DIR)
-        await mkdir(dir, { recursive: true })
+        const base = bridge.cwdOf(String(exec.agent?.id ?? '')) ?? exec.agent?.cwd ?? process.cwd()
+        const dir = await bridge.room(base, DOWNLOAD_DIR)
         /* The page never names a folder: this ticket is the one folder its bytes
            may reach, and it dies with the call. */
         const ticket = randomUUID() // ui-copy-ignore
@@ -713,7 +751,7 @@ export function apply(ctx, config = {}) {
         'x-accel-buffering': 'no',
       })
       res.write('retry: 2000\n\n')
-      bridge.attach(sessionId, res)
+      bridge.attach(sessionId, res, url.searchParams.get('workspace') ?? '')
       res.write(`data: ${JSON.stringify({ type: 'hello', session: sessionId, at: Date.now() })}\n\n`)
       void record({ kind: 'downlink-open', session: sessionId, origin: req.headers.origin ?? null })
       const beat = setInterval(() => res.write(': beat\n\n'), 15_000)

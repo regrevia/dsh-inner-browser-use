@@ -872,7 +872,7 @@ window.__ModuleLoader__.load({
           tellUrl()
 
           cancel = readFrames(
-            (await fetch(`${ROUTE}/downlink?session=${encodeURIComponent(options.sessionId)}`, { cache: 'no-store' })).body,
+            (await fetch(`${ROUTE}/downlink?session=${encodeURIComponent(options.sessionId)}&workspace=${encodeURIComponent(keyForSession?.(options.sessionId) ?? '')}`, { cache: 'no-store' })).body,
             (frame) => {
               if (frame?.type !== 'call') return
               const reply = (payload) => {
