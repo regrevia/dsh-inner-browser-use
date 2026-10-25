@@ -77,9 +77,5 @@ for (const [chat, folder] of Object.entries(state.folders ?? {})) {
   console.log(`files    ${chat} -> ${folder === '' ? 'unknown folder' : folder}`)
 }
 
-const jars = existsSync(APP)
-  ? await run('grep', ['-m2', '-ao', 'dsh-sidebar-browser-', APP], { maxBuffer: 1 << 22 })
-      .then((out) => out.stdout.trim() !== '')
-      .catch(() => false)
-  : false
-console.log(`memory   ${jars ? 'a login lasts until the app quits' : 'the app bundle is not where expected'}`)
+const kept = await get(`${ROUTE}/cookies?key=doctor`).then((body) => Array.isArray(body?.cookies))
+console.log(`sign-in  ${kept ? 'kept per workspace' : 'not being kept'}`)

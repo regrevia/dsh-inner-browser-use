@@ -253,7 +253,7 @@ partition = `dsh-sidebar-browser-${randomUUID()}`
 So a login is shared by every chat of the same project and survives closing the
 tab or the chat — and it does not survive quitting the app, because the name is
 chosen fresh each run and nothing is written to disk. `node scripts/doctor.mjs`
-prints that as `memory   a login lasts until the app quits`.
+prints that as `sign-in  kept per workspace`.
 
 Keeping cookies across a restart would need a `persist:` partition, and the
 shell refuses any guest whose partition differs from the lease it issued, so it
