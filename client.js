@@ -2222,8 +2222,8 @@ window.__ModuleLoader__.load({
               const build = String(state?.clientBuild ?? '')
               if (build === '' || build === 'unknown') return
               if (String(sessionStorage.getItem('dshib.build') ?? '') === build) return
-              /* A page mid-dialog keeps its place; the next tick asks again. */
-              if (document.querySelector('[aria-modal="true"], dialog[open]') !== null) return
+              /* The whole window is replaced: a page on an older bundle never
+                 keeps answering for the new one. */
               sessionStorage.setItem('dshib.build', build)
               try {
                 /* The address carries this build so the shell fetches the graph
