@@ -282,7 +282,7 @@ export class Bridge {
     try {
       return await this.attempt(sessionId, tool, args, signal, timeoutMs)
     } catch (error) {
-      /* A page that just came back has a moment before it can take a call. */
+      /* One retry after the page came back. */
       if (!String(error?.message ?? error).includes('must be attached to the DOM')) throw error
       await new Promise((resolve) => setTimeout(resolve, 600))
       return this.attempt(sessionId, tool, args, signal, timeoutMs)

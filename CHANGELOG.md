@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4
+
+- A capture that cannot find its page now records which view was in front and
+  how big the page body was.
+
 ## 0.5.3
 
 - A page that has just come back takes the call on the second try instead of

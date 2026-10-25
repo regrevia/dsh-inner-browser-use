@@ -373,7 +373,8 @@ window.__ModuleLoader__.load({
      */
     /** Puts this pane on screen; a guest with no viewport paints nothing to capture.
      *  @type {null | (() => void)} */
-    let reveal = null
+    let faceOf = () => undefined
+let reveal = null
     /* Re-asserting the pane is what survives another tab closing it. */
     let raise = null
     /* The log, not the error, carries why a capture found no pixels. */
@@ -681,7 +682,8 @@ window.__ModuleLoader__.load({
         ctx.inject(['layout', 'sidebarRight'], (scope) => scope.effect(() => {
           beat({ tabType: registered, phase: 'wired' })
           let source
-          const strip = () => {
+          /* The capture runs in another closure, so this lives at module scope. */
+          faceOf = () => {
             try {
               return scope.sidebarRight
             } catch {
@@ -702,7 +704,7 @@ window.__ModuleLoader__.load({
             try {
               /* A kept-mounted tab stays hidden behind the pane's active tab;
                  opening this kind brings it forward. */
-              const face = strip()
+              const face = faceOf()
               if (typeof face?.openTabIn === 'function') face.openTabIn(asking === '' ? currentSession : asking, KIND, {}) // ui-copy-ignore
               else if (typeof face?.openTab === 'function') face.openTab(KIND, {}) // ui-copy-ignore
             } catch {
@@ -720,7 +722,7 @@ window.__ModuleLoader__.load({
           if (!probed) {
             probed = true
             try {
-              const face = strip()
+              const face = faceOf()
               beat({
                 tabType: registered,
                 phase: 'api',
