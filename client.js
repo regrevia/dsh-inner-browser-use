@@ -330,9 +330,9 @@ window.__ModuleLoader__.load({
         }
       }
       const tries = []
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
-          const image = await tick(el.capturePage(), 5000, 'panel')
+          const image = await tick(el.capturePage(), 1200, 'panel')
           const empty = typeof image?.isEmpty === 'function' ? image.isEmpty() : false
           /* A data URL crosses the desktop bridge as a plain string; the PNG
              Buffer does not cross it at all. */
@@ -630,8 +630,18 @@ window.__ModuleLoader__.load({
                     if (target.getBoundingClientRect().width < 2 || target.getBoundingClientRect().height < 2) {
                       throw new Error("this chat's page is not on screen")
                     }
-                    reply({ ok: true, value: { png: await grab(target) } })
-                    return
+                    try {
+                      reply({ ok: true, value: { png: await grab(target) } })
+                      return
+                    } catch (error) {
+                      /* A page with a size can still produce no frames while it
+                         is covered; parking it gives the surface one of its own. */
+                      probe?.({ why: 'capture-retry', first: String(error?.message ?? error).slice(0, 90) })
+                      parkHiddenViews()
+                      await new Promise((resolve) => setTimeout(resolve, 400))
+                      reply({ ok: true, value: { png: await grab(webview) } })
+                      return
+                    }
                   }
                   if (frame.tool === 'script') {
                     const body = String(frame.args?.code ?? '')

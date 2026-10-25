@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- A capture that cannot get pixels gives up in a few seconds instead of
+  fifteen, and parks the page on its second try.
+
 ## 0.6.1
 
 - A chat that is not on screen keeps its page laid out out of sight, so a

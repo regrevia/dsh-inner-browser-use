@@ -63,9 +63,9 @@ The tab is per chat. If a chat has no tab, a tool call says so instead of guessi
 - **No downloads, popups, or permission prompts.** The guest runs sandboxed. To get bytes out of a page (an image, a file), read them in-page with `browser_script`.
 - **It needs the tab open.** Tools fail with a one-line instruction rather than opening the tab for you.
 - **A capture of a chat you are not looking at.** Reading, clicking and typing work while you are looking at
-  another chat, because they drive the page itself. A capture needs a page the app is drawing, so while you are
-  elsewhere this chat's view is kept out of sight at a real size instead of hidden — the page stays drawn, and the
-  image shows it as it is now. A page that refuses to draw there still reports the size it had.
+  another chat, because they drive the page itself. Pixels come from a surface the app is drawing, and a view
+  behind another conversation's view is not drawn: the capture then gives up in a few seconds and says so. Read
+  what you need from the page instead — `browser_script` returns the same content.
 
 ## Compatibility
 
