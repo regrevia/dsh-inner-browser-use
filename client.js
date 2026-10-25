@@ -483,6 +483,92 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /* One debugger per guest, one user at a time: a capture and a cookie read that
+       overlap would be told the guest is already being inspected. */
+    const debuggerQueue = new WeakMap()
+
+    /**
+     * Run one debugger session on a guest, queued behind whatever is already using it.
+     * @param {any} el - the guest webview.
+     * @param {(bug: any) => Promise<any>} run - the commands to send.
+     * @returns {Promise<any>} whatever `run` answered.
+     */
+    function withDebugger(el, run) {
+      const before = debuggerQueue.get(el) ?? Promise.resolve()
+      const work = before.then(async () => {
+        const bug = el?.debugger
+        if (bug === null || bug === undefined) throw new Error('debugger: absent')
+        let attached = false
+        try {
+          await tick(bug.attach('1.3'), 4000, 'attach')
+          attached = true
+        } catch (error) {
+          if (!/already attached/i.test(String(error?.message ?? error))) throw error
+        }
+        try {
+          return await run(bug)
+        } finally {
+          if (attached) bug.detach().catch(() => {})
+        }
+      })
+      debuggerQueue.set(el, work.catch(() => {}))
+      return work
+    }
+
+    /**
+     * Put back the cookies a workspace signed in with, before anything is loaded.
+     * @param {any} el - the guest webview.
+     * @param {string} key - workspace key the guest was leased with.
+     * @returns {Promise<number>} how many cookies were put back.
+     */
+    async function cookiesRestore(el, key) {
+      if (key === '') return 0
+      try {
+        const response = await tick(fetch(`${ROUTE}/cookies?key=${encodeURIComponent(key)}`), 3000, 'cookie read')
+        if (!response.ok) return 0
+        const body = await response.json()
+        const cookies = Array.isArray(body?.cookies) ? body.cookies : []
+        if (cookies.length === 0) return 0
+        await withDebugger(el, async (bug) => {
+          await tick(bug.sendCommand('Network.enable'), 2000, 'network')
+          await tick(bug.sendCommand('Network.setCookies', { cookies }), 3000, 'cookie restore')
+        })
+        probe?.({ why: 'cookies-restored', count: cookies.length })
+        return cookies.length
+      } catch (error) {
+        probe?.({ why: 'cookies-restore-failed', message: String(error?.message ?? error).slice(0, 80) })
+        return 0
+      }
+    }
+
+    /**
+     * Keep the cookies the guest holds now, so the next app run starts signed in.
+     * @param {any} el - the guest webview.
+     * @param {string} key - workspace key the guest was leased with.
+     * @returns {Promise<number>} how many cookies were kept.
+     */
+    async function cookiesSave(el, key) {
+      if (key === '') return 0
+      try {
+        const cookies = await withDebugger(el, async (bug) => {
+          await tick(bug.sendCommand('Network.enable'), 2000, 'network')
+          const answer = await tick(bug.sendCommand('Network.getAllCookies'), 3000, 'cookie list')
+          return Array.isArray(answer?.cookies) ? answer.cookies : []
+        })
+        if (cookies.length === 0) return 0
+        const response = await tick(fetch(`${ROUTE}/cookies?key=${encodeURIComponent(key)}`, {
+          method: 'POST',
+          body: JSON.stringify({ cookies }),
+        }), 3000, 'cookie write')
+        if (!response.ok) return 0
+        const body = await response.json()
+        return Number(body?.kept ?? 0)
+      } catch (error) {
+        probe?.({ why: 'cookies-save-failed', message: String(error?.message ?? error).slice(0, 80) })
+        return 0
+      }
+    }
+
     /**
      * Read the guest as a PNG, base64-encoded.
      *
@@ -916,15 +1002,18 @@ window.__ModuleLoader__.load({
       const carrier = globalThis.dshDesktop
       const bridge = carrier?.protocolVersion === 1 ? carrier.browser : undefined
       let disposed = false
+      let key = ''
       let lease
       let webview
       let cancel = () => {}
+      let cookieTimer
 
       const dispose = () => {
         disposed = true
         if (options.pane === true) paneSessions.delete(options.sessionId)
         steer.delete(options.sessionId)
         cancel()
+        clearInterval(cookieTimer)
         if (webview !== undefined) webview.remove()
         if (bridge !== undefined && lease !== undefined) bridge.release(lease)
         options.onPhase('closed')
@@ -937,7 +1026,8 @@ window.__ModuleLoader__.load({
         }
         options.onPhase('opening')
         try {
-          lease = await bridge.acquire(await options.key())
+          key = await options.key()
+          lease = await bridge.acquire(key)
           if (disposed) return
           webview = document.createElement('webview')
           webview.className = 'dshib-guest'
@@ -950,6 +1040,19 @@ window.__ModuleLoader__.load({
           if ((await ready) === false) throw new Error(L('error.lease'))
           if (disposed) return
           options.onPhase('ready')
+          /* A sign-in is put back before the first page loads. */
+          await Promise.race([
+            cookiesRestore(webview, key),
+            new Promise((resolve) => setTimeout(resolve, 1500)),
+          ])
+          /* Cookies change without a reload, so they are kept while the guest is alive. */
+          cookieTimer = setInterval(() => {
+            if (disposed) return
+            void cookiesSave(webview, key)
+          }, 30_000)
+          webview.addEventListener('did-stop-loading', () => {
+            if (!disposed) void cookiesSave(webview, key)
+          })
           /* A tab that was closed on a page opens on that page again, without
              waiting for the chat to ask for anything. */
           const kept = rememberedPage(options.sessionId)

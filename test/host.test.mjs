@@ -8,7 +8,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -527,4 +527,36 @@ test('copy carries the control it was given, and its failure reaches the model',
   })
   await settled
   seat.stop()
+})
+
+test('a sign-in cookie is kept for the workspace, in a file only its user may read', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-ib-cookies-'))
+  process.env.DSH_HOME = home
+  const key = 'session:chat-cookies'
+  const saved = { cookies: [
+    { name: 'sid', value: 'abc', domain: 'example.test', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' },
+    { name: 'junk' },
+    { value: 'no-name', domain: 'example.test' },
+  ] }
+  const put = await call(`/cookies?key=${encodeURIComponent(key)}`, { method: 'POST', body: JSON.stringify(saved) })
+  assert.equal(put.status, 200)
+  assert.deepEqual(await put.json(), { kept: 1 })
+
+  const got = await call(`/cookies?key=${encodeURIComponent(key)}`).then((response) => response.json())
+  assert.equal(got.cookies.length, 1)
+  assert.equal(got.cookies[0].name, 'sid')
+  assert.equal(got.cookies[0].value, 'abc')
+
+  const { cookiePath } = await import('../index.js')
+  const file = cookiePath(key)
+  const info = await stat(file)
+  assert.equal(info.mode & 0o777, 0o600)
+  assert.match(file, new RegExp(join(home, 'inner-browser-use', 'cookies')))
+
+  const empty = await call('/cookies?key=no-such-workspace').then((response) => response.json())
+  assert.deepEqual(empty, { cookies: [] })
+  const refused = await call('/cookies', { method: 'POST', body: '{}' })
+  assert.equal(refused.status, 400)
+  delete process.env.DSH_HOME
+  await rm(home, { recursive: true, force: true })
 })

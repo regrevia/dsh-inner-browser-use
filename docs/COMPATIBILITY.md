@@ -43,7 +43,7 @@ Installing this plugin changes nothing a user already had:
 
 | Limit | Why | Workaround |
 | --- | --- | --- |
-| Login does not survive an app restart | The guest partition is in memory | Sign in again after restarting the app |
+| Login is kept per workspace, not per page | Cookies are filed under the workspace key | Use the same workspace to stay signed in |
 | One storage partition per workspace | The lease key is the workspace CWD | Use one workspace per account you need isolated |
 | No downloads, popups, permission prompts | The guest attaches sandboxed | Read bytes in-page with `browser_script` |
 | Tools need the tab open | A tool cannot mount UI on your behalf | Open **内置浏览器** once per chat |

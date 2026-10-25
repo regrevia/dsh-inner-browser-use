@@ -137,6 +137,12 @@ loosely never attaches — it silently shows nothing. The partition is
 for a chat in a workspace, `session:<id>` for an ungrouped one. Same key, same
 cookies as the built-in browser tab.
 
+Because that partition is in memory, the page half reads the guest's cookies over
+the debugger and files them under `~/.dsh/inner-browser-use/cookies/<hash>.json`,
+mode 0600, keyed by the same workspace key; the next guest for that workspace gets
+them back before its first page loads. Nothing but a name, a value, and where the
+cookie belongs is kept, and the file is local to this machine.
+
 ## Failure modes, by design
 
 - **No tab:** the call asks for one, waits, and fails with one sentence if none opens.

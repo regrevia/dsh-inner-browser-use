@@ -25,8 +25,9 @@
  */
 
 import { createWriteStream } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 
 /**
@@ -43,6 +44,19 @@ const DOWNLOAD_DIR = join(WORK_DIR, 'downloads')
 
 /** Makes that folder keep itself out of the project's own version control. */
 const KEEP = '# written by the chat while it reads pages\n*\n'
+
+/**
+ * Sign-in cookies wait here between app runs: one file per workspace key, in the
+ * user's profile rather than the project, readable by that user only.
+ * @returns {string} folder that holds them.
+ */
+function cookieDir() {
+  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'inner-browser-use', 'cookies')
+}
+
+/** What the guest may keep: more than this is a page resetting itself, not a sign-in. */
+const MAX_COOKIES = 600
+const MAX_COOKIE_BYTES = 512 * 1024
 
 /** Largest file the plugin will push into a page. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -125,6 +139,73 @@ function readBody(req) {
  * Tools route to the seat of the session that asked, and fall back to the only
  * seat when exactly one tab is open.
  */
+/**
+ * The file a workspace's cookies live in. The key is a workspace name, so the user
+ * can delete one file and sign in again for that workspace only.
+ * @param {string} key - workspace key the guest was leased with.
+ * @returns {string} absolute path of its cookie file.
+ */
+export function cookiePath(key) {
+  const digest = createHash('sha256').update(String(key)).digest('hex').slice(0, 24)
+  return join(cookieDir(), `${digest}.json`)
+}
+
+/**
+ * Keep only what a cookie is: a name, a value, and where it belongs. Anything else
+ * a page reports is dropped rather than handed back to the guest.
+ * @param {unknown} list - what the page sent.
+ * @returns {Record<string, unknown>[]} cookie fields worth keeping.
+ */
+export function keptCookies(list) {
+  if (!Array.isArray(list)) return []
+  const out = []
+  for (const each of list) {
+    if (each === null || typeof each !== 'object') continue
+    const one = /** @type {Record<string, unknown>} */ (each)
+    if (typeof one.name !== 'string' || typeof one.value !== 'string') continue
+    if (typeof one.domain !== 'string' && typeof one.url !== 'string') continue
+    out.push(one)
+    if (out.length >= MAX_COOKIES) break
+  }
+  return out
+}
+
+/**
+ * Read the cookies kept for a workspace.
+ * @param {string} key - workspace key.
+ * @returns {Promise<Record<string, unknown>[]>} cookies, empty when none were kept.
+ */
+export async function readCookies(key) {
+  try {
+    const text = await readFile(cookiePath(key), 'utf8')
+    if (text.length > MAX_COOKIE_BYTES) return []
+    return keptCookies(JSON.parse(text))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Replace the cookies kept for a workspace.
+ * @param {string} key - workspace key.
+ * @param {unknown} list - cookies the page reported.
+ * @returns {Promise<number>} how many were kept.
+ */
+export async function writeCookies(key, list) {
+  const kept = keptCookies(list)
+  await mkdir(cookieDir(), { recursive: true })
+  const file = cookiePath(key)
+  if (kept.length === 0) {
+    await writeFile(file, '[]', { mode: 0o600 })
+    return 0
+  }
+  const text = JSON.stringify(kept)
+  if (text.length > MAX_COOKIE_BYTES) return 0
+  await writeFile(file, text, { mode: 0o600 })
+  await chmod(file, 0o600).catch(() => {})
+  return kept.length
+}
+
 /**
  * One heartbeat as the state route reports it: the page half is fresh while it
  * answered within `CLIENT_TTL_MS`, and a stale beat is kept, not erased — it is
@@ -876,6 +957,34 @@ export function apply(ctx, config = {}) {
       const delivered = bridge.push(sessionId, frame)
       res.writeHead(delivered ? 200 : 409, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ delivered }))
+      return
+    }
+
+    if (path === '/cookies' && (req.method === 'GET' || req.method === 'POST')) {
+      const key = url.searchParams.get('key') ?? ''
+      if (key === '') {
+        res.writeHead(400, { 'content-type': 'text/plain' })
+        res.end('key required')
+        return
+      }
+      if (req.method === 'GET') {
+        const cookies = await readCookies(key)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ cookies }))
+        return
+      }
+      let body
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch (error) {
+        res.writeHead(400, { 'content-type': 'text/plain' })
+        res.end(String(error?.message ?? error))
+        return
+      }
+      const kept = await writeCookies(key, body?.cookies)
+      await record({ kind: 'cookies', at: new Date().toISOString(), kept })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ kept }))
       return
     }
 

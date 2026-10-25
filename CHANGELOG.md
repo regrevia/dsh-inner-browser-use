@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+
+- A sign-in survives the app closing: the cookies a workspace signed in with are
+  kept in a file only its user can read and put back the next time that
+  workspace's page opens.
+- A chat you are not reading is told the page is not the one being read, instead
+  of the column moving to show it.
+
 ## 0.8.15
 
 - A tool call for a chat you are not reading no longer brings the right column
