@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.8
+
+- The log records the right column's size before and after a capture tries to
+  open it, so a pane that never opens is told apart from one that closes again.
+
 ## 0.4.7
 
 - The pane stays open while the capture waits. Switching the pane's active tab

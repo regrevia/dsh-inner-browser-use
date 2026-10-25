@@ -548,6 +548,18 @@ window.__ModuleLoader__.load({
                   }
                   if (frame.tool === 'shot') {
                     let target = webview
+                    const colWide = () => {
+                      let node = options.host
+                      while (node !== null && node !== void 0) {
+                        if (String(node.className ?? '').includes('rightbarCol')) {
+                          const r = node.getBoundingClientRect()
+                          return Math.round(r.width) + 'x' + Math.round(r.height)
+                        }
+                        node = node.parentElement
+                      }
+                      return 'no-column'
+                    }
+                    const before = colWide()
                     const box = target.getBoundingClientRect()
                     if (box.width < 2 || box.height < 2 || target.isConnected === false) {
                       try {
@@ -565,6 +577,7 @@ window.__ModuleLoader__.load({
                         }
                       }
                     }
+                    probe?.({ why: 'shot-geometry', columnBefore: before, columnAfter: colWide(), tries: 'poll' })
                     reply({ ok: true, value: { png: await grab(target) } })
                     return
                   }
