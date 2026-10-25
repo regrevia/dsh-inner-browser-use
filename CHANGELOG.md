@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- A capture from a chat you are not looking at renders the same page in a
+  second guest on the same session partition and takes the pixels from there,
+  instead of refusing.
+
 ## 0.5.5
 
 - The readme says plainly that pixels need that chat's page on screen, while

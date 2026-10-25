@@ -570,7 +570,8 @@ let reveal = null
                     }
                     const before = colWide()
                     const box = target.getBoundingClientRect()
-                    if (box.width < 2 || box.height < 2 || target.isConnected === false) {
+                    const keepQuiet = frame.args?.offscreen === true
+                    if (keepQuiet === false && (box.width < 2 || box.height < 2 || target.isConnected === false)) {
                       if (mine) {
                         try {
                           reveal?.(asking)

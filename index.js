@@ -502,16 +502,31 @@ function tools(bridge) {
     {
       name: 'browser_screenshot',
       description: 'Save a PNG of what the sidebar browser of this chat shows now, and return the file path.',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          offscreen: {
+            type: 'boolean', // ui-copy-ignore
+            description: 'Take the image without bringing this chat to the front.',
+          },
+        },
+        additionalProperties: false,
+      }, // ui-copy-ignore
       output: TEXT_OUTPUT,
       isConcurrencySafe: () => false,
       /**
-       * @param {any} _args - call arguments, unused.
+       * @param {any} args - call arguments.
        * @param {any} exec - run context.
        * @returns {Promise<{text: string}>} absolute path of the saved PNG.
        */
-      execute: async (_args, exec) => {
-        const value = await bridge.call(String(exec.agent?.id ?? ''), 'shot', {}, exec.signal, DEFAULT_TIMEOUT_MS)
+      execute: async (args, exec) => {
+        const value = await bridge.call(
+          String(exec.agent?.id ?? ''),
+          'shot',
+          { offscreen: args?.offscreen === true },
+          exec.signal,
+          DEFAULT_TIMEOUT_MS,
+        )
         const png = value?.png
         if (typeof png !== 'string' || png === '') throw new Error('the page returned no image')
         const dir = join(exec.agent?.cwd ?? process.cwd(), SHOT_DIR)
