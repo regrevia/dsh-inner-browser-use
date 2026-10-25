@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.11
+
+- The line above the page says what the assistant is doing there right now, and goes back to the page's own state when the
+  step ends.
+
 ## 0.8.10
 
 - A chat's folder is resolved even when its own tab never named one, so the state page and the files a page hands over

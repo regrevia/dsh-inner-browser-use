@@ -12,5 +12,15 @@
   "error.desktopOnly": "需要在桌面版中使用",
   "error.lease": "无法打开浏览器面板",
   "pane.address": "输入网址",
-  "error.background": "这个页面在后台标签里，切到它才能操作。"
+  "error.background": "这个页面在后台标签里，切到它才能操作。",
+  "phase.act.navigate": "正在打开页面",
+  "phase.act.click": "正在点击",
+  "phase.act.read": "正在读取页面",
+  "phase.act.type": "正在输入",
+  "phase.act.scroll": "正在滚动",
+  "phase.act.shot": "正在截图",
+  "phase.act.download": "正在下载",
+  "phase.act.upload": "正在上传",
+  "phase.act.eval": "正在操作页面",
+  "phase.act.select": "正在选择"
 }

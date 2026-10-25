@@ -43,6 +43,16 @@ window.__ModuleLoader__.load({
         'error.lease': '无法打开浏览器面板',
         'pane.drag': '拖到聊天',
         'pane.dragHint': '把这一页的选中文字拖进聊天',
+        'phase.act.select': '正在选择',
+        'phase.act.eval': '正在操作页面',
+        'phase.act.upload': '正在上传',
+        'phase.act.download': '正在下载',
+        'phase.act.shot': '正在截图',
+        'phase.act.scroll': '正在滚动',
+        'phase.act.type': '正在输入',
+        'phase.act.read': '正在读取页面',
+        'phase.act.click': '正在点击',
+        'phase.act.navigate': '正在打开页面',
       },
       en: {
         'type.label': 'Inner browser',
@@ -54,6 +64,16 @@ window.__ModuleLoader__.load({
         'error.lease': 'Could not open the browser panel',
         'pane.drag': 'Drag to chat',
         'pane.dragHint': 'Drag the selected text of this page into the chat',
+        'phase.act.select': 'Choosing',
+        'phase.act.eval': 'Working on the page',
+        'phase.act.upload': 'Uploading',
+        'phase.act.download': 'Saving a file',
+        'phase.act.shot': 'Taking an image',
+        'phase.act.scroll': 'Scrolling',
+        'phase.act.type': 'Typing',
+        'phase.act.read': 'Reading the page',
+        'phase.act.click': 'Clicking',
+        'phase.act.navigate': 'Opening the page',
       },
     }
     const LANG = /^zh/i.test(typeof navigator === 'undefined' ? '' : navigator.language ?? '') ? 'zh' : 'en'
@@ -664,6 +684,20 @@ window.__ModuleLoader__.load({
        chat is not: opening the right column for it takes the panel away from
        what the person is looking at. */
     const onScreen = new Set()
+    /* What the assistant is doing in each chat's page, so the pane can say it. */
+    const acting = new Map()
+    /** @type {Set<() => void>} */
+    const actWatchers = new Set()
+    const setActing = (chat, tool) => {
+      if (String(tool) === '') acting.delete(chat)
+      else acting.set(chat, String(tool))
+      for (const tell of actWatchers) tell()
+      try {
+        beat({ tabType: registered, phase: 'act', tool: String(tool) })
+      } catch {
+        /* before the tab type is known there is nothing to report to */
+      }
+    }
     /* Set when this page was showing one of our pages; a panel we opened and
        left empty is given back instead of staying as a blank strip. */
     let openedByUs = false
@@ -899,6 +933,7 @@ window.__ModuleLoader__.load({
                   body: JSON.stringify({ id: frame.id, ...payload }),
                 })
               }
+              setActing(options.sessionId, String(frame.tool ?? ''))
               void (async () => {
                 try {
                   /* A view the app is not drawing has no surface, and a guest
@@ -1149,6 +1184,7 @@ window.__ModuleLoader__.load({
                   reply({ ok: false, error: String(error?.message ?? error) })
                 } finally {
                   unparkHiddenViews()
+                  setActing(options.sessionId, '')
                 }
               })()
             },
@@ -1170,6 +1206,13 @@ window.__ModuleLoader__.load({
       const [href, setHref] = React.useState('')
       const [draft, setDraft] = React.useState('')
       const [picked, setPicked] = React.useState('')
+      const [act, setAct] = React.useState('')
+      React.useEffect(() => {
+        const tell = () => setAct(acting.get(props.sessionId) ?? '')
+        actWatchers.add(tell)
+        tell()
+        return () => actWatchers.delete(tell)
+      }, [props.sessionId])
       React.useEffect(() => {
         if (host.current === null) return undefined // ui-copy-ignore
         currentSession = props.sessionId
@@ -1245,6 +1288,13 @@ window.__ModuleLoader__.load({
         }
       }, [])
       const tone = phase === 'error' ? 'error' : phase === 'ready' ? 'ready' : 'opening'
+      /* The line says what is happening now; an action the assistant is taking
+         is more current than the life of the page behind it. */
+      const said = (life, tool) => {
+        if (tool === '') return L(`phase.${life}`)
+        const label = L(`phase.act.${tool}`)
+        return label.startsWith('phase.act.') ? L('phase.act.eval') : label
+      }
       /* An address is only an address once it has a scheme; a bare host is a host. */ // ui-copy-ignore
       const open = () => {
         const typed = draft.trim()
@@ -1261,7 +1311,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dshib-body' }, [
         h('div', { key: 'state', className: 'dshib-state', 'data-tone': tone }, [
           h('span', { key: 'dot', className: 'dshib-dot' }),
-          h('span', { key: 'text' }, error !== '' ? error : L(`phase.${phase}`)),
+          h('span', { key: 'text' }, error !== '' ? error : said(phase, act)),
           h('input', {
             key: 'href',
             className: 'dshib-href',

@@ -12,5 +12,15 @@
   "error.desktopOnly": "Requires the desktop app",
   "error.lease": "Could not open the browser panel",
   "pane.address": "Type an address",
-  "error.background": "This page is in a background tab — bring it forward to drive it."
+  "error.background": "This page is in a background tab — bring it forward to drive it.",
+  "phase.act.navigate": "Opening the page",
+  "phase.act.click": "Clicking",
+  "phase.act.read": "Reading the page",
+  "phase.act.type": "Typing",
+  "phase.act.scroll": "Scrolling",
+  "phase.act.shot": "Taking an image",
+  "phase.act.download": "Saving a file",
+  "phase.act.upload": "Uploading",
+  "phase.act.eval": "Working on the page",
+  "phase.act.select": "Choosing"
 }
