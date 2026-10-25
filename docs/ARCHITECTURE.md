@@ -39,7 +39,18 @@ Same-origin is the whole trick, and it holds on both builds:
 | `GET /downlink?session=` | Host → tab | Server-sent events, one long-lived response per open tab. |
 | `POST /uplink?session=` | tab → Host | Replies and lifecycle frames. |
 | `POST /push?session=` | Host → tab | Diagnostic push without a waiting call. Not used by tools. |
+| `GET /watch` | Host → page | Server-sent events, one long-lived response per page (not per tab): the channel the page uses to learn that some chat needs a tab. |
 | `GET /state` | either | Which chats have a tab, how many calls are in flight, last client heartbeat. |
+
+## Opening the tab on demand
+
+A tool cannot ask a user to click `+`, so the call carries the ask: when no seat
+exists, the Host pushes `wanted` down `/watch`, the page opens this chat's tab
+through `ctx.sidebarRight.openTabIn(sessionId, "inner-browser-use")`, and the
+call waits up to `openWaitMs` (8 s) for the seat to appear before it fails.
+
+`/watch` is per page rather than per tab on purpose: a page with no tab open has
+no `/downlink` stream, and it is exactly that page which must be able to obey.
 
 ## Seats
 
@@ -61,6 +72,7 @@ than a misleading success.
 // tab → Host
 { "type": "reply", "id": "<same>", "ok": true, "value": { "text": "…" } }
 { "type": "reply", "id": "<same>", "ok": false, "error": "no control 4 on this page" }
+{ "type": "wanted", "session": "<chat id>" }
 { "type": "client-alive", "phase": "registered", "tabType": true }
 ```
 
@@ -111,7 +123,7 @@ cookies as the built-in browser tab.
 
 ## Failure modes, by design
 
-- **No tab:** the call fails with one sentence telling you to open the tab.
+- **No tab:** the call asks for one, waits, and fails with one sentence if none opens.
 - **No Desktop:** the body renders "Desktop app only"; nothing else registers.
 - **Page refuses:** the error string reaches the model as a tool error.
 - **Plugin stops:** every seat closes, every waiter rejects.

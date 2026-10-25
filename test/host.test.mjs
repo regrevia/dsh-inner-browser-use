@@ -15,7 +15,7 @@ import { join } from 'node:path'
 const proofDir = await mkdtemp(join(tmpdir(), 'dsh-ib-test-'))
 process.env.DSH_INNER_BROWSER_PROOF = join(proofDir, 'proof.jsonl')
 
-const { ROUTE, apply } = await import('../index.js')
+const { Bridge, ROUTE, apply } = await import('../index.js')
 
 /** @type {Array<{path: string, handler: any}>} */
 const routes = []
@@ -108,7 +108,7 @@ async function tab(session) {
 }
 
 before(async () => {
-  apply(context(), { proofLog: process.env.DSH_INNER_BROWSER_PROOF })
+  apply(context(), { proofLog: process.env.DSH_INNER_BROWSER_PROOF, openWaitMs: 0 })
   assert.equal(routes.length, 1)
   server = createServer((req, res) => {
     for (const route of routes) {
@@ -156,7 +156,7 @@ test('reports an empty bridge before any tab opens', async () => {
 test('a tool without a tab says how to open one', async () => {
   await assert.rejects(
     defs.get('browser_view').execute({}, { agent: { id: 'chat-1' } }),
-    /This chat has no 内置浏览器 tab open/,
+    /No 内置浏览器 tab answered/,
   )
 })
 
@@ -275,4 +275,23 @@ test('upload carries the file into the page and refuses a missing one', async ()
     defs.get('browser_upload').execute({ ref: 1, path: '/nope/missing.bin' }, { agent: { id: 'chat-6' } }),
     /no file at/,
   )
+})
+
+test('a tab that opens in time answers the waiting call', async () => {
+  const bridge = new Bridge()
+  const seen = []
+  bridge.watch({ write: (chunk) => seen.push(String(chunk)), end() {} })
+  const waiting = bridge.waitSeat('chat-late', 2_000, undefined)
+  bridge.attach('chat-late', { write: () => true, end() {} })
+  assert.equal(await waiting, true)
+  bridge.want('chat-late')
+  assert.match(seen.at(-1), /"type":"wanted"/)
+  assert.match(seen.at(-1), /"session":"chat-late"/)
+})
+
+test('a waiting call gives up when no tab opens', async () => {
+  const bridge = new Bridge()
+  const started = Date.now()
+  assert.equal(await bridge.waitSeat('chat-none', 120, undefined), false)
+  assert.ok(Date.now() - started < 2_000)
 })

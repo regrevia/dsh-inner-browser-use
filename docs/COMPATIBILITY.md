@@ -11,6 +11,21 @@ What this plugin assumes, and what it degrades to when an assumption fails.
 | `ctx.sidebarRightTabs` | Tab type registration | Registration is skipped silently; the tab never appears. |
 | `ctx.webServer.register` | The whole wire | Plugin fails to load, visibly. |
 | `ctx.tools.register` | The tool surface | Bridge still runs; the model sees no `browser_*` tools. |
+| `ctx.sidebarRight.openTabIn` | Opening a tab on demand | Tools need the tab opened by hand; the call fails with one sentence. |
+| `EventSource` in the page | Learning that a tab is wanted | Same as above. |
+
+## What it never touches
+
+Installing this plugin changes nothing a user already had:
+
+- No shipped tab type is replaced or wrapped: it owns `inner-browser-use` only.
+- No guide card: the `开始` pane renders exactly the entries it had before. A
+  client test asserts the registered tab type carries no `guide` array.
+- No global CSS: every rule is scoped under the pane's own class.
+- No slot occupant on any slot it does not own, and no `computerUse`/`browserUse`
+  provider registration, so the shipped browser's own providers keep their seats.
+- Removing the bundle removes every one of the above; nothing is left behind
+  except the tab-local partition the product itself owns.
 
 ## Version notes
 

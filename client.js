@@ -482,6 +482,29 @@ window.__ModuleLoader__.load({
           return () => style.remove()
         }, 'dsh-inner-browser-use: styles')
 
+        ctx.effect(() => {
+          const source = new EventSource(`${ROUTE}/watch`) // ui-copy-ignore
+          const onWanted = (event) => {
+            let frame
+            try {
+              frame = JSON.parse(event.data)
+            } catch {
+              return
+            }
+            if (frame?.type !== 'wanted') return
+            const sessionId = String(frame.session ?? '')
+            if (sessionId === '') return
+            try {
+              ctx.layout?.openRightbar?.(true, false) // ui-copy-ignore
+              ctx.sidebarRight?.openTabIn?.(sessionId, KIND, {}) // ui-copy-ignore
+            } catch {
+              /* the strip refuses while this chat has no right bar */
+            }
+          }
+          source.addEventListener('message', onWanted)
+          return () => source.close()
+        }, 'dsh-inner-browser-use: tab on demand')
+
         ctx.inject(['sidebarRightTabs', 'workspaces'], (scope) => {
           const tabs = scope.sidebarRightTabs
           const workspaces = scope.workspaces
@@ -491,12 +514,6 @@ window.__ModuleLoader__.load({
             multiple: true, // ui-copy-ignore
             keepMounted: true,
             title: () => L('type.label'),
-            guide: [{ // ui-copy-ignore
-              id: 'open', // ui-copy-ignore
-              order: 31, // ui-copy-ignore
-              title: () => L('type.label'),
-              description: () => L('guide.description'),
-            }],
           }), 'dsh-inner-browser-use: tab type')
           registered = true
           beat({ tabType: true, phase: 'registered' })

@@ -65,8 +65,11 @@ const DEFAULT_TIMEOUT_MS = 25_000
 /** Navigation waits on the page itself, which is slower than reading it. */
 const NAVIGATE_TIMEOUT_MS = 60_000
 
+/** How long a tool waits for the tab it asked for. */
+const OPEN_WAIT_MS = 8_000
+
 /** Shown when a tool runs without the tab that owns the guest. */
-const NO_TAB = 'This chat has no 内置浏览器 tab open. Open it in the right sidebar, then call again.'
+const NO_TAB = 'No 内置浏览器 tab answered. Open it in the right sidebar from the tab strip, then call again.'
 
 /** @type {string} */
 let proofLog = process.env.DSH_INNER_BROWSER_PROOF ?? '/tmp/dsh-inner-browser-use.log'
@@ -99,7 +102,7 @@ function readBody(req) {
  * Tools route to the seat of the session that asked, and fall back to the only
  * seat when exactly one tab is open.
  */
-class Bridge {
+export class Bridge {
   constructor() {
     /** @type {Map<string, {res: import('node:http').ServerResponse, sessionId: string}>} */
     this.seats = new Map()
@@ -107,6 +110,63 @@ class Bridge {
     this.waiters = new Map()
     /** @type {{at: string, frame: unknown} | undefined} */
     this.client = undefined
+    /** @type {Set<import('node:http').ServerResponse>} open watch streams: the page's listener that can open tabs. */
+    this.watchers = new Set()
+    /** @type {number} how long a call waits for the tab it asked for. */
+    this.openWaitMs = OPEN_WAIT_MS
+  }
+
+  /**
+   * Take one watch stream: the Client half that can open a tab on request.
+   * @param {import('node:http').ServerResponse} res - open SSE response.
+   */
+  watch(res) {
+    this.watchers.add(res)
+  }
+
+  /** @param {import('node:http').ServerResponse} res - closed SSE response. */
+  unwatch(res) {
+    this.watchers.delete(res)
+  }
+
+  /**
+   * Ask every listening page to open this chat's tab.
+   * @param {string} sessionId - chat that needs a tab.
+   */
+  want(sessionId) {
+    const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId })}\n\n`
+    for (const res of this.watchers) res.write(frame)
+  }
+
+  /** @param {string} sessionId - chat asking. @returns {boolean} whether a tab can take the call now. */
+  hasSeat(sessionId) {
+    return this.seats.has(sessionId) || this.seats.size === 1
+  }
+
+  /**
+   * Wait for a tab to appear after it was asked for.
+   * @param {string} sessionId - chat waiting.
+   * @param {number} ms - ceiling.
+   * @param {AbortSignal | undefined} signal - tool cancellation.
+   * @returns {Promise<boolean>} whether a tab arrived.
+   */
+  waitSeat(sessionId, ms, signal) {
+    if (this.hasSeat(sessionId)) return Promise.resolve(true)
+    if (ms <= 0) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      const done = (value) => {
+        clearInterval(poll)
+        signal?.removeEventListener('abort', abort)
+        resolve(value)
+      }
+      const poll = setInterval(() => {
+        if (this.hasSeat(sessionId)) done(true)
+      }, 120)
+      poll.unref?.()
+      const abort = () => done(false)
+      signal?.addEventListener('abort', abort)
+      setTimeout(() => done(this.hasSeat(sessionId)), ms).unref?.()
+    })
   }
 
   /** @param {string} sessionId - owning chat. @param {import('node:http').ServerResponse} res - open SSE response. */
@@ -149,9 +209,13 @@ class Bridge {
    * @param {number} timeoutMs - how long the operation may take.
    * @returns {Promise<unknown>} the Client's reply value.
    */
-  call(sessionId, tool, args, signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  async call(sessionId, tool, args, signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    if (!this.hasSeat(sessionId)) {
+      this.want(sessionId)
+      await this.waitSeat(sessionId, this.openWaitMs, signal)
+    }
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    if (!this.push(sessionId, { type: 'call', id, tool, args })) return Promise.reject(new Error(NO_TAB))
+    if (!this.push(sessionId, { type: 'call', id, tool, args })) throw new Error(NO_TAB)
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(id)
@@ -194,6 +258,8 @@ class Bridge {
       waiter.reject(new Error('plugin stopped'))
     }
     this.waiters.clear()
+    for (const res of this.watchers) res.end()
+    this.watchers.clear()
   }
 }
 
@@ -387,6 +453,7 @@ export const inject = ['webServer']
 export function apply(ctx, config = {}) {
   if (typeof config.proofLog === 'string' && config.proofLog !== '') proofLog = config.proofLog
   const bridge = new Bridge()
+  if (Number.isInteger(config.openWaitMs)) bridge.openWaitMs = config.openWaitMs
   ctx.effect(() => () => bridge.dispose(), 'dsh-inner-browser-use: bridge lifetime')
 
   /** @param {import('node:http').IncomingMessage} req - request. @param {import('node:http').ServerResponse} res - response. */
@@ -412,6 +479,28 @@ export function apply(ctx, config = {}) {
         clearInterval(beat)
         bridge.detach(sessionId, res)
         void record({ kind: 'downlink-close', session: sessionId })
+      }
+      req.on('close', close)
+      res.on('error', close)
+      return
+    }
+
+    if (path === '/watch' && req.method === 'GET') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      })
+      res.write('retry: 2000\n\n')
+      bridge.watch(res)
+      res.write(`data: ${JSON.stringify({ type: 'watch-alive', at: Date.now() })}\n\n`)
+      void record({ kind: 'watch-open' })
+      const beat = setInterval(() => res.write(': beat\n\n'), 15_000)
+      beat.unref?.()
+      const close = () => {
+        clearInterval(beat)
+        bridge.unwatch(res)
       }
       req.on('close', close)
       res.on('error', close)
