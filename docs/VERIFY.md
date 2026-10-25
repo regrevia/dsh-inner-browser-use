@@ -123,6 +123,27 @@ The proof log records what it found:
 tail -3 /tmp/dsh-inner-browser-use.log   # "why":"capture-lens"
 ```
 
-`got` is the size of the returned PNG, or `none` when nothing painted. A page
-that needs a sign-in still signs in, because the second guest shares the
-partition; a page mid-form is rendered as it loads, not as it was.
+`why` is `capture-covered` when the app had no surface to read, and the message
+says which tab to open.
+
+## What has been run in the app
+
+Each line was run against the live pane on 2026-10-25 and is what the tool
+returned, not what the code was meant to do.
+
+| Tool | The page | Result |
+| --- | --- | --- |
+| `browser_navigate` | example.com | title `Example Domain` |
+| `browser_view` | the same page | one control, the link's text |
+| `browser_script` | the same page | added a button, a form, and an output to the page |
+| `browser_click` | the added button | its label changed to `clicked`, its title to `probe clicked` |
+| `browser_type` | the added text field | the field held the text that was typed |
+| `browser_upload` | the added file field | the field held the chosen file's name |
+| `browser_selection` | a paragraph | the range covered the paragraph |
+| `browser_copy` | the same range | the clipboard held the paragraph |
+| the page is remounted | the page went blank | the next call reopened it; frame `why:"restore"` |
+| `browser_screenshot` | a page the app is not drawing | said which tab to open; frame `why:"capture-covered"` |
+
+A capture of a page the app *is* drawing returned a 74 KB PNG of that page; the
+same call on a covered page has no surface to read, which is the boundary
+described above.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.6
+
+- `docs/VERIFY.md` now lists what each tool returned when it was run against the
+  live pane, so a claim can be checked against the page rather than the code.
+
 ## 0.6.5
 
 - A chat's page comes back by itself after the pane is remounted: the next tool
