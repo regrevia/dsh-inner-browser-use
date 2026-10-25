@@ -98,7 +98,7 @@ let replyEpoch = 'epoch-1'
 globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, epoch: replyEpoch }) })
 
 const clientSource = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-new Script(`${clientSource}\nglobalThis.__testRevealAllowed = revealAllowed\nglobalThis.__testCookies = { cookiesOf, cookiesSave, cookiesRestore }`).runInThisContext()
+new Script(`${clientSource}\nglobalThis.__testRevealAllowed = revealAllowed\nglobalThis.__testCookies = { cookiesOf, cookiesSave, cookiesRestore }\nglobalThis.__testPages = { rememberedPage, rememberPage }`).runInThisContext()
 
 test('the product browser tab is the only tab opened, so no look-alike is added', () => {
   /** @type {any[]} */
@@ -417,5 +417,30 @@ test('two asks for one chat open its tab once', async () => {
   } finally {
     globalThis.document.querySelector = was
     globalThis.__panels = []
+  }
+})
+
+test('a page a chat was told to open is read back after a remount', () => {
+  const store = new Map()
+  const was = Object.getOwnPropertyDescriptor(globalThis.window, 'localStorage')
+  Object.defineProperty(globalThis.window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => store.set(key, String(value)),
+    },
+  })
+  try {
+    const { rememberPage: keep, rememberedPage: read } = globalThis.__testPages
+    assert.equal(read('chat-new'), '')
+    keep('chat-new', 'https://example.org/one')
+    assert.equal(read('chat-new'), 'https://example.org/one')
+    keep('chat-new', 'https://example.org/two')
+    assert.equal(read('chat-new'), 'https://example.org/two')
+    assert.equal(store.get('dshib:url:chat-new'), 'https://example.org/two')
+    assert.equal(read('chat-other'), '')
+  } finally {
+    if (was === undefined) delete globalThis.window.localStorage
+    else Object.defineProperty(globalThis.window, 'localStorage', was)
   }
 })

@@ -29,6 +29,29 @@ function revealAllowed(sessionId, view) {
 /**
  * One bridge route, named once: both halves of this page answer on the same path.
  */
+/** The page each chat last asked for; a reload leaves its guest at about:blank. @type {Map<string, string>} */
+const lastUrl = new Map()
+const pageKey = (session) => 'dshib:url:' + String(session ?? '')
+/** The page this chat was last told to open, remembered past a remount. */
+function rememberedPage(session) {
+  const key = pageKey(session)
+  try {
+    const kept = window.localStorage.getItem(key)
+    if (kept !== null && kept !== '') return kept
+  } catch {
+    /* storage is not always reachable; the in-memory map is enough */
+  }
+  return lastUrl.get(String(session ?? '')) ?? ''
+}
+function rememberPage(session, url) {
+  lastUrl.set(String(session ?? ''), url)
+  try {
+    window.localStorage.setItem(pageKey(session), url)
+  } catch {
+    /* see rememberedPage */
+  }
+}
+
 const BRIDGE_ROUTE = '/dsh-inner-browser-use'
 
 /**
@@ -1112,28 +1135,6 @@ window.__ModuleLoader__.load({
 
     /** The pane's own way into its guest, for an address typed by hand. @type {Map<string, (url: string) => void>} */
     const steer = new Map()
-    /** The page each chat last asked for; a reload leaves its guest at about:blank. @type {Map<string, string>} */
-    const lastUrl = new Map()
-    const pageKey = (session) => 'dshib:url:' + String(session ?? '')
-    /** The page this chat was last told to open, remembered past a remount. */
-    function rememberedPage(session) {
-      const key = pageKey(session)
-      try {
-        const kept = window.localStorage.getItem(key)
-        if (kept !== null && kept !== '') return kept
-      } catch {
-        /* storage is not always reachable; the in-memory map is enough */
-      }
-      return lastUrl.get(String(session ?? '')) ?? ''
-    }
-    function rememberPage(session, url) {
-      lastUrl.set(String(session ?? ''), url)
-      try {
-        window.localStorage.setItem(pageKey(session), url)
-      } catch {
-        /* see rememberedPage */
-      }
-    }
     /** Puts this chat's pane on screen.
      *  @type {null | ((asking: string) => void)} */
     let reveal = null

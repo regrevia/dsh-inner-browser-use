@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.10
+
+- The page each chat last had is remembered in one place, so a remount reads it
+  back the same way. A test covers it.
+
 ## 0.11.9
 
 - Typing with send presses the page's own send control: the pointer travels to it
