@@ -1,6 +1,6 @@
 {
   "name": "dsh-inner-browser-use",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Drive the DeepSeek Harness sidebar browser itself: a leased inner-browser tab with a visible agent pointer, click and type, and a two-way data channel to the chat.",
   "type": "module",

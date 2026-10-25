@@ -681,6 +681,56 @@ window.__ModuleLoader__.load({
         ctx.inject(['layout', 'sidebarRight'], (scope) => scope.effect(() => {
           beat({ tabType: registered, phase: 'wired' })
           let source
+          const strip = () => {
+            try {
+              return scope.sidebarRight
+            } catch {
+              return undefined
+            }
+          }
+          /* A capture may be the first thing a chat asks for, so these exist from
+             mount; before, only an ask could create them and a shot had nothing
+             to call. */
+          reveal = (asking) => {
+            /* Another chat's page is never brought forward. */
+            if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            try {
+              scope.layout.openRightbar(true, false) // ui-copy-ignore
+            } catch {
+              /* nothing to open without a right pane */
+            }
+            try {
+              /* A kept-mounted tab stays hidden behind the pane's active tab;
+                 opening this kind brings it forward. */
+              const face = strip()
+              if (typeof face?.openTabIn === 'function') face.openTabIn(asking === '' ? currentSession : asking, KIND, {}) // ui-copy-ignore
+              else if (typeof face?.openTab === 'function') face.openTab(KIND, {}) // ui-copy-ignore
+            } catch {
+              /* the capture reports the geometry it saw */
+            }
+          }
+          raise = (asking) => {
+            if (asking !== '' && asking !== currentSession && currentSession !== '') return
+            try {
+              scope.layout.openRightbar(true, false) // ui-copy-ignore
+            } catch {
+              /* the capture reports the geometry it saw */
+            }
+          }
+          if (!probed) {
+            probed = true
+            try {
+              const face = strip()
+              beat({
+                tabType: registered,
+                phase: 'api',
+                own: Object.keys(face ?? {}).slice(0, 16),
+                proto: face === undefined ? [] : Object.getOwnPropertyNames(Object.getPrototypeOf(face)).slice(0, 24),
+              })
+            } catch {
+              /* probed once per page load */
+            }
+          }
           const onWanted = (event) => {
             let frame
             try {
@@ -699,34 +749,6 @@ window.__ModuleLoader__.load({
               /* The pane may open for the chat that asked; a chat that is not on
                  screen still gets its own page, never someone else's. */
               if (sessionId === currentSession || currentSession === '') scope.layout.openRightbar(true, false) // ui-copy-ignore
-              reveal = (asking) => {
-                /* Another chat's page is never brought forward. */
-                if (asking !== '' && asking !== currentSession && currentSession !== '') return
-                try {
-                  scope.layout.openRightbar(true, false) // ui-copy-ignore
-                } catch {
-                  /* nothing to open without a right pane */
-                }
-                try {
-                  /* A kept-mounted tab stays hidden behind the pane's active tab;
-                     opening this kind brings it forward. */
-                  const strip = scope.sidebarRight
-                  if (typeof strip?.openTab === 'function') strip.openTab(KIND, {}) // ui-copy-ignore
-                  else if (typeof strip?.openTabIn === 'function') strip.openTabIn(currentSession, KIND, {}) // ui-copy-ignore
-                } catch {
-                  /* the capture reports the geometry it saw */
-                }
-              }
-              raise = (asking) => {
-                if (asking !== '' && asking !== currentSession && currentSession !== '') return
-                try {
-                  /* Switching the pane's active tab closes the pane: the built-in
-                     browser reports itself hidden and the column collapses. */
-                  scope.layout.openRightbar(true, false) // ui-copy-ignore
-                } catch {
-                  /* the capture reports the geometry it saw */
-                }
-              }
             } catch (error) {
               beat({ tabType: registered, phase: 'open', step: 'rightbar', error: String(error?.message ?? error) })
             }

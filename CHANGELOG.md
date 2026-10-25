@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2
+
+- A capture can open what it needs: the pane and the tab are now reachable from
+  the moment the page loads, not only after a chat asks for one. Before this, a
+  screenshot was the first thing a chat asked for and it had nothing to open.
+
 ## 0.5.1
 
 - The pointer marks where a click or a typing goes, stays there for a moment so
