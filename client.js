@@ -897,8 +897,19 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** The panels the product keeps for one chat, one per sidebar it is shown in. */
+    function panelOf(sessionId) {
+      if (String(sessionId ?? '') === '') return []
+      try {
+        return Array.from(document.querySelectorAll('[data-sidebar-right-session]'))
+          .filter((node) => node.dataset?.sidebarRightSession === sessionId)
+      } catch {
+        return []
+      }
+    }
+
     /** That chat's page in the product's browser tab, once the tab made one. */
-    function nativeElement() {
+    function nativeElement(sessionId) {
       /* Ours is never the page: a guest this plugin parked is out of the flow of
          the column and answers nothing the person is reading. */
       const ours = (node) => {
@@ -908,11 +919,36 @@ window.__ModuleLoader__.load({
           return false
         }
       }
+      const inside = (root) => {
+        const known = root.querySelector('[data-sidebar-browser-frame="webview"]')
+        if (known !== null && !ours(known)) return known
+        const guests = Array.from(root.querySelectorAll('webview')).filter((node) => !ours(node))
+        return guests.length > 0 ? guests.at(-1) : null
+      }
+      /* A chat's page is in that chat's own panel and nowhere else: a guest taken
+         from another panel is another chat's page, and driving it is the bug this
+         lookup exists to prevent. */
+      if (String(sessionId ?? '') !== '') {
+        for (const panel of panelOf(sessionId)) {
+          const found = inside(panel)
+          if (found !== null) return found
+        }
+        return null
+      }
       const known = deepFind(document.body, '[data-sidebar-browser-frame="webview"]')
       if (known !== null && onRight(known) && !ours(known)) return known
       const guests = Array.from(document.querySelectorAll('webview'))
         .filter((node) => onRight(node) && !ours(node))
       return guests.length > 0 ? guests.at(-1) : null
+    }
+
+    /** The address bar of one chat's panel, present before its page is. */
+    function addressIn(sessionId) {
+      for (const panel of panelOf(sessionId)) {
+        const found = addressOf(panel.querySelector('webview') ?? panel)
+        if (found.input !== null) return found
+      }
+      return { form: null, input: null }
     }
 
     /** The box holding a guest and its address bar, for priming the address bar. */
@@ -940,10 +976,10 @@ window.__ModuleLoader__.load({
     }
 
     /** Wait for that page to exist. */
-    async function nativeReady(tries) {
+    async function nativeReady(tries, sessionId) {
       const rounds = tries ?? 25
       for (let i = 0; i < rounds; i += 1) {
-        const found = nativeElement()
+        const found = nativeElement(sessionId)
         if (found !== null) return found
         await new Promise((resolve) => setTimeout(resolve, 200))
       }
@@ -1009,11 +1045,12 @@ window.__ModuleLoader__.load({
             /* the address bar below reports what the pane shows */
           }
         }
-        let webview = nativeElement()
+        let webview = nativeElement(sessionId)
         let slot = { form: null, input: null }
         for (let i = 0; i < 20; i += 1) {
-          webview = nativeElement()
-          slot = webview === null ? { form: null, input: null } : addressOf(webview)
+          webview = nativeElement(sessionId)
+          slot = addressIn(sessionId)
+          if (slot.input === null && webview !== null) slot = addressOf(webview)
           if (slot.input !== null) break
           await new Promise((resolve) => setTimeout(resolve, 200))
         }
@@ -1162,6 +1199,12 @@ window.__ModuleLoader__.load({
     function workspaceKey(source, sessionId) {
       return new Promise((resolve, reject) => {
         const store = source?.list ?? source
+        /* A face that is not a store cannot say which workspace owns a chat; a
+           key per chat still keeps one sign-in per chat instead of failing. */
+        if (typeof store?.getSnapshot !== 'function' || typeof store?.subscribe !== 'function') {
+          resolve(`session:${sessionId}`)
+          return
+        }
         const read = () => {
           const snapshot = store?.getSnapshot?.()
           if (snapshot === undefined || snapshot.phase !== 'ready') return undefined
@@ -1327,13 +1370,13 @@ window.__ModuleLoader__.load({
             /* The product's tab owns the page. This end answers that page's
                wire and nothing else: no lease, no element of its own. */
             owns = false
-            const early = await nativeReady(8)
+            const early = await nativeReady(8, options.sessionId)
             webview = early
             if (webview === undefined) {
               const first = rememberedPage(options.sessionId)
               if (first !== '') {
                 await nativeOpen(options.sessionId, first)
-                webview = await nativeReady(40)
+                webview = await nativeReady(40, options.sessionId)
               }
             }
             options.onPhase(webview === undefined ? 'waiting' : 'ready')
@@ -1438,7 +1481,7 @@ window.__ModuleLoader__.load({
                   if (NATIVE_MODE === true && (webview === undefined || webview.isConnected !== true)) {
                     const ask = String(frame.args?.url ?? '')
                     if (frame.tool === 'navigate' && ask !== '') await nativeOpen(options.sessionId, ask)
-                    webview = await nativeReady(40)
+                    webview = await nativeReady(40, options.sessionId)
                     if (webview === undefined) {
                       reply({ ok: false, error: L('error.background') })
                       return
