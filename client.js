@@ -308,12 +308,26 @@ window.__ModuleLoader__.load({
         await sleep(120)
         return { x: Math.round(x), y: Math.round(y) }
       }
+      /* The control that sends what is typed: a form's submit sits beside the
+         field, the pointer lands on it, so the page shows the same press the
+         agent made. */
+      const sendControl = (field) => {
+        const named = /发送|send|submit/i
+        const marks = (el) => [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-testid'), el.className, String(el.textContent ?? '')].join(' ')
+        let nearEl = field
+        for (let up = 0; up < 4 && nearEl !== null && nearEl !== D.body; up += 1) nearEl = nearEl.parentElement
+        const marked = (pool) => pool.filter((el) => visible(el) && el.disabled !== true && named.test(marks(el)))
+        const near = marked(Array.from((nearEl?.querySelectorAll?.('button,[role="button"]') ?? [])))
+        if (near.length > 0) return near[0]
+        const anywhere = marked(Array.from(D.querySelectorAll('button,[role="button"]')))
+        return anywhere.length > 0 ? anywhere[0] : null
+      }
       const index = () => {
         const found = []
         for (const el of D.querySelectorAll(SEL)) {
           if (!visible(el) || el.disabled === true) continue
           found.push(el)
-          if (found.length >= 80) break
+          if (found.length >= 400) break
         }
         found.forEach((el, i) => el.setAttribute('data-dsh-ib-ref', String(i + 1)))
         return found
@@ -338,7 +352,8 @@ window.__ModuleLoader__.load({
         lines.push('URL ' + location.href)
         lines.push('Title ' + (D.title || '(none)'))
         lines.push('Controls ' + found.length)
-        found.forEach((el, i) => lines.push('#' + (i + 1) + ' ' + label(el)))
+        found.slice(0, 80).forEach((el, i) => lines.push('#' + (i + 1) + ' ' + label(el)))
+        if (found.length > 80) lines.push('+' + (found.length - 80) + ' more')
         const text = clip(D.body ? D.body.innerText : '', 2400)
         if (text !== '') lines.push('Text ' + text)
         for (const el of found) el.removeAttribute('data-dsh-ib-ref')
@@ -439,13 +454,32 @@ window.__ModuleLoader__.load({
           await aim(el)
           el.focus()
           if (el.isContentEditable === true) {
-            el.textContent = a.text
-            el.dispatchEvent(new Event('input', { bubbles: true }))
+            const room = D.createRange()
+            room.selectNodeContents(el)
+            const held = W.getSelection()
+            held.removeAllRanges()
+            held.addRange(room)
+            let inserted = false
+            try {
+              inserted = D.execCommand('insertText', false, a.text)
+            } catch {
+              inserted = false
+            }
+            if (inserted !== true) {
+              el.textContent = a.text
+              el.dispatchEvent(new Event('input', { bubbles: true }))
+            }
           } else {
             setValue(el, a.text)
           }
           if (a.submit === true) {
-            press(el, 'Enter')
+            const go = sendControl(el)
+            if (go !== null) {
+              await aim(go)
+              go.click()
+            } else {
+              press(el, 'Enter')
+            }
             await sleep(520)
           } else {
             await sleep(120)
@@ -1399,6 +1433,21 @@ window.__ModuleLoader__.load({
                   probe?.({ why: 'steer-failed', url: to, error: String(error?.message ?? error).slice(0, 80) })
                 }
               })
+              /* What the tab is showing is remembered as it changes, so a reload
+                 of the app reopens that page instead of an older one, whichever
+                 way the page was reached. */
+              const note = () => {
+                try {
+                  const here = String(webview.getURL?.() ?? '')
+                  if (here === '' || here.startsWith('about:blank')) return
+                  rememberPage(options.sessionId, here)
+                  options.onUrl?.(here)
+                } catch { /* a guest mid-teardown has no URL */ }
+              }
+              for (const kind of ['did-navigate', 'did-navigate-in-page', 'did-stop-loading']) {
+                webview.addEventListener(kind, note)
+              }
+              note()
             }
           } else {
             key = await options.key()
