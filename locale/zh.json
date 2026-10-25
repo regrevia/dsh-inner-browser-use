@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "title": "内置浏览器",
+    "description": "直接操作侧边栏里的浏览器：看得见的助手指针、点击与输入，以及与聊天互通的数据通道。"
+  },
+  "type.label": "内置浏览器",
+  "guide.title": "内置浏览器",
+  "guide.description": "让助手在侧边栏里操作页面",
+  "phase.opening": "正在打开…",
+  "phase.ready": "已连接",
+  "phase.closed": "已关闭",
+  "error.desktopOnly": "需要在桌面版中使用",
+  "error.lease": "无法打开浏览器面板"
+}

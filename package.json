@@ -1,0 +1,63 @@
+{
+  "name": "dsh-inner-browser-use",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drive the DeepSeek Harness sidebar browser itself: a leased inner-browser tab with a visible agent pointer, click and type, and a two-way data channel to the chat.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src/",
+    "locale/*.json",
+    "cordis.patch.yml",
+    "icon.svg",
+    "docs/",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "browser-use",
+    "computer-use",
+    "sidebar-browser",
+    "webview",
+    "deepseek"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "author": "regrevia",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/regrevia/dsh-inner-browser-use.git"
+  },
+  "homepage": "https://github.com/regrevia/dsh-inner-browser-use#readme",
+  "bugs": {
+    "url": "https://github.com/regrevia/dsh-inner-browser-use/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right"]
+    }
+  }
+}

@@ -1,0 +1,233 @@
+/**
+ * Host-half tests: the bridge wire and the tool surface, over a real socket.
+ *
+ * The transport is the part that cannot be trusted by reading it, so every case
+ * here speaks HTTP to the route the plugin registers. There is no fake of the
+ * Client: an SSE reader plays the tab, which is exactly what the tab does.
+ */
+import { test, before, after } from 'node:test'
+import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const proofDir = await mkdtemp(join(tmpdir(), 'dsh-ib-test-'))
+process.env.DSH_INNER_BROWSER_PROOF = join(proofDir, 'proof.jsonl')
+
+const { ROUTE, apply } = await import('../index.js')
+
+/** @type {Array<{path: string, handler: any}>} */
+const routes = []
+/** @type {Map<string, any>} */
+const defs = new Map()
+let server
+let origin
+
+/**
+ * A plugin context with only what the plugin touches.
+ * @returns {any} context.
+ */
+function context() {
+  const disposable = () => {}
+  return {
+    effect(effect) {
+      const stop = effect()
+      return typeof stop === 'function' ? stop : disposable
+    },
+    inject(names, callback) {
+      callback({
+        effect: (effect) => effect(),
+        tools: {
+          register(definition) {
+            defs.set(definition.name, definition)
+            return disposable
+          },
+        },
+      })
+    },
+    webServer: {
+      register(route) {
+        routes.push(route)
+        return disposable
+      },
+    },
+    logger: { info() {} },
+  }
+}
+
+/** @param {string} path - path under the plugin route. @param {RequestInit} [init] - request. */
+const call = (path, init) => fetch(`${origin}${ROUTE}${path}`, init)
+
+/**
+ * Open a downlink and read frames until `until` says stop.
+ * @param {string} session - chat the tab belongs to.
+ * @returns {Promise<{frames: any[], stop: () => void}>} frames seen so far.
+ */
+async function tab(session) {
+  const controller = new AbortController()
+  const response = await fetch(`${origin}${ROUTE}/downlink?session=${encodeURIComponent(session)}`, {
+    signal: controller.signal,
+  })
+  const reader = response.body.getReader()
+  const frames = []
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const pump = (async () => {
+    try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      buffer += decoder.decode(value, { stream: true })
+      for (let cut = buffer.indexOf('\n\n'); cut !== -1; cut = buffer.indexOf('\n\n')) {
+        const block = buffer.slice(0, cut)
+        buffer = buffer.slice(cut + 2)
+        const line = block.split('\n').find((row) => row.startsWith('data: '))
+        if (line === undefined) continue
+        frames.push(JSON.parse(line.slice(6)))
+      }
+    }
+    } catch {
+      /* the tab closed */
+    }
+  })()
+  /** @returns {Promise<any>} next frame the Host pushes, or a failure when the tab is closed. */
+  const next = async () => {
+    for (let waited = 0; waited < 5_000; waited += 10) {
+      const frame = frames.findIndex((frame) => frame.type !== 'hello')
+      if (frame !== -1) return frames.splice(frame, 1)[0]
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error('no frame arrived')
+  }
+  const stop = () => {
+    controller.abort()
+    void reader.cancel().catch(() => {})
+  }
+  return { frames, next, stop, pump }
+}
+
+before(async () => {
+  apply(context(), { proofLog: process.env.DSH_INNER_BROWSER_PROOF })
+  assert.equal(routes.length, 1)
+  server = createServer((req, res) => {
+    for (const route of routes) {
+      if ((req.url ?? '').startsWith(route.path)) {
+        void route.handler(req, res)
+        return
+      }
+    }
+    res.writeHead(404).end()
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  origin = `http://127.0.0.1:${server.address().port}`
+})
+
+after(async () => {
+  server.closeAllConnections()
+  await new Promise((resolve) => server.close(resolve))
+  await rm(proofDir, { recursive: true, force: true })
+})
+
+test('registers the five page tools and nothing else', () => {
+  assert.deepEqual([...defs.keys()].sort(), [
+    'browser_click',
+    'browser_navigate',
+    'browser_script',
+    'browser_type',
+    'browser_view',
+  ])
+  for (const definition of defs.values()) {
+    assert.equal(definition.isConcurrencySafe(), false)
+    assert.equal(definition.parameters.additionalProperties, false)
+    assert.equal(definition.output.schema.type, 'object')
+  }
+  assert.equal(defs.get('browser_navigate').timeoutMs, 65_000)
+})
+
+test('reports an empty bridge before any tab opens', async () => {
+  const state = await call('/state').then((response) => response.json())
+  assert.deepEqual(state.connected, [])
+  assert.equal(state.pending, 0)
+})
+
+test('a tool without a tab says how to open one', async () => {
+  await assert.rejects(
+    defs.get('browser_view').execute({}, { agent: { id: 'chat-1' } }),
+    /This chat has no 内置浏览器 tab open/,
+  )
+})
+
+test('push without a tab is refused, not buffered', async () => {
+  const response = await call('/push?session=chat-1', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'call', id: 'x' }),
+  })
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), { delivered: false })
+})
+
+test('one tool call round-trips through the tab and back', async () => {
+  const seat = await tab('chat-1')
+  const pending = defs.get('browser_view').execute({}, { agent: { id: 'chat-1' } })
+  const call_ = await seat.next()
+  assert.equal(call_.type, 'call')
+  assert.equal(call_.tool, 'view')
+  const reply = await call('/uplink?session=chat-1', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: call_.id, ok: true, value: { text: 'Example Domain' } }),
+  })
+  assert.equal(reply.status, 200)
+  assert.deepEqual(await pending, { text: 'Example Domain' })
+  seat.stop()
+})
+
+test('a refusal from the page reaches the model as an error', async () => {
+  const seat = await tab('chat-2')
+  const pending = defs.get('browser_click').execute({ ref: 9 }, { agent: { id: 'chat-2' } })
+  const settled = assert.rejects(pending, /no control 9 on this page/)
+  const frame = await seat.next()
+  await call('/uplink?session=chat-2', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: false, error: 'no control 9 on this page' }),
+  })
+  await settled
+  seat.stop()
+})
+
+test('a silent tab fails the call instead of hanging it', async () => {
+  const seat = await tab('chat-3')
+  const definition = defs.get('browser_view')
+  const pending = definition.execute({}, { agent: { id: 'chat-3' } })
+  const settled = assert.rejects(pending, /did not finish view in time/)
+  await seat.next()
+  await settled
+  seat.stop()
+})
+
+test('the last open tab serves a chat with no tab of its own', async () => {
+  const seat = await tab('chat-4')
+  const pending = defs.get('browser_view').execute({}, { agent: { id: 'another-chat' } })
+  const frame = await seat.next()
+  assert.equal(frame.tool, 'view')
+  await call('/uplink?session=chat-4', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { text: 'served' } }),
+  })
+  assert.deepEqual(await pending, { text: 'served' })
+  seat.stop()
+})
+
+test('a client heartbeat is visible in the state route', async () => {
+  await call('/uplink', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-alive', phase: 'registered', tabType: true }),
+  })
+  const state = await call('/state').then((response) => response.json())
+  assert.equal(state.client.frame.phase, 'registered')
+})
+
+test('an unknown path is a 404, not a hang', async () => {
+  const response = await call('/nope')
+  assert.equal(response.status, 404)
+})

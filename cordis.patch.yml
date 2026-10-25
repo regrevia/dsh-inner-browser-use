@@ -1,0 +1,4 @@
+# Bundle patch for dsh-inner-browser-use.
+- insert:
+    - id: inner-browser-use
+      name: dsh-inner-browser-use

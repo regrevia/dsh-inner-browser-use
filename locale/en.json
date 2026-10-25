@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "title": "Inner Browser Use",
+    "description": "Drive the sidebar browser itself: a visible agent pointer, click and type, and a two-way channel to the chat."
+  },
+  "type.label": "Inner browser",
+  "guide.title": "Inner browser",
+  "guide.description": "Let the assistant drive a page in the sidebar",
+  "phase.opening": "Opening…",
+  "phase.ready": "Connected",
+  "phase.closed": "Closed",
+  "error.desktopOnly": "Requires the desktop app",
+  "error.lease": "Could not open the browser panel"
+}
