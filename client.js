@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
     const ID = 'dsh-inner-browser-use'
     const ROUTE = '/dsh-inner-browser-use'
     const STYLE_ID = 'dsh-inner-browser-use-css'
+    const ALIVE_MS = 20_000
     const SLOT = 'sidebar.right.pane.tab'
     const TITLE_SLOT = 'sidebar.right.pane.tab.title'
 
@@ -468,6 +469,10 @@ window.__ModuleLoader__.load({
         let registered = false
         beat({ tabType: false, phase: 'loaded' })
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
+        ctx.effect(() => {
+          const tick = setInterval(() => beat({ tabType: registered, phase: 'alive' }), ALIVE_MS)
+          return () => clearInterval(tick)
+        }, 'dsh-inner-browser-use: alive')
         try {
           ctx.locale.register(NS, { zh: DICT.zh, 'zh-CN': DICT.zh, en: DICT.en })
         } catch {

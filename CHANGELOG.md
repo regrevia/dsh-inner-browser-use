@@ -7,6 +7,9 @@
   A call waits `openWaitMs` (8 s) for that tab, then fails with one sentence.
 - One tab ask per burst: a second call for the same chat within 3 s does not ask
   again, and a call with no page listening never silences the next ask.
+- `GET /state` reports whether the page half is alive: a heartbeat carries its
+  age and `fresh` goes false after a minute, so a plugin whose page half never
+  loaded no longer looks installed-and-fine.
 - The tab type no longer contributes a card to the guide pane, so the plugin
   adds nothing to any pane it does not own; `test/client.test.mjs` asserts that.
 - Client-half tests run the page module in Node with a fake module loader, so

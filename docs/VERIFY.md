@@ -17,9 +17,11 @@ curl -s http://127.0.0.1:<port>/dsh-inner-browser-use/state
 
 Expected: `{"connected":[],"pending":0,"client":{…"tabType":true…}}`.
 
-- No `client` key: the page half is not running. Reload the window.
+- `client: null`: the page half never reported in after this host started. Reopen the app.
 - `"tabType":false`: the page loaded but the tab type did not register; the log
   line `phase:"idle"` in the proof log is the same fact.
+- `client.fresh: false`: a page reported in and then stopped, or the app has been
+  idle past a minute. The page half beats every 20 s.
 - `client` present, `connected:[]`: correct before any tab is open. Seats are
   open tabs, not the page.
 
@@ -67,7 +69,7 @@ JSON line per lifecycle event: `downlink-open`, `uplink`, `watch-open`.
 
 ## Exit codes
 
-`npm test` runs both halves: 15 host tests over a real socket, 2 client tests
+`npm test` runs both halves: 16 host tests over a real socket, 2 client tests
 that load the page module with a fake module loader and a fake `EventSource`.
 `node ~/.dsh/skills/ui-restraint/scripts/ui-copy-lint.mjs .` must print
 `ui-copy-lint: clean.`

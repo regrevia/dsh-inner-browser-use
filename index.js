@@ -70,6 +70,7 @@ const OPEN_WAIT_MS = 8_000
 
 /** Shown when a tool runs without the tab that owns the guest. */
 const ASK_GAP_MS = 3_000
+const CLIENT_TTL_MS = 60_000
 const NO_TAB = 'No 内置浏览器 tab answered. Open it in the right sidebar from the tab strip, then call again.'
 
 /** @type {string} */
@@ -103,6 +104,19 @@ function readBody(req) {
  * Tools route to the seat of the session that asked, and fall back to the only
  * seat when exactly one tab is open.
  */
+/**
+ * One heartbeat as the state route reports it: the page half is fresh while it
+ * answered within `CLIENT_TTL_MS`, and a stale beat is kept, not erased — it is
+ * the only clue that a page loaded earlier and then stopped.
+ * @param {{ms: number, frame: Record<string, unknown>} | undefined} beat - last heartbeat.
+ * @param {number} [now] - current time in ms.
+ * @returns {Record<string, unknown> | null} - the reported client, or null before any beat.
+ */
+export function clientState(beat, now = Date.now()) {
+  if (beat === undefined) return null
+  return { ...beat.frame, at: new Date(beat.ms).toISOString(), fresh: now - beat.ms < CLIENT_TTL_MS }
+}
+
 export class Bridge {
   constructor() {
     /** @type {Map<string, {res: import('node:http').ServerResponse, sessionId: string}>} */
@@ -525,7 +539,7 @@ export function apply(ctx, config = {}) {
         return
       }
       await record({ kind: 'uplink', session: sessionId, frame })
-      if (frame?.type === 'client-alive') bridge.client = { at: new Date().toISOString(), frame }
+      if (frame?.type === 'client-alive') bridge.client = { ms: Date.now(), frame }
       bridge.settle(frame)
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end('{"ok":true}')
@@ -549,7 +563,7 @@ export function apply(ctx, config = {}) {
 
     if (path === '/state' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ connected: bridge.connected(), pending: bridge.waiters.size, client: bridge.client }))
+      res.end(JSON.stringify({ connected: bridge.connected(), pending: bridge.waiters.size, client: clientState(bridge.client) }))
       return
     }
 

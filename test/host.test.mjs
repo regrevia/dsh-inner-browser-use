@@ -15,7 +15,7 @@ import { join } from 'node:path'
 const proofDir = await mkdtemp(join(tmpdir(), 'dsh-ib-test-'))
 process.env.DSH_INNER_BROWSER_PROOF = join(proofDir, 'proof.jsonl')
 
-const { Bridge, ROUTE, apply } = await import('../index.js')
+const { Bridge, ROUTE, apply, clientState } = await import('../index.js')
 
 /** @type {Array<{path: string, handler: any}>} */
 const routes = []
@@ -226,7 +226,9 @@ test('a client heartbeat is visible in the state route', async () => {
     body: JSON.stringify({ type: 'client-alive', phase: 'registered', tabType: true }),
   })
   const state = await call('/state').then((response) => response.json())
-  assert.equal(state.client.frame.phase, 'registered')
+  assert.equal(state.client.phase, 'registered')
+  assert.equal(state.client.tabType, true)
+  assert.equal(state.client.fresh, true)
 })
 
 test('an unknown path is a 404, not a hang', async () => {
@@ -307,4 +309,15 @@ test('one ask per burst, and no ask when no page is listening', async () => {
   assert.equal(seen.length, 1)
   bridge.want('chat-2')
   assert.equal(seen.length, 2)
+})
+
+test('a heartbeat reports its own age', () => {
+  assert.equal(clientState(undefined), null)
+  const frame = { type: 'client-alive', phase: 'ready', tabType: true }
+  const fresh = clientState({ ms: 1_000, frame }, 2_000)
+  assert.equal(fresh.fresh, true)
+  assert.equal(fresh.phase, 'ready')
+  const stale = clientState({ ms: 1_000, frame }, 120_000)
+  assert.equal(stale.fresh, false)
+  assert.equal(stale.tabType, true)
 })

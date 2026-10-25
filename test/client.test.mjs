@@ -66,6 +66,9 @@ globalThis.document = {
   querySelector: () => null,
 }
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
+const ticks = []
+globalThis.setInterval = (fn) => { ticks.push(fn); return ticks.length }
+globalThis.clearInterval = () => {}
 globalThis.EventSource = FakeEventSource
 globalThis.fetch = async () => ({ ok: true })
 
