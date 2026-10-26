@@ -1256,5 +1256,20 @@ export function apply(ctx, config = {}) {
     }, 'dsh-inner-browser-use: tool surface')
   })
 
+  const prompt = ctx.get?.('systemPrompt')
+  if (prompt && typeof prompt.section === 'function') {
+    ctx.effect(() => prompt.section({
+      name: 'browser-in-this-chat',
+      order: 858,
+      text: [
+        '## 网页任务：用本会话右栏的内置浏览器做，不问直接开始',
+        '',
+        '人说「用网页端 / 在浏览器里 / 打开某个网站 / 帮我上 ChatGPT 生成 …」时，直接调用 browser_* 工具在本会话右栏操作；不要问要不要打开，也不要另起外部 Chrome。右栏归人所有，做完保留，不主动关。',
+        '固定顺序：`browser_navigate` → `browser_view`（拿编号控件与可见文字）→ `browser_click` / `browser_type` → 再 `browser_view` 直到出现要的结果；页面要等的地方重复读，不 sleep。',
+        '要交给网页的文件用 `browser_upload`；网页产出的文件用 `browser_download` 存进项目目录，文本用 `browser_copy`，最后在本轮回复里给绝对路径。',
+      ].join('\n'),
+    }), 'dsh-inner-browser-use: system prompt section')
+  }
+
   ctx.logger?.info?.('dsh-inner-browser-use: bridge on %s', ROUTE)
 }

@@ -3139,7 +3139,9 @@ window.__ModuleLoader__.load({
               opened = 'page'
             }
             if (nativeElement(sessionId) !== null) {
-              if (opened === '') opened = 'page'
+              /* The product's tab is already the page this call wants; the word
+                 for that is `current`, which the call accepts. */
+              if (opened === '') opened = 'current'
             } else if (take || NATIVE_MODE === true) {
               /* One tab, holding the page this call is for, so the column shows
                  it instead of an address bar waiting for input. A call made
