@@ -1327,6 +1327,33 @@ window.__ModuleLoader__.load({
       return clicked
     }
 
+    const reviveTried = new Map()
+    /** A tab that lost its page to a reload shows that page again. @param {string} sessionId - chat whose column holds the tab. @param {string} url - page this chat last showed. @returns {Promise<boolean>} whether the address was sent. */
+    async function revivePage(sessionId, url) {
+      const who = String(sessionId ?? '')
+      if (url === '' || acting.size > 0) return false
+      const last = reviveTried.get(who) ?? 0
+      if (Date.now() - last < 10_000) return false
+      const slot = addressIn(who)
+      if (slot.input === null) return false
+      reviveTried.set(who, Date.now())
+      try {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        slot.input.focus()
+        if (setter !== undefined) setter.call(slot.input, url)
+        else slot.input.value = url
+        slot.input.dispatchEvent(new Event('input', { bubbles: true }))
+        const form = slot.form
+        if (form !== null && typeof form.requestSubmit === 'function') form.requestSubmit()
+        else if (form !== null) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+        else slot.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
+        beat({ tabType: true, phase: 'revive', session: who, url: url.slice(0, 120) })
+        return true
+      } catch {
+        return false
+      }
+    }
+
     /** Type into the product's address bar: how an empty tab is made to hold a page. */
     async function nativeOpen(sessionId, url) {
       if (url === '') return 'no-url'
@@ -2309,14 +2336,16 @@ window.__ModuleLoader__.load({
 
     /* A column left on a checkpoint is put back to its page before the person
        has to look at it: the chats this page drives, and the one on screen. */
-    function tendFaces() {
+    async function tendFaces() {
       if (NATIVE_MODE !== true) return
       const chats = new Set(paneSessions)
       for (const who of paneGuests.keys()) chats.add(who)
       if (currentSession !== '') chats.add(currentSession)
       for (const who of chats) {
         try {
-          if (nativeElement(who) === null) restoreFace(who)
+          if (nativeElement(who) !== null) continue
+          if (restoreFace(who) === true) continue
+          await revivePage(who, rememberedPage(who))
         } catch {
           /* a column mid-teardown is measured on a later beat */
         }
@@ -2790,13 +2819,16 @@ window.__ModuleLoader__.load({
                gets a page out of sight instead: it answers nothing on screen and
                takes nothing away. */
             const stashed = () => residents.has(sessionId) === true
-            if (!take && stashed() !== true) {
+            if (!take && NATIVE_MODE !== true && stashed() !== true) {
               keepResident(sessionId)
               for (let wait = 0; wait < 8 && stashed() !== true; wait += 1) {
                 await new Promise((resolve) => setTimeout(resolve, 50))
               }
             }
-            if (!take && stashed() !== true) {
+            /* A chat that is not on screen is still asked for by its own id: the
+               tab lands in that chat's column, and nothing in front of the person
+               changes. */
+            if (!take && NATIVE_MODE !== true && stashed() !== true) {
               beat({ tabType: registered, phase: 'open', step: 'other-chat', session: sessionId })
             }
             const bare = take && onScreen.size === 0

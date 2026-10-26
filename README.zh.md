@@ -40,7 +40,7 @@ dsh plugin install /path/to/dsh-inner-browser-use
 也可以直接装打包好的发布版，不用 clone、不用 npm 账号：
 
 ```bash
-dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/download/v0.11.33/dsh-inner-browser-use-0.11.33.tgz
+dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/download/v0.11.35/dsh-inner-browser-use-0.11.35.tgz
 ```
 
 装好后**插件**列表里出现 *内置浏览器*。需要桌面版，因为侧边栏浏览器是桌面能力。

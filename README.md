@@ -52,7 +52,7 @@ dsh plugin install /path/to/dsh-inner-browser-use
 Or install the packed release, no clone and no npm account:
 
 ```bash
-dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/download/v0.11.33/dsh-inner-browser-use-0.11.33.tgz
+dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/download/v0.11.35/dsh-inner-browser-use-0.11.35.tgz
 ```
 
 The plugin appears under **Plugins** as *内置浏览器*. It needs the Desktop app, because the sidebar browser is a Desktop capability.
