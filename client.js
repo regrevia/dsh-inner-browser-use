@@ -1329,6 +1329,9 @@ window.__ModuleLoader__.load({
         return 'kept'
       }
       if (nativeElement(who) !== null) {
+        /* The page is kept but the column shows its own start list: the entry
+           the person would press brings that page forward. */
+        if (givenTabDrawn(who) !== true) pressBrowserEntry(who)
         nativeTabs.add(slot + ':' + page)
         return 'page'
       }
@@ -1391,6 +1394,29 @@ window.__ModuleLoader__.load({
         }
       }
       return false
+    }
+
+    /** Brings a kept page forward by pressing the column's own browser entry, the one the person would press. @param {string} sessionId - chat. @returns {void} */
+    function pressBrowserEntry(sessionId) {
+      if (mayShow(sessionId) !== true) return
+      for (const panel of panelOf(sessionId)) {
+        let row
+        try {
+          row = Array.from(panel.querySelectorAll('button, [role="button"]')).find((node) => {
+            const words = String(node.textContent ?? '').trim()
+            return words.length < 12 && /浏览器|Browser/i.test(words)
+          })
+        } catch {
+          continue
+        }
+        if (row === undefined || row === null) continue
+        try {
+          if (typeof row.click === 'function') row.click()
+          return
+        } catch {
+          continue
+        }
+      }
     }
 
     /** One chat keeps one browser tab: extra ones are closed here, and only in
@@ -2530,6 +2556,11 @@ window.__ModuleLoader__.load({
       if (NATIVE_MODE !== true || who === '') return
       const held = paneGuests.get(who)
       if (held !== undefined && held.alive() === true) return
+      /* A page takes a moment to attach. Asking again while it is still coming
+         used to leave a second, then a third page for one chat, and every call
+         then landed on a page the last call had not made. */
+      const born = wireBorn.get(who) ?? 0
+      if (born !== 0 && Date.now() - born < WIRE_GRACE_MS) return
       if (held !== undefined) paneGuests.delete(who)
       wireBorn.set(who, Date.now())
       /* A chat whose column is not on screen has no tab of the product's to
@@ -3239,3 +3270,4 @@ window.__ModuleLoader__.load({
 })
 
 /* census probe */
+

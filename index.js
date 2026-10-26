@@ -308,7 +308,9 @@ export class Bridge {
     if (frame?.phase !== 'open' || typeof frame.session !== 'string' || frame.session === '') return
     if (frame.step === 'other-chat') this.refused.set(frame.session, ELSEWHERE)
     if (frame.step === 'rightbar') this.refused.set(frame.session, NO_PANEL)
-    this.note('refused', { chat: frame.session, reason: frame.step ?? String(frame.phase ?? '') })
+    /* A page that opened answers with the tab it opened; only a refusal is news. */
+    if (frame.step === undefined) return
+    this.note('refused', { chat: frame.session, reason: String(frame.step) })
   }
 
   noteOpen(frame) {
