@@ -1212,7 +1212,6 @@ window.__ModuleLoader__.load({
     let raise = null
     /* The log, not the error, carries why a capture found no pixels. */
     let probe = null
-    let probed = false
 
     /** The chat whose sidebar pane is mounted here: a broadcast ask may only
      *  fall back to "the current chat" when this is the chat asking.
@@ -1405,7 +1404,6 @@ window.__ModuleLoader__.load({
     const residents = new Map()
     /* A chat's tab is asked for once: asking again rebuilds the page under a
        call that is already using it. The mark is cleared with the pane. */
-    const tabAsked = new Set()
     /* A chat whose tab was closed by an update is asked for once, at boot. */
     const restoredOnce = new Set()
     /* Chats whose own pane is open. Their pane owns the wire, so no stashed
@@ -1476,18 +1474,7 @@ window.__ModuleLoader__.load({
         } catch (error) {
           wc = `ERR ${String(error?.message ?? error).slice(0, 40)}`
         }
-        let bare = 'none'
-        try {
-          const plain = document.createElement('webview')
-          plain.setAttribute('src', 'about:blank')
-          const open = waitEvent(plain, 'dom-ready', 6_000)
-          shelf.appendChild(plain) // ui-copy-ignore
-          bare = String(await open)
-          plain.remove()
-        } catch (error) {
-          bare = `ERR ${String(error?.message ?? error).slice(0, 40)}`
-        }
-        beat({ phase: 'guest-probe', session: sessionId, part, src: view.getAttribute('src') ?? '', w: Math.round(box.width), h: Math.round(box.height), inPage: document.body.contains(view), wc, bare })
+        beat({ phase: 'guest-failed', session: sessionId, part, src: view.getAttribute('src') ?? '', w: Math.round(box.width), h: Math.round(box.height), inPage: document.body.contains(view), wc })
         throw new Error(L('error.background'))
       }
       beat({ phase: 'hidden-open', session: sessionId, part })
@@ -1496,7 +1483,6 @@ window.__ModuleLoader__.load({
 
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
     function keepResident(sessionId) {
-      beat({ phase: 'keep-enter', session: sessionId, held: residents.size, pane: paneSessions.has(sessionId) })
       if (sessionId === '') return
       /* This window lends a page only to the product's own tab, and that tab
          lives in the column of the chat being read. A chat out of sight waits
@@ -1550,7 +1536,6 @@ window.__ModuleLoader__.load({
       const dispose = () => {
         disposed = true
         if (options.pane === true) paneSessions.delete(options.sessionId)
-        if (options.pane === true) tabAsked.delete(options.sessionId)
         steer.delete(options.sessionId)
         cancel()
         clearInterval(cookieTimer)
@@ -2259,21 +2244,54 @@ window.__ModuleLoader__.load({
        */
       apply(ctx) {
         let registered = false
-        beat({ tabType: false, phase: 'loaded', v: '0.11.24' })
+        /* The version this copy was published as: a page that finds another one
+           published reloads until it has it, read from the disk. */
+        const REV = '0.11.27'
+        beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
         /* A page still running an older bundle replaces itself: the build it
            switched to is remembered first, so a reload can never repeat. */
+        /* A copy served from the window's own cache keeps a page on old code
+           however often it reloads. Asking for the file itself from the disk
+           puts the new one where the next load will read it. */
+        const warmBundles = async () => {
+          try {
+            const names = performance
+              .getEntriesByType('resource')
+              .map((entry) => entry.name)
+              .filter((name) => name.includes('dsh-inner-browser-use') || name.endsWith('/client.js'))
+            const unique = Array.from(new Set(names))
+            for (const name of unique) {
+              try {
+                await fetch(name, { cache: 'reload' })
+              } catch {
+                /* one unreachable file does not stop the rest */
+              }
+            }
+          } catch {
+            /* no resource timing: the reload below is still worth a try */
+          }
+        }
         const watchBuild = () => {
           void fetch(`${ROUTE}/state`, { cache: 'no-store' })
             .then((response) => (response?.ok === true ? response.json() : null))
-            .then((state) => {
+            .then(async (state) => {
               const build = String(state?.clientBuild ?? '')
+              const version = String(state?.version ?? '')
               if (build === '' || build === 'unknown') return
-              if (String(sessionStorage.getItem('dshib.build') ?? '') === build) return
-              /* The whole window is replaced: a page on an older bundle never
-                 keeps answering for the new one. */
+              const behind = (version !== '' && version !== REV) || String(sessionStorage.getItem('dshib.build') ?? '') !== build
+              if (!behind) {
+                sessionStorage.removeItem('dshib.tries')
+                return
+              }
+              /* Reloading is worth a few tries; a window that cannot get the
+                 file stops rather than reloading itself forever. */
+              const tries = Number(sessionStorage.getItem('dshib.tries') ?? '0')
+              if (Number.isFinite(tries) && tries >= 6) return
               sessionStorage.setItem('dshib.build', build)
+              sessionStorage.setItem('dshib.tries', String(tries + 1))
+              await warmBundles()
               try {
                 /* The address carries this build so the shell fetches the graph
                    that serves it instead of answering from its cache. */
@@ -2328,7 +2346,6 @@ window.__ModuleLoader__.load({
             return next
           }
           /* A tab asked for by a page that has since reloaded is not remembered. */
-          tabAsked.clear()
           /* An update of this plugin rebuilds the page, which closes the tab it
              had. The chat on screen gets its tab back on the page it held; a
              chat that is not on screen opens nothing, because a tab lands in
@@ -2436,20 +2453,6 @@ window.__ModuleLoader__.load({
             if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
             showColumn?.()
           }
-          if (!probed) {
-            probed = true
-            try {
-              const face = faceOf()
-              beat({
-                tabType: registered,
-                phase: 'api',
-                own: Object.keys(face ?? {}).slice(0, 16),
-                proto: face === undefined ? [] : Object.getOwnPropertyNames(Object.getPrototypeOf(face)).slice(0, 24),
-              })
-            } catch {
-              /* probed once per page load */
-            }
-          }
           const onWanted = async (event) => {
             let frame
             try {
@@ -2516,19 +2519,6 @@ window.__ModuleLoader__.load({
                the id path is the fallback for a page showing another chat. */
             let opened = ''
             const strip = scope.sidebarRight
-            if (!probed) {
-              probed = true
-              try {
-                beat({
-                  tabType: registered,
-                  phase: 'api',
-                  own: Object.keys(strip ?? {}).slice(0, 16),
-                  proto: strip === undefined ? [] : Object.getOwnPropertyNames(Object.getPrototypeOf(strip)).slice(0, 24),
-                })
-              } catch {
-                /* probed once per page load */
-              }
-            }
             /* Every open page hears this broadcast, so a page must open the
                asking chat's tab by id. Opening "the current chat" instead is how
                one chat's call used to steer a browser tab in another chat. */
@@ -2570,8 +2560,8 @@ window.__ModuleLoader__.load({
               }
             }
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })
-            if (NATIVE_MODE === true) setTimeout(() => beat({ phase: 'dom-probe', session: sessionId, ...domDump() }), 1_500)
-            beat({ phase: 'keep-ask', session: sessionId, held: residents.size, shown: paneSessions.size })
+            /* An out-of-sight chat has no page to lend: the product's tab lives
+               in the column of the chat being read, so nothing is opened here. */
             keepResident(sessionId)
           }
           const open = () => {
@@ -2602,9 +2592,8 @@ window.__ModuleLoader__.load({
             document.getElementById('dshib-park')?.remove()
             for (const node of Array.from(document.querySelectorAll('.dshib-stash'))) node.remove()
           } catch {
-            /* a page that cannot be cleaned is reported by the probe */
+            /* a page that cannot be cleaned is left to the column's next draw */
           }
-          setTimeout(() => beat({ phase: 'boot-dom', ...domDump() }), 2_500)
 
           scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore

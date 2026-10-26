@@ -1050,8 +1050,10 @@ export function apply(ctx, config = {}) {
         trail: bridge.trail.map((entry) => entry.frame),
         /* Where a chat's files would land, when its tab told us the folder. */
         folders: Object.fromEntries(bridge.connected().map((chat) => [chat, bridge.cwdOf(chat) ?? bridge.folderOf(chat) ?? ''])),
-        /* Lets a page that is still running an older bundle replace itself. */
+        /* Lets a page that is still running an older bundle replace itself,
+           and tells it which version it should be running. */
         clientBuild: clientBuild(),
+        version: VERSION,
       }))
       return
     }
@@ -1096,22 +1098,30 @@ export function apply(ctx, config = {}) {
       let how = 'no-electron'
       let why = ''
       try {
-        /* The packaged main process answers to a plain require; the module form
-           is tried first because an ES module elsewhere can only see that one. */
+        /* The main process answers to a plain require; the module form hands
+           back the executable's path instead of the API. */
         let electron = null
         try {
-          electron = await import('electron')
-        } catch (error) {
           const { createRequire } = await import('node:module')
           electron = createRequire(import.meta.url)('electron')
+        } catch (error) {
+          electron = await import('electron')
         }
         const api = electron?.BrowserWindow === undefined ? electron?.default : electron
         const windows = api?.BrowserWindow?.getAllWindows?.() ?? []
-        why = `${api?.BrowserWindow === undefined ? 'no-BrowserWindow' : 'windows:' + windows.length}`
+        why = `${api?.BrowserWindow === undefined ? 'no-BrowserWindow' : 'windows:' + windows.length} probe:${typeof electron}:${typeof api}:${typeof api?.default}`
         const win = windows.find((each) => each?.webContents !== undefined && each.webContents.isDestroyed?.() !== true)
         if (win !== undefined) {
           how = 'window'
-          setTimeout(() => win.webContents.reload(), 50).unref?.()
+          /* From the disk, not from the copy the last load left behind. */
+          setTimeout(() => {
+            try {
+              if (typeof win.webContents.reloadIgnoringCache === 'function') win.webContents.reloadIgnoringCache()
+              else win.webContents.reload()
+            } catch {
+              win.webContents.reload()
+            }
+          }, 50).unref?.()
         }
       } catch (error) {
         how = 'no-electron'
@@ -1171,6 +1181,14 @@ export function apply(ctx, config = {}) {
   /* The page compares this with what it last loaded: a page still running an
      older bundle reloads itself once instead of waiting for a manual refresh. */
   const clientFile = join(dirname(fileURLToPath(import.meta.url)), 'client.js')
+  /** What this half was published as; a page compares it with its own copy. */
+  const VERSION = (() => {
+    try {
+      return String(JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8')).version ?? '')
+    } catch {
+      return ''
+    }
+  })()
   let buildMark = ''
   let buildStamp = -1
   const clientBuild = () => {
