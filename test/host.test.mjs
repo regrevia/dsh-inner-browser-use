@@ -221,16 +221,14 @@ test('a silent tab fails the call instead of hanging it', async () => {
   seat.stop()
 })
 
-test('the last open tab serves a chat with no tab of its own', async () => {
+test('a chat with no tab of its own is never served by another chat\'s tab', async () => {
   const seat = await tab('chat-4')
-  const pending = defs.get('browser_view').execute({}, { agent: { id: 'another-chat' } })
-  const frame = await seat.next()
-  assert.equal(frame.tool, 'view')
-  await call('/uplink?session=chat-4', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { text: 'served' } }),
-  })
-  assert.deepEqual(await pending, { text: 'served' })
+  const outcome = await defs.get('browser_view').execute({}, { agent: { id: 'another-chat' } }).then(
+    (value) => value,
+    (error) => error,
+  )
+  assert.equal(seat.frames.filter((one) => one.type === 'call').length, 0, 'the other chat page is not steered')
+  assert.match(String(outcome?.message ?? outcome), /not open for this chat/i)
   seat.stop()
 })
 

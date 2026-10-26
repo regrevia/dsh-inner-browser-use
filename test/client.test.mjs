@@ -358,15 +358,18 @@ test('a tab that never appeared is not reported as open', () => {
   assert.match(source, /panelOf\(sessionId\)\.length > 0/)
 })
 
-test('a page is only ever the one the product tab holds', () => {
+test('an out-of-sight page attaches only as a leased guest', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* The window lends a page to the product's own tab and to nothing else, so a
      chat without one asks its column for a tab holding the page it last had. */
   assert.match(source, /openNativeTab\(options\.sessionId, NATIVE_KIND, rememberedPage\(options\.sessionId\)\)/)
   /* Out of sight a chat keeps a page of its own in the same storage, so the
      work goes on while another chat is the one being read. */
-  assert.match(source, /options\.hidden === true && NATIVE_MODE === true\)[\s\S]{0,600}?productPartition\(\)/)
-  assert.match(source, /lease = await bridge\.acquire\(await options\.key\(\)\)/)
+  /* The window admits a page only when it carries a lease token, and the lease
+     carries the storage the product's own tab uses, so the cookies are shared. */
+  assert.match(source, /options\.hidden === true && NATIVE_MODE === true\)[\s\S]{0,1600}?lease = await bridge\.acquire\(key\)/)
+  assert.match(source, /webview\.setAttribute\('src', `about:blank#\$\{lease\.lease\}`\)/)
+  assert.match(source, /webview\.setAttribute\('partition', part\)/)
   assert.match(source, /resident-open/)
 })
 
@@ -469,7 +472,7 @@ test('a page a chat was told to open is read back after a remount', () => {
   }
 })
 
-test('an update that closed the tab brings it back for the chat on screen', async () => {
+test('an update that closed the tab opens nothing behind the person', async () => {
   const chat = 'session-abcd1234ef56'
   const store = new Map([['dshib:url:' + chat, 'https://example.org/keep']])
   const wasStorage = Object.getOwnPropertyDescriptor(globalThis.window, 'localStorage')
@@ -482,7 +485,6 @@ test('an update that closed the tab brings it back for the chat on screen', asyn
     },
   })
   const loaded = []
-  const opened = []
   const webview = {
     getURL: () => 'about:blank',
     loadURL: (to) => loaded.push(to),
@@ -500,9 +502,12 @@ test('an update that closed the tab brings it back for the chat on screen', asyn
     const { beats, opened } = scene()
     globalThis.__panels.push(panel(false))
     setTimeout(() => globalThis.__panels.push(panel(true)), 1_000)
-    await new Promise((resolve) => setTimeout(resolve, 4_000))
-    assert.equal(beats.filter((frame) => frame.includes('restore-tab')).length > 0, true)
-    assert.deepEqual(loaded, ['https://example.org/keep'])
+    await new Promise((resolve) => setTimeout(resolve, 3_000))
+    /* The remembered page is what the next call shows; nothing is opened for it
+       while the person is reading, so no column and no tab is taken. */
+    assert.equal(beats.filter((frame) => frame.includes('restore-tab')).length, 0)
+    assert.deepEqual(opened, [])
+    assert.deepEqual(loaded, [])
   } finally {
     if (wasStorage === undefined) delete globalThis.window.localStorage
     else Object.defineProperty(globalThis.window, 'localStorage', wasStorage)

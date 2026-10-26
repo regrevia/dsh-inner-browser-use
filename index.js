@@ -98,7 +98,7 @@ const NAVIGATE_TIMEOUT_MS = 60_000
 const DOWNLOAD_TIMEOUT_MS = 120_000
 
 /** How long a tool waits for the tab it asked for. */
-const OPEN_WAIT_MS = 8_000
+const OPEN_WAIT_MS = 20_000
 
 /** Shown when a tool runs without the tab that owns the guest. */
 const ASK_GAP_MS = 3_000
@@ -338,9 +338,10 @@ export class Bridge {
   seatFor(sessionId) {
     const direct = this.seats.get(sessionId)
     if (direct !== undefined) return direct
-    const aliased = this.seats.get(this.aliases.get(sessionId) ?? '')
-    if (aliased !== undefined) return aliased
-    return this.seats.size === 1 ? [...this.seats.values()][0] : undefined
+    /* A tab belongs to the chat that opened it. Handing one chat's call to
+       another chat's tab steers a page the person is reading, so a chat with
+       no tab of its own waits for its own. */
+    return this.seats.get(this.aliases.get(sessionId) ?? '')
   }
 
   /** @param {string} sessionId - chat asking. @returns {boolean} whether a tab can take the call now. */

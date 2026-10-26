@@ -1099,7 +1099,7 @@ window.__ModuleLoader__.load({
     /** That chat's page in the product's browser tab, once the tab made one. */
     function nativeElement(sessionId) {
       try {
-        if (window.__dshib_census !== true) {
+        if (false) {
           window.__dshib_census = true
           const bar = document.querySelector('[class*="rightbarCol"]')
           beat({
@@ -1398,6 +1398,10 @@ window.__ModuleLoader__.load({
     /** Bring back the page a tab shows only a checkpoint of. @param {string} sessionId - chat whose column to look in. @returns {boolean} whether a control was pressed. */
     function restoreFace(sessionId) {
       const who = String(sessionId ?? '')
+      /* A face is restored in the chat the person is on. Anywhere else it takes
+         a column the person is not reading. */
+      const screen = routedSession() || String(currentSession ?? '')
+      if (screen !== '' && screen !== who) return false
       const last = restoreTried.get(who) ?? 0
       if (Date.now() - last < 5_000) return false
       let clicked = false
@@ -1417,6 +1421,9 @@ window.__ModuleLoader__.load({
     async function revivePage(sessionId, url) {
       const who = String(sessionId ?? '')
       if (url === '' || acting.size > 0) return false
+      /* Only the chat on screen has a column to put an address into. */
+      const screen = routedSession() || String(currentSession ?? '')
+      if (screen !== '' && screen !== who) return false
       const last = reviveTried.get(who) ?? 0
       if (Date.now() - last < 10_000) return false
       const slot = addressIn(who)
@@ -1424,7 +1431,6 @@ window.__ModuleLoader__.load({
       reviveTried.set(who, Date.now())
       try {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-        slot.input.focus()
         if (setter !== undefined) setter.call(slot.input, url)
         else slot.input.value = url
         slot.input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -1466,7 +1472,6 @@ window.__ModuleLoader__.load({
           return 'no-address'
         }
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-        slot.input.focus()
         if (setter !== undefined) setter.call(slot.input, url)
         else slot.input.value = url
         slot.input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -1691,6 +1696,8 @@ window.__ModuleLoader__.load({
     /** Pages mounted by a column, so a dead one can be told from a live one. @type {Map<string, {alive: () => boolean}>} */
     const paneGuests = new Map()
     let stashNode = null
+    /* One shape of the hidden page is printed once, so a page the window
+       refused to host can be told from one that never loaded. */
 
     /** @returns {HTMLElement} the container hidden guests live in. */
     function stashHost() {
@@ -1886,35 +1893,34 @@ window.__ModuleLoader__.load({
             /* The product's tab lives only while its column is on screen. A chat
                that is not on screen gets a page of its own out of sight, in the
                same cookies, so the work goes on where nobody is reading. */
-            let part = productPartition()
+            /* Only a guest the window has leased is allowed to attach, so a page
+               starts from the lease token and is sent to its address after that;
+               the lease also carries the storage the product's own tab uses, so
+               cookies are the same ones. */
+            if (bridge === undefined) {
+              options.onPhase('waiting')
+              return
+            }
+            try {
+              key = await options.key()
+              lease = await bridge.acquire(key)
+            } catch (error) {
+              probe?.({ why: 'resident-lease-failed', error: String(error?.message ?? error).slice(0, 80) })
+              options.onPhase('waiting')
+              return
+            }
+            const part = String(lease?.partition ?? '')
             if (part === '') {
-              /* The product's tab is not drawn, so it cannot say what its storage
-                 is; the window lends the same storage it would give that tab. */
-              if (bridge === undefined) {
-                options.onPhase('waiting')
-                return
-              }
-              try {
-                lease = await bridge.acquire(await options.key())
-                part = String(lease?.partition ?? '')
-              } catch (error) {
-                probe?.({ why: 'resident-lease-failed', error: String(error?.message ?? error).slice(0, 80) })
-                part = ''
-              }
-              if (part === '') {
-                options.onPhase('waiting')
-                return
-              }
+              options.onPhase('waiting')
+              return
             }
             webview = document.createElement('webview')
             ownViews.add(webview)
             webview.className = 'dshib-guest'
+            webview.setAttribute('name', lease.lease)
             webview.setAttribute('partition', part)
             webview.setAttribute('allowpopups', '')
-            /* A page is what makes the guest load; without one it never starts
-               and the call waits for a surface that will not come. */
-            const startPage = rememberedPage(options.sessionId)
-            webview.setAttribute('src', startPage === '' ? 'about:blank' : startPage)
+            webview.setAttribute('src', `about:blank#${lease.lease}`)
             const ready = waitEvent(webview, 'dom-ready', 20_000)
             options.shelf.appendChild(webview) // ui-copy-ignore
             if ((await ready) === false) {
@@ -2038,6 +2044,10 @@ window.__ModuleLoader__.load({
             (await fetch(`${ROUTE}/downlink?session=${encodeURIComponent(options.sessionId)}&workspace=${encodeURIComponent(keyForSession?.(options.sessionId) ?? '')}`, { cache: 'no-store' })).body,
             (frame) => {
               if (frame?.type !== 'call') return
+              /* A page answers its own chat and no other: a call that names a
+                 different chat is not this page's to run. */
+              const owner = String(frame.session ?? '')
+              if (owner !== '' && owner !== String(options.sessionId ?? '')) return
               const reply = (payload) => {
                 void fetch(`${ROUTE}/uplink?session=${encodeURIComponent(options.sessionId)}`, {
                   method: 'POST',
@@ -2886,41 +2896,10 @@ window.__ModuleLoader__.load({
             return next
           }
           /* A tab asked for by a page that has since reloaded is not remembered. */
-          /* An update of this plugin rebuilds the page, which closes the tab it
-             had. The chat on screen gets its tab back on the page it held; a
-             chat that is not on screen opens nothing, because a tab lands in
-             the column that is showing. */
-          if (NATIVE_MODE === true) {
-            setTimeout(() => {
-              void (async () => {
-                let shown = currentSession
-                if (shown === '') {
-                  try {
-                    shown = String(Array.from(document.querySelectorAll('[data-sidebar-right-session]'))[0]?.dataset?.sidebarRightSession ?? '')
-                  } catch {
-                    /* a page without a column has no chat to restore */
-                  }
-                }
-                if (shown === '') return
-                const url = rememberedPage(shown)
-                if (url === '') return
-                beat({ phase: 'restore-tab', session: shown })
-                if (nativeElement(shown) === null) openNativeTab(shown)
-                for (let wait = 0; wait < 30; wait += 1) {
-                  await new Promise((resolve) => setTimeout(resolve, 100))
-                  const el = nativeElement(shown)
-                  if (el === null) continue
-                  try {
-                    const here = String(el.getURL?.() ?? '')
-                    if (here === '' || here === 'about:blank') el.loadURL(url)
-                  } catch {
-                    /* the tab is mid-teardown; the next call reopens the page */
-                  }
-                  return
-                }
-              })()
-            }, 1_200)
-          }
+          /* An update of this plugin rebuilds the page, which closes its tab.
+             Nothing is opened back: a tab the person did not ask for lands in
+             whichever chat is showing, so a tab exists only when a call needs
+             one and only for the chat that asked. */
           /* The capture runs in another closure, so this lives at module scope. */
           faceOf = () => {
             try {
@@ -2954,14 +2933,17 @@ window.__ModuleLoader__.load({
             }
           }
           reveal = (asking) => {
+            /* A page is only brought forward for a chat that names itself: an ask
+               without one is the page on screen being guessed at. */
+            if (asking === '') return
             /* Another chat's page is never brought forward. */
-            if (asking !== '' && asking !== currentSession && currentSession !== '') return
-            if (asking !== '' && routedSession() !== '' && routedSession() !== asking) return
+            if (asking !== currentSession && currentSession !== '') return
+            if (routedSession() !== '' && routedSession() !== asking) return
             showColumn?.()
             try {
               /* A kept-mounted tab stays hidden behind the pane's active tab;
                  opening this kind brings it forward. */
-              openNativeTab(asking === '' ? currentSession : asking, NATIVE_MODE === true ? NATIVE_KIND : KIND)
+              openNativeTab(asking, NATIVE_MODE === true ? NATIVE_KIND : KIND)
             } catch {
               /* the capture reports the geometry it saw */
             }
