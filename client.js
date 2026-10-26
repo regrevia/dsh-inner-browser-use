@@ -246,7 +246,7 @@ window.__ModuleLoader__.load({
       '.dshib-viewport{display:flex;flex:1 1 auto;min-width:0;min-height:0;position:relative}',
       /* Kept off screen rather than display:none: an unrendered guest cannot
          answer, and this one has to answer while another chat is on screen. */
-      '.dshib-stash{position:fixed;left:-20000px;top:0;width:1100px;height:820px;visibility:hidden;pointer-events:none}',
+      '.dshib-stash{position:fixed;left:0;top:0;width:1100px;height:820px;opacity:0;z-index:-1;pointer-events:none}',
       '.dshib-guest{flex:1 1 auto;min-width:0;min-height:0;width:100%;height:100%;border:0;display:flex;background:var(--dsw-alias-bg-base)}',
       '.dshib-state{flex:none;display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-subtle)}',
       '.dshib-state[data-tone="error"]{color:var(--dsw-alias-label-danger)}',
@@ -1440,7 +1440,7 @@ window.__ModuleLoader__.load({
       view.setAttribute('allowpopups', '')
       const first = rememberedPage(sessionId)
       view.setAttribute('src', first === '' ? 'about:blank' : first)
-      const ready = waitEvent(view, 'dom-ready', 20_000)
+      const ready = waitEvent(view, 'dom-ready', 45_000)
       shelf.appendChild(view) // ui-copy-ignore
       if ((await ready) === false) throw new Error(L('error.background'))
       beat({ phase: 'hidden-open', session: sessionId, part })
