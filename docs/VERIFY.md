@@ -33,8 +33,9 @@ Expected: the call returns the page text plus numbered controls, and the
 **内置浏览器** tab shows the same page.
 
 - `No 内置浏览器 tab answered.`: no page answered within `openWaitMs`. Check
-  `phase:"resident-ready"` in the proof log; without it the stashed page never
-  came up.
+  the proof log for `phase:"resident-open"` and then `phase:"native-address"`; a
+  `phase:"native-missing"` instead means the tab was placed but took no address,
+  and the next call places it again.
 
 ## 3. Drive a page
 

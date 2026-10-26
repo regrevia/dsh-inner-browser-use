@@ -6,60 +6,75 @@ What this plugin assumes, and what it degrades to when an assumption fails.
 
 | Capability | Needed for | Missing means |
 | --- | --- | --- |
-| Desktop app (`dshDesktop.browser`) | The leased `<webview>` | Tab body shows "Desktop app only"; tools stay registered but have no seat. |
-| `sidebar.right.pane.tab` slot | The tab itself | Nothing registers; no tab appears in the **+** menu. |
+| Desktop app (`dshDesktop.browser`) | Leasing the app's own browser tab | The call answers that the built-in browser is not available; tools stay registered. |
+| `sidebar.right.pane.tab` slot | The tab body | Nothing registers; no tab appears in the **+** menu. |
 | `ctx.sidebarRightTabs` | Tab type registration | Registration is skipped silently; the tab never appears. |
+| `ctx.sidebarRight.openTabIn` | Placing a tab in the column | Tools need the tab opened by hand; the call says so in one sentence. |
 | `ctx.webServer.register` | The whole wire | Plugin fails to load, visibly. |
 | `ctx.tools.register` | The tool surface | Bridge still runs; the model sees no `browser_*` tools. |
-| `ctx.sidebarRight.openTabIn` | Opening a tab on demand | Tools need the tab opened by hand; the call fails with one sentence. |
-| `EventSource` in the page | Learning that a tab is wanted | Same as above. |
+| `EventSource` in the page | Learning that a tab is wanted | Same as the row above. |
 
 ## What it never touches
 
 Installing this plugin changes nothing a user already had:
 
-- Nothing shipped is wrapped or shadowed: the browser tab, its kind, its tools' behaviour and its partition are the product's; this plugin only drives them.
+- Nothing shipped is wrapped or shadowed: the browser tab, its kind, its tools'
+  behaviour and its partition are the product's; this plugin only drives them.
 - No guide card: the `开始` pane renders exactly the entries it had before. A
   client test asserts the registered tab type carries no `guide` array.
-- No global CSS: every rule is scoped under the pane's own class.
+- No global CSS: every rule is scoped to the page it drives.
 - No slot occupant on any slot it does not own, and no `computerUse`/`browserUse`
   provider registration, so the shipped browser's own providers keep their seats.
-- Removing the bundle removes every one of the above; nothing is left behind
-  except the tab-local partition the product itself owns.
+- Removing the bundle removes every one of the above.
 
 ## Version notes
 
-- **Node 20+** on the Host. The plugin uses only `node:http`, `node:fs/promises`, `URL`, and `AbortSignal`.
+- **Node 20+** on the Host. The plugin uses only `node:http`, `node:fs/promises`,
+  `URL`, and `AbortSignal`.
 - **No dependencies.** No bundler, no build step, no post-install script.
-- Tested to 0.6.10 against DeepSeek Harness Desktop builds whose sidebar browser tab kind is `browser` and whose guest protocol exposes `acquire`/`release`. If `dshDesktop.protocolVersion` is not `1`, the plugin treats the Desktop bridge as absent rather than guessing.
+- `engines.dsh` is `>= 0.2.0`. Checked against Desktop builds whose sidebar
+  browser tab kind is `browser` and whose guest handshake is an `about:blank#`
+  webview carrying the workspace partition; on any other shape the plugin treats
+  the Desktop bridge as absent rather than guessing.
 
 ## Coexistence
 
-- The tab kind is `browser` — the built-in browser's own. This plugin registers no tab kind of its own.
+- The tab kind is `browser` — the built-in browser's own. This plugin registers no
+  tab kind of its own.
 - The route prefix is `/dsh-inner-browser-use`. Nothing is mounted under `/api`.
-- The guest partition is the workspace's own `dsh-sidebar-browser-<uuid>`. Two plugins leasing the same workspace key share storage, exactly as two built-in tabs do.
+- The guest partition is the one the app leases for the workspace
+  (`dsh-sidebar-browser-<uuid>`). Two plugins leasing the same workspace key share
+  storage, exactly as two built-in tabs do.
 
 ## Known limits
 
 | Limit | Why | Workaround |
 | --- | --- | --- |
-| A login is kept only if the page can read its cookie | `HttpOnly` cookies are not visible to the page half | Stay in one workspace; sites that keep the session in a readable cookie come back signed in |
+| A login is kept only if the page can read its cookie | `HttpOnly` cookies are not visible to the page half | Sites that keep the session in a readable cookie come back signed in |
 | One storage partition per workspace | The lease key is the workspace CWD | Use one workspace per account you need isolated |
-| No downloads, popups, permission prompts | The guest attaches sandboxed | Read bytes in-page with `browser_script` |
-| Tools need the tab open | A tool cannot mount UI on your behalf | Open **内置浏览器** once per chat |
+| One chat is on screen at a time | The column shows one chat, so another chat's page does not exist | Open the chat that asks; the call answers in about a second |
 | Text-only observations | Frames are JSON over one SSE socket | Use `browser_script` to pull exact values |
-| A capture needs that chat's page drawn | The app has no surface to read for a page another tab covers | Bring the chat's tab forward; the call says so in about two seconds |
+| A capture needs that page drawn | The app has no surface to read for a page another tab covers | Bring the chat's tab forward; the call says so |
 
-## Unverified on this machine
+## Downloads land in the chat folder
 
-- Seeing the pointer overlay and the ripple in a picture: the placement is measured
-  from the page (`transform`, `opacity 1`, the top `z-index`), and the click reply
-  names the point, but no capture of a page the app is drawing has been taken
-  since the pointer stayed for eight seconds.
-- The built-in browser's own tab continuing to work while an agent is driving it: a call for the chat on screen uses the same tab, so watching and driving are the same pane.
-- `browser_selection` and `browser_copy` in the app: the half that carries them
-  loads on the next start of the app. Their bridge is covered by
-  `test/host.test.mjs`.
+The app cancels its own downloads, so a page cannot save a file by itself. The
+page half therefore collects what a page offers — an `<a download>`, a `blob:`
+address, a `data:` address, or a link whose path ends in an archive, office
+document, PDF, text, image or media extension — and hands the bytes to the Host,
+which writes them under `<chat folder>/.dsh-inner-browser-use/downloads/`. The
+call returns that path, and `browser_download` with no argument prints the files
+already collected.
+
+Limits that come from the page, not from the plugin:
+
+- One offered file is capped at 7 MB and twelve are tracked per page load; the
+  Host refuses an upload over 8 MB with the size named.
+- A page whose `connect-src` forbids the site's own address cannot fetch it; the
+  plugin then has only what the page already holds, so ask the page for the file
+  through its own UI.
+- A file streams only while the page keeps answering. A page that navigates away
+  mid-save ends the transfer, and the call says so instead of writing half a file.
 
 ## Checking an install
 
@@ -78,35 +93,11 @@ working install answers.
 
 The strip mounts only the tab it shows, and after a restart the restored tab is
 not the active one. Nothing in the tab face switches it: `openTabIn` with
-`activate`/`focus`, `focus(id)`, `focus(session, id)`, `active(id)`, `placeTab`
-(throws `no tab type is registered`), `place` (throws), `tab.activate` and
-`tab.focus` were each tried and left the active tab unchanged; the tab bar's
-controls are not inside `sidebarRight.host`, so there is no element to click.
+`activate`/`focus`, `focus(id)`, `focus(session, id)`, `active(id)`,
+`tab.activate` and `tab.focus` were each tried and left the active tab
+unchanged; the tab bar's controls are not inside `sidebarRight.host`, so there is
+no element to click.
 
-A call therefore does not depend on that switch. With no pane mounted, the page
-half mounts a guest of its own in a container held off screen and answers there;
-when a pane for the same chat reports ready, that guest is dropped so one page
-serves the chat at a time. The proof log names both halves: `resident-opening`,
-`resident-ready`, then `resident-closed` and `resident-drop` once a pane took
-over.
-
-## Downloads never land
-
-The host cancels every download: its browser session installs
-`will-download` with `event.preventDefault()`. There is no default download
-folder and nothing for the user to configure, so a page's own download link,
-a `<a download>` click, and a blob URL all do nothing.
-
-The pane is not the app's own browser tab: it is a `<webview>` inside the sidebar, with its own storage
-partition per project folder. Cookies, logins and history therefore stay with the project and are not shared
-with the app's browser tabs, and a narrow sidebar triggers a page's responsive layout. The engine is the same.
-
-`browser_download` is the way out: the page reads the bytes, the plugin writes
-them into `<chat folder>/.dsh-inner-browser-use/downloads/`, and the call returns
-the path. Two limits come from the page, not the plugin:
-
-- A strict `connect-src` blocks the page's own `fetch` of another origin. The
-  plugin then fetches the address from its own half, which has no cookies — a
-  signed address works, one that needs the site's login does not.
-- A file only streams while the page keeps answering; a page that navigates away
-  mid-save ends the transfer, and the tool says so instead of writing half a file.
+A call therefore never depends on that switch. On load, the chat on screen gets
+its own tab back and the page it had; every other chat opens nothing, because a
+tab lands in the column that is showing.
