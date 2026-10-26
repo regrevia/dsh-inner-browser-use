@@ -205,29 +205,26 @@ test('the ask reaches the strip as an injected service', () => {
   assert.equal(source.url, '/dsh-inner-browser-use/watch')
 })
 
-test('a tool that needs a page opens the product browser tab for this chat', () => {
+test('a chat with no page of its own is given no tab to close', () => {
   const { opened, bars, source } = scene()
   source.send({ type: 'client-alive', phase: 'ready' })
   assert.deepEqual(opened, [])
   globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-9' } }]
   source.send({ type: 'wanted', session: 'chat-9' })
-  /* The column holds no tab when the ask lands, so the ask is repeated until a
-     page is there; every one of them is this chat's browser tab. */
-  assert.ok(opened.length >= 1, 'the tab is asked for')
-  assert.deepEqual(new Set(opened.map((one) => JSON.stringify(one))).size, 1)
-  assert.deepEqual(opened[0], ['session', 'chat-9', 'browser', {}])
+  /* A tab with nothing to show is a tab the person has to close, so an ask
+     that carries no address opens none. */
+  assert.deepEqual(opened, [])
   /* The panel is the product's: opening a tab opens it, and forcing the panel
      here put it into a width mode the person had not asked for. */
   assert.deepEqual(bars, [])
   source.send({ type: 'wanted', session: '' })
-  assert.ok(opened.length <= 3, 'a page that never shows is not asked for forever')
+  assert.deepEqual(opened, [])
 })
 
 test('the asking chat id is the only way to open, so no other chat is touched', () => {
   const { opened, source } = scene({ openTab: () => {} })
   globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-4' } }]
   source.send({ type: 'wanted', session: 'chat-4' })
-  assert.ok(opened.length >= 1)
   assert.deepEqual(opened.every((one) => one[1] === 'chat-4'), true)
 })
 
@@ -436,12 +433,9 @@ test('two asks for one chat open only that chat\'s tab', async () => {
     source.send({ type: 'wanted', session: 'chat-8' })
     source.send({ type: 'wanted', session: 'chat-8' })
     await new Promise((resolve) => setTimeout(resolve, 1_600))
-    /* One chat, one kind, one address: the product opens what is already there
-       instead of a second browser beside it. */
-    assert.ok(opened.length >= 1)
-    assert.deepEqual(new Set(opened.map((one) => JSON.stringify(one))).size, 1)
-    assert.deepEqual(opened[0], ['session', 'chat-8', 'browser', {}])
-    assert.ok(opened.length <= 3)
+    /* Repeating an ask never piles browsers up: without a page there is no tab,
+       and with one the tab already in the column is brought forward. */
+    assert.deepEqual(opened, [])
   } finally {
     globalThis.__panels = []
   }
