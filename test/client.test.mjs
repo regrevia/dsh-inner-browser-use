@@ -363,25 +363,31 @@ test('a page is only ever the one the product tab holds', () => {
   /* The window lends a page to the product's own tab and to nothing else, so a
      chat without one asks its column for a tab holding the page it last had. */
   assert.match(source, /openNativeTab\(options\.sessionId, NATIVE_KIND, rememberedPage\(options\.sessionId\)\)/)
-  /* Out of sight there is no page to make: the chat answers once it is shown. */
-  assert.match(source, /options\.hidden === true && NATIVE_MODE === true\)[\s\S]{0,400}?options\.onPhase\('waiting'\)[\s\S]{0,80}?return/)
+  /* Out of sight a chat keeps a page of its own in the same storage, so the
+     work goes on while another chat is the one being read. */
+  assert.match(source, /options\.hidden === true && NATIVE_MODE === true\)[\s\S]{0,600}?productPartition\(\)/)
+  assert.match(source, /lease = await bridge\.acquire\(await options\.key\(\)\)/)
+  assert.match(source, /resident-open/)
 })
 
-test('a chat whose column was never opened gets one before its tab', () => {
+test('a call never opens a column of its own', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The column belongs to the person: the surface is read, never pressed. */
   assert.match(source, /showColumn = \(\) => \{/)
-  assert.match(source, /await oneAtATime\(async \(\) => \{\n(?:.*\n)*?\s+if \(panelOf\(sessionId\)\.length > 0\) return/)
+  assert.match(source, /return drawn === true \? 'shown' : 'no-column'/)
+  /* Only the chat the person is reading may bring its own column up. */
+  assert.match(source, /if \(screen === '' \|\| screen !== who\) return 'no-column'/)
+  assert.doesNotMatch(source, /await oneAtATime\(async \(\) => \{\n(?:.*\n)*?\s+if \(panelOf\(sessionId\)\.length > 0\) return/)
 })
 
-test('a chat whose column was never opened gets one, docked, before its tab', async () => {
-  const { opened, bars, beats, source } = scene()
+test('a chat with no column keeps its work out of sight', async () => {
+  const { opened, bars, source } = scene()
   globalThis.__panels = []
   source.send({ type: 'wanted', session: 'chat-7' })
-  await new Promise((resolve) => setTimeout(resolve, 600))
-  assert.deepEqual(bars, ['true,false'], beats.join('|'))
-  /* The page waits for the column to appear before it opens the tab in it. */
-  await new Promise((resolve) => setTimeout(resolve, 2_000))
-  assert.deepEqual(opened, [['session', 'chat-7', 'browser', {}]], beats.join('|'))
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  /* Nothing on screen belongs to that chat, so nothing on screen is touched. */
+  assert.deepEqual(bars, [])
+  assert.deepEqual(opened, [])
 })
 
 test('a column that is already up is not pressed, because the control toggles', async () => {
@@ -402,7 +408,7 @@ test('a column that is already up is not pressed, because the control toggles', 
   }
 })
 
-test('a call for a chat that is not on screen asks by its own id and takes no column', async () => {
+test('a call for a chat that is not on screen asks nothing anywhere', async () => {
   const was = globalThis.window.location
   try {
     const { opened, bars, source } = scene()
@@ -410,12 +416,10 @@ test('a call for a chat that is not on screen asks by its own id and takes no co
     globalThis.__panels = [{ dataset: { sidebarRightSession: 'session-abcd1234ef56' }, getBoundingClientRect: () => ({ width: 575, height: 900 }) }]
     source.send({ type: 'wanted', session: 'session-away9999' })
     await new Promise((resolve) => setTimeout(resolve, 600))
+    /* The column in front of the person belongs to another chat: no tab is
+       asked for anywhere, and the away chat is left to its own page off screen. */
     assert.deepEqual(bars, [])
-    /* The ask carries the chat's own id, so the tab it makes lands in that
-       chat's column: the column in front of the person is left alone. */
-    const mine = opened.filter((one) => one[1] === 'session-away9999')
-    assert.ok(mine.length >= 1, 'the away chat is asked for by id')
-    for (const one of opened) assert.notEqual(one[1], 'session-abcd1234ef56')
+    assert.deepEqual(opened, [])
   } finally {
     globalThis.window.location = was
     globalThis.__panels = []
@@ -423,17 +427,9 @@ test('a call for a chat that is not on screen asks by its own id and takes no co
 })
 
 test('two asks for one chat open only that chat\'s tab', async () => {
-  const was = globalThis.document.querySelector
-  const button = {
-    click: () => {
-      const panel = { dataset: { sidebarRightSession: 'chat-8' }, getBoundingClientRect: () => ({ width: 575, height: 900 }) }
-      globalThis.__panels.push(panel)
-    },
-  }
-  globalThis.document.querySelector = (selector) => (selector === '[data-sidebar-right-expand]' ? button : null)
+  const { opened, source } = scene()
   try {
-    const { opened, source } = scene()
-    globalThis.__panels = []
+    globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-8' }, getBoundingClientRect: () => ({ width: 575, height: 900 }) }]
     source.send({ type: 'wanted', session: 'chat-8' })
     source.send({ type: 'wanted', session: 'chat-8' })
     await new Promise((resolve) => setTimeout(resolve, 1_600))
@@ -444,7 +440,6 @@ test('two asks for one chat open only that chat\'s tab', async () => {
     assert.deepEqual(opened[0], ['session', 'chat-8', 'browser', {}])
     assert.ok(opened.length <= 3)
   } finally {
-    globalThis.document.querySelector = was
     globalThis.__panels = []
   }
 })
