@@ -991,6 +991,25 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Whether a column on screen belongs to another chat. A tab is never asked
+     * for while one is up: the product puts it in that column, in front of the
+     * chat the person is reading.
+     * @param {string} sessionId - chat the call is for.
+     * @returns {boolean} true when a drawn column is not this chat's.
+     */
+    function foreignColumn(sessionId) {
+      try {
+        return Array.from(document.querySelectorAll('[data-sidebar-right-session]')).some((node) => {
+          const box = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null
+          if (box === null || box.width < 80) return false
+          return String(node.dataset?.sidebarRightSession ?? '') !== String(sessionId ?? '')
+        })
+      } catch {
+        return false
+      }
+    }
+
     /** That chat's page in the product's browser tab, once the tab made one. */
     function nativeElement(sessionId) {
       /* Ours is never the page: a guest this plugin parked is out of the flow of
@@ -1114,24 +1133,31 @@ window.__ModuleLoader__.load({
        chat asks once and keeps the tab it got. */
     const nativeTabs = new Set()
     /** @param {string} sessionId - the chat the tab belongs to. @param {string} [kind] - the type to ask for. @returns {string} what was done. */
-    function openNativeTab(sessionId, kind = NATIVE_KIND) {
+    function openNativeTab(sessionId, kind = NATIVE_KIND, address = '', shown = false, face = undefined) {
       const who = String(sessionId ?? '')
       const slot = who + ':' + String(kind)
       if (who === '') return 'none'
-      if (nativeTabs.has(slot)) return 'kept'
+      /* Only the chat being read gets a tab: asking on another chat's behalf
+         grows a browser in a column the person is not looking at. */
+      if (shown !== true && mayShow(who) !== true) return 'elsewhere'
+      const page = String(address ?? '')
+      if (nativeTabs.has(slot + ':' + page)) return 'kept'
       if (nativeElement(who) !== null) {
-        nativeTabs.add(slot)
+        nativeTabs.add(slot + ':' + page)
         return 'page'
       }
       try {
-        const face = faceOf?.()
-        if (typeof face?.openTabIn === 'function') face.openTabIn(who, kind, {}) // ui-copy-ignore
-        else if (typeof face?.openTab === 'function') face.openTab(kind, {}) // ui-copy-ignore
+        /* The strip this page was given: a call that waited for a column keeps
+           asking its own strip, not one a later page load brought in. */
+        const held = face ?? faceOf?.()
+        const how = page === '' ? {} : { params: { url: page } }
+        if (typeof held?.openTabIn === 'function') held.openTabIn(who, kind, how) // ui-copy-ignore
+        else if (typeof held?.openTab === 'function') held.openTab(kind, how) // ui-copy-ignore
         else return 'none'
       } catch {
         return 'none'
       }
-      nativeTabs.add(slot)
+      nativeTabs.add(slot + ':' + page)
       return 'asked'
     }
 
@@ -1472,6 +1498,10 @@ window.__ModuleLoader__.load({
     function keepResident(sessionId) {
       beat({ phase: 'keep-enter', session: sessionId, held: residents.size, pane: paneSessions.has(sessionId) })
       if (sessionId === '') return
+      /* This window lends a page only to the product's own tab, and that tab
+         lives in the column of the chat being read. A chat out of sight waits
+         for its turn instead of opening a column in front of someone else. */
+      if (NATIVE_MODE === true) return
       /* A guest that lost its page is not the one this call needs: it goes, and
          the chat gets a page again. */
       const kept = residents.get(sessionId)
@@ -1550,11 +1580,10 @@ window.__ModuleLoader__.load({
               }
             }
             if (webview === undefined) {
-              /* No tab of the product holds this chat's page, so the page is
-                 made here: in the column when this chat's column is up, out of
-                 sight when it is not. */
-              owns = true
-              webview = await ownGuest(options.sessionId, options.shelf ?? stashHost())
+              /* The window lends a page only to the product's own tab, so this
+                 chat's column is asked for one that already holds the page. */
+              openNativeTab(options.sessionId, NATIVE_KIND, rememberedPage(options.sessionId))
+              webview = await nativeReady(25, options.sessionId)
             }
             options.onPhase(webview === undefined ? 'waiting' : 'ready')
             /* A chat with no column up gets its page made here instead, and the
@@ -1585,11 +1614,10 @@ window.__ModuleLoader__.load({
               note()
             }
           } else if (options.hidden === true && NATIVE_MODE === true) {
-            /* No column is showing this chat, so its page is made out of sight;
-               the product's own tabs are left as the person left them. */
-            owns = true
-            webview = await ownGuest(options.sessionId, stashHost())
-            options.onPhase('ready')
+            /* A page out of sight is the window's to lend and it lends none, so
+               nothing is made here: the chat answers once it is on screen. */
+            options.onPhase('waiting')
+            return
             steer.set(options.sessionId, (to) => {
               rememberPage(options.sessionId, to)
               try {
@@ -2435,6 +2463,9 @@ window.__ModuleLoader__.load({
             /* A page for a chat that is not on screen stays where it is; taking
                the right panel for it would hide what the person is reading. */
             beat({ phase: 'wanted', session: sessionId, panes: paneSessions.size, screen: onScreen.size })
+            /* The strip is the one this page load was given; kept for asks that
+               wait on a column, so a later page load cannot answer for them. */
+            const myStrip = faceOf?.()
             /* The chat whose header is mounted is the chat on screen; the address
                is the second word, for a shell that keeps the chat there. */
             const seen = currentSession !== '' ? currentSession : routedSession()
@@ -2524,39 +2555,18 @@ window.__ModuleLoader__.load({
             }
             if (paneSessions.has(sessionId) || nativeElement(sessionId) !== null) {
               if (opened === '') opened = 'page'
-            } else if (take && typeof strip?.openTabIn === 'function' && tabAsked.has(sessionId) !== true) {
-              try {
-                tabAsked.add(sessionId)
-                nativeTabs.add(String(sessionId) + ':' + String(NATIVE_MODE === true ? NATIVE_KIND : KIND))
-                strip.openTabIn(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
-                /* The product opens a tab only in a chat whose right panel it has
-                   adopted. Saying a tab opened when nothing appeared would have
-                   the call wait on a page that will never answer. */
-                opened = 'session'
-                if (NATIVE_MODE === true) {
-                  let drawn = panelOf(sessionId).length > 0
-                  for (let wait = 0; wait < 12 && drawn !== true; wait += 1) {
-                    await new Promise((resolve) => setTimeout(resolve, 100))
-                    drawn = panelOf(sessionId).length > 0
-                  }
-                  /* A tab that never appeared is asked for again on the next
-                     call, so a column that was not ready yet is not a dead end. */
-                  if (drawn !== true) {
-                    opened = 'no-panel'
-                    tabAsked.delete(sessionId)
-                  }
+            } else if (take && !foreignColumn(sessionId)) {
+              /* One tab, holding the page last seen in this chat, so the column
+                 shows it instead of an address bar waiting for input. */
+              const asked = openNativeTab(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, rememberedPage(sessionId), true, myStrip)
+              opened = asked === 'asked' ? 'session' : asked
+              if (asked === 'asked') {
+                let drawn = panelOf(sessionId).length > 0
+                for (let wait = 0; wait < 40 && drawn !== true; wait += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 100))
+                  drawn = panelOf(sessionId).length > 0
                 }
-              } catch (error) {
-                tabAsked.delete(sessionId)
-                opened = `failed: ${String(error?.message ?? error)}`
-              }
-            }
-            if (opened === '' && currentSession === sessionId && typeof strip?.openTab === 'function') {
-              try {
-                strip.openTab(NATIVE_MODE === true ? NATIVE_KIND : KIND, {}) // ui-copy-ignore
-                opened = 'current'
-              } catch (error) {
-                opened = `failed: ${String(error?.message ?? error)}`
+                if (drawn !== true) opened = 'no-panel'
               }
             }
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })

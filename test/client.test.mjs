@@ -342,12 +342,13 @@ test('a tab that never appeared is not reported as open', () => {
   assert.match(source, /panelOf\(sessionId\)\.length > 0/)
 })
 
-test('a page of ours is made only when no tab of the product holds it', () => {
+test('a page is only ever the one the product tab holds', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  /* The product's own page is driven where it is; a guest of ours is only made
-     when no column is up to hold that chat's page. */
-  assert.match(source, /if \(webview === undefined\) \{\n(?:.*\n)*?\s+owns = true\n\s+webview = await ownGuest\(options\.sessionId/)
-  assert.match(source, /const part = productPartition\(\)/)
+  /* The window lends a page to the product's own tab and to nothing else, so a
+     chat without one asks its column for a tab holding the page it last had. */
+  assert.match(source, /openNativeTab\(options\.sessionId, NATIVE_KIND, rememberedPage\(options\.sessionId\)\)/)
+  /* Out of sight there is no page to make: the chat answers once it is shown. */
+  assert.match(source, /options\.hidden === true && NATIVE_MODE === true\)[\s\S]{0,400}?options\.onPhase\('waiting'\)[\s\S]{0,80}?return/)
 })
 
 test('a chat whose column was never opened gets one before its tab', () => {

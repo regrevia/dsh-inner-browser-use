@@ -461,7 +461,7 @@ test('a page that cannot take the panel says so without waiting it out', async (
 test('a step the page reports reaches the chat that asked', () => {
   const bridge = new Bridge()
   bridge.noteStep({ phase: 'open', step: 'other-chat', session: 'chat-9' })
-  assert.match(String(bridge.refused.get('chat-9')), /tab strip of the chat being read/)
+  assert.match(String(bridge.refused.get('chat-9')), /not the one on screen/)
   bridge.noteStep({ phase: 'seen', step: 'other-chat', session: 'chat-9' })
   assert.equal(bridge.refused.size, 1)
 })
