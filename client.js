@@ -2312,7 +2312,7 @@ window.__ModuleLoader__.load({
         let registered = false
         /* The version this copy was published as: a page that finds another one
            published reloads until it has it, read from the disk. */
-        const REV = '0.11.31'
+        const REV = '0.11.32'
         beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
@@ -2374,11 +2374,16 @@ window.__ModuleLoader__.load({
                 return
               }
               /* Reloading is worth a few tries; a window that cannot get the
-                 file stops rather than reloading itself forever. */
+                 file waits instead of reloading itself in a loop. The wait
+                 lengthens and the count is bounded, so a fix applied later
+                 still reaches a window that was already stuck. */
               const tries = Number(sessionStorage.getItem('dshib.tries') ?? '0')
-              if (Number.isFinite(tries) && tries >= 6) return
+              const last = Number(sessionStorage.getItem('dshib.last') ?? '0')
+              if (!Number.isFinite(tries) || tries >= 12) return
+              if (tries >= 6 && Number.isFinite(last) && Date.now() - last < 600_000) return
               sessionStorage.setItem('dshib.build', build)
               sessionStorage.setItem('dshib.tries', String(tries + 1))
+              sessionStorage.setItem('dshib.last', String(Date.now()))
               await warmBundles()
               try {
                 /* The address carries this build so the document is fetched

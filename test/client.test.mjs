@@ -574,6 +574,15 @@ test('a file a page builds in memory is kept as it is built', () => {
   assert.match(source, /const file = await one/)
 })
 
+test('a window that could not get the file waits instead of trying forever', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* Past a few tries the page stops for ten minutes, and after a bounded count
+     it stops for good. A fix published after that wait still reaches the page. */
+  assert.match(source, /tries >= 6 && Number\.isFinite\(last\) && Date\.now\(\) - last < 600_000/)
+  assert.match(source, /tries >= 12\) return/)
+  assert.match(source, /sessionStorage\.setItem\('dshib\.last', String\(Date\.now\(\)\)\)/)
+})
+
 test('a window nobody is looking at still comes back on the published build', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /setInterval\(watchBuild, 6_000\)/)
