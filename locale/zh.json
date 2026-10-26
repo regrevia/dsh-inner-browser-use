@@ -1,26 +1,15 @@
 {
   "meta": {
-    "title": "内置浏览器",
-    "description": "直接操作侧边栏里的浏览器：看得见的助手指针、点击与输入，以及与聊天互通的数据通道。"
+    "title": "后台浏览器",
+    "description": "助手在后台操作的浏览器，画面镜像到右栏。"
   },
-  "type.label": "内置浏览器",
-  "guide.title": "内置浏览器",
-  "guide.description": "让助手在侧边栏里操作页面",
-  "phase.opening": "正在打开…",
-  "phase.ready": "已连接",
-  "phase.closed": "已关闭",
-  "error.desktopOnly": "需要在桌面版中使用",
-  "error.lease": "无法打开浏览器面板",
-  "pane.address": "输入网址",
-  "error.background": "这个会话没在当前屏幕，切到它才能操作页面。",
-  "phase.act.navigate": "正在打开页面",
-  "phase.act.click": "正在点击",
-  "phase.act.read": "正在读取页面",
-  "phase.act.type": "正在输入",
-  "phase.act.scroll": "正在滚动",
-  "phase.act.shot": "正在截图",
-  "phase.act.download": "正在下载",
-  "phase.act.upload": "正在上传",
-  "phase.act.eval": "正在操作页面",
-  "phase.act.select": "正在选择"
+  "side.label": "后台浏览器",
+  "side.empty": "还没有打开的页面",
+  "side.connecting": "正在连接…",
+  "side.failed": "画面没有连上",
+  "side.back": "后退",
+  "side.forward": "前进",
+  "side.reload": "刷新",
+  "side.address": "输入地址",
+  "side.type": "输入文字"
 }

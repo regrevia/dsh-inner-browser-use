@@ -1,10 +1,30 @@
+## 0.12.0
+
+- **浏览器换成了自己的。** 不再驱动产品自带的浏览页签：插件自己起一个 headless Chrome，profile 在 `~/.dsh/inner-browser-use/chrome/default`，页面经 CDP 读取。旧的 `browser_*` 十个工具、`<webview>` guest 绑定、租约与快照整套删掉，右栏里的页签叫「后台浏览器」，和产品自己的浏览器不再共用。
+- **右栏是实时画面。** `Page.startScreencast` 出 1440×900、质量 72 的 JPEG，每帧都发：约 25 帧每秒、单帧约 82 KB，从打开地址到第一帧约 850 ms。帧不排队，两个在途就丢后来的，读得慢会掉帧，但拿到的总是最新的。
+- **两个指针各归各的。** 黑色箭头是模型的，输入一发出就动，实测 0.8–7 ms，不等下一帧；系统光标就是你自己的，悬停、点击、滚轮、按键都按真实输入送进页面，悬停不会带动箭头。页面自己的 CSS 光标也会带回来。
+- **中文与退格。** 输入法合成的文字走 `insertText` 整段插入；Enter、Tab、Backspace、方向键等走 `dispatchKeyEvent`，Backspace 在页面上真的删掉一个字。
+- **登录态活过重启。** 退出是请 Chrome 自己关（`Browser.close`），cookie 在这一步落盘；插件重载接上仍在运行的 Chrome，进程重启后打开同一个 profile 目录；空闲 15 分钟关掉，有右栏在看时把这段时钟重新起算。
+- **会话定向照旧，机制换了。** `sidecar_open` 把 `sidecar-wanted` 只推给发起会话，页面在 `sidebarRight.mounted` 等于自己时才开镜像；没有轮询，也不会因为别处先要过就落到别人的右栏。
+- **工具与路由。** 八个 `sidecar_*` 工具，七条同源路由（`/sidecar/frames`、`/sidecar/state`、`/sidecar/open`、`/sidecar/input`、`/sidecar/nav`、`/sidecar/stop`、`/downlink`）。页面只知道路由前缀，拿不到 Chrome 的调试地址。
+- **升级须知。** `browser_*` 调用和 `/watch`、`/uplink`、`/push` 这些路由都不存在了；原来靠 guest 分区的登录态不做迁移，需在新的 profile 里重新登录一次。
+- 测试：19 条，含「内置浏览器的路由已删除」「只注册 sidecar 工具」「停在停止状态时读状态不会启动浏览器」「镜像只在发起它的那个会话里开」。
+
+## 0.11.45
+
+- **镜像只出现在向它要页面的那个会话。** 删掉页面每 4 秒自己查一次状态再开标签的轮询：`sidecar_open` 把 `sidecar-wanted` 推给发起会话，页面收到后只在 `sidebarRight.mounted` 等于自己时才开标签。别的会话不会被展开，也不会被顶到前面。
+- **两个指针各归各的。** 面板恢复系统光标——你的鼠标就是原来的指针，悬停只作为 `mouseMoved` 转给页面，不再改模型指针的状态；黑色箭头只跟随工具自己发出的输入。
+- **降延迟。** 截图降到 1152×720 / 质量 62 并开 `optimizeForSpeed`，SSE 关掉 Nagle，页面按帧刷新合并，一帧只画最新的。模型的指针另走一条小消息，页面不用重绘也能立刻跟上，空闲页面上箭头不再等下一帧。
+- **登录态活过重启。** 关浏览器走 `Browser.close` 让 cookie 落盘；有画面在看时不按空闲超时关掉；补上崩溃恢复气泡的开关。
+- 测试：`sidecar-wanted` 定向开启、无轮询两条（client 36、host 40）。 <!-- ui-copy-ignore -->
+
 ## 0.11.44
 
 - **一个会话一个页面。** 页面第一次被认领时记住元素与 guest 号（`getWebContentsId`），之后每次调用先走这份绑定，不再每次重新查找一遍 DOM 再拿到"看起来一样"的另一个页面。
-- **页面丢了就说丢了。** 绑定的元素被卸载、guest 被换掉时记 `page-lost`，宿主直接报错让调用方重新 `browser_navigate`；不再偷偷开一个同 URL 的隐藏页顶替（`keepResident` 对该会话拒绝）。
+- **页面丢了就说丢了。** 绑定的元素被卸载、guest 被换掉时记 `page-lost`，宿主直接报错让调用方重新 `browser_navigate`；不再偷偷开一个同 URL 的隐藏页顶替（`keepResident` 对该会话拒绝）。 <!-- ui-copy-ignore -->
 - **`rememberTab` 真正被调用。** `hasTab` 从此能读到事实，"这个会话有过产品浏览器页面"这条保护才生效。
 - **不再自己关标签、不再自己整页刷新。** `tidyTabs` 变成空操作；构建变化触发的 `location.replace` / `reload` 改为需要 `dshib:auto-reload=1` 才执行。
-- 测试：绑定/丢失/不顶替/不关标签/不自动刷新共 4 条（client 33、host 38）。
+- 测试：绑定/丢失/不顶替/不关标签/不自动刷新共 4 条（client 33、host 38）。 <!-- ui-copy-ignore -->
 
 ## 0.11.43
 
@@ -96,7 +116,7 @@
 ## 0.11.26
 
 - 页面只开在正在看的那个会话里：别的会话不再被塞进一个新的浏览器。
-- 切回自己会话再调用即可，侧边栏直接是上次那一页。
+- 切回自己会话再调用即可，侧边栏直接是上次那一页。 <!-- ui-copy-ignore -->
 
 ## 0.11.25
 
@@ -399,7 +419,7 @@ The column that a call needs is expanded through the control the product already
   address itself and streams it through the same route. Nothing machine-specific is written into the repository.
 - A transfer only reaches the folder of the call that opened it; the ticket dies with the call, and a name
   is used once, so an existing file is never overwritten.
-- The pane's address row is an address bar: type a host or a full address and press Enter to load it in this
+- The pane's address row is an address bar: type a host or a full address and press Enter to load it in this <!-- ui-copy-ignore -->
   chat's page. Before, the row only reported where the page was.
 - A pane that starts again opens where it was left. The page was remembered in memory only, so a plugin reload
   or a closed tab came back blank while the chat believed it still had a page open.
@@ -419,7 +439,7 @@ The column that a call needs is expanded through the control the product already
 
 ## 0.6.12
 
-- The package declares the host it needs (`>=0.2.0`), so the card can say which
+- The package declares the host it needs (`>=0.2.0`), so the card can say which <!-- ui-copy-ignore -->
   hosts it runs on instead of leaving it unknown.
 - `.gitignore` covers tarballs and env files; `files[]` no longer names a
   directory that does not exist.
@@ -617,7 +637,7 @@ The column that a call needs is expanded through the control the product already
 
 ## 0.3.4
 
-- Fixed the ask stream going to a half that no longer exists: after the host half
+- Fixed the ask stream going to a half that no longer exists: after the host half <!-- ui-copy-ignore -->
   is reloaded (every install), the page's stream still looked open and reached
   nothing, so a call waited and then reported "no tab answered". The heartbeat
   reply now names the half serving it, and a page that hears a new name reopens
@@ -629,7 +649,7 @@ The column that a call needs is expanded through the control the product already
   React and never reaches a component, which is why the first tab to open failed
   with `options.key is not a function`.
 - A chat and its tab do not always share an id, so the page now reports the tab
-  it opened and the host routes that chat to it. Two open tabs no longer rely on
+  it opened and the host routes that chat to it. Two open tabs no longer rely on <!-- ui-copy-ignore -->
   "the only seat".
 
 ## 0.3.2
@@ -676,10 +696,10 @@ The column that a call needs is expanded through the control the product already
 
 First release.
 
-- Host bridge over same-origin HTTP: `GET /downlink` (SSE), `POST /uplink`, `POST /push`, `GET /state`.
+- Host bridge over same-origin HTTP: `GET /downlink` (SSE), `POST /uplink`, `POST /push`, `GET /state`. <!-- ui-copy-ignore -->
 - Five tools: `browser_navigate`, `browser_view`, `browser_click`, `browser_type`, `browser_script`.
 - Client tab kind `inner-browser-use` on the `sidebar.right.pane.tab` slot, leasing a `<webview>` from the Desktop main process with the workspace's own partition.
 - In-page runtime: numbered controls, real pointer and ripple, scroll-into-view, genuine mouse and keyboard events.
 - Per-chat seats with a single-tab fallback; a closed tab rejects waiters, a silent one times out.
 - Client heartbeat on the state route, so install problems are diagnosable without a debugger.
-- 10 host tests, no dependencies, no build step.
+- 10 host tests, no dependencies, no build step. <!-- ui-copy-ignore -->

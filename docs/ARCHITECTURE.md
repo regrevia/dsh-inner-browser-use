@@ -1,172 +1,153 @@
 # Architecture
 
-Two halves, one wire.
+Two halves in two processes, and a Chrome that neither of them is.
 
 ```
-Host (plugin index.js)                Client (client.js, in the page)
-──────────────────────                ────────────────────────────────
-tools.register(browser_*)             the product's browser tab → <webview>
-        │                                       │
-        │  bridge.call(chat, op, args)          │  executeJavaScript(RUNTIME)
-        ▼                                       ▼
-   POST /push ────── SSE ──────►  dispatch op, reply via POST /uplink
-        ▲                                       │
-        └────────── /uplink ◄───────────────────┘
+server side  (index.js, in the DSH process)
+  sidecar_* tools ──> Sidecar ── CDP over a socket ──> headless Chrome
+                         │
+  HTTP + SSE routes <────┘
+        │
+        │ same origin as the product document, no other channel
+        │
+page side  (client.js, in the product document)
+  right column: JPEG picture, black arrow, input handlers, address row
 ```
 
-## Why the Host needs a wire at all
+## Why a wire
 
-The sidebar browser is a Client object. The `<webview>` is created in the product
-document, leased from the Desktop main process, and it only exists while the tab
-is mounted. A tool, however, executes on the Host. Nothing in the Host can reach
-a DOM element that lives in another process, so the two halves talk.
+The page half runs in the product document. It can paint a picture and read the mouse, and
+that is the limit: a page may not read another origin's DOM, and the product's own browser
+tab belongs to the product. The agent needs the page's text, its controls and real input
+events, which only the browser itself can give.
 
-## The transport
+So the server half owns a Chrome process and speaks CDP to it, and the two halves exchange
+two things over the plugin's own routes: frames going one way, input and navigation going the
+other. The picture is a consequence of that, not the mechanism.
 
-The Client `fetch`es relative URLs under `/dsh-inner-browser-use/`; the Host
-registers that prefix on its web server.
+## Chrome lives outside the product
 
-Same-origin is the whole trick, and it holds on both builds:
+The browser is a normal Chrome launched with `--user-data-dir` pointing at
+`~/.dsh/inner-browser-use/chrome/<profile>`, the profile name lowercased to `default`.
+Chrome's own storage is not used, and the product's browser storage is not used either: that
+one is created per process, so every sign-in in it is gone at the next restart.
 
-- **Web build:** the page already sits on the Host origin.
-- **Desktop build:** the product document is `dsh-app://app`. Its protocol
-  handler forwards every path it does not serve itself to the Host, with the
-  Host cookie attached. A relative `fetch` therefore lands on these routes with
-  no CORS preflight, no port number, and no token for the Client to learn.
+Other launch flags:
 
-| Route | Direction | Purpose |
+| Flag | Why |
+| --- | --- |
+| `--headless=new` | No window on the desktop, still a full rendering engine. |
+| `--remote-debugging-port=0` | Chrome picks its own debugging address. | <!-- ui-copy-ignore -->
+| `--use-mock-keychain`, `--password-store=basic` | No keychain prompt on macOS. |
+| `--remote-allow-origins=*` | The CDP client connects over a plain WebSocket. |
+| `--disable-blink-features=AutomationControlled` | Sites that sniff for automation get the ordinary path. |
+| `--window-size=1440,900`, `--lang=zh-CN` | The viewport the pane mirrors, and a Chinese page locale. |
+
+The binary comes from a fixed list: Google Chrome, Chromium or Canary under `/Applications`,
+then `/usr/bin/google-chrome` and `/usr/bin/chromium`. Nothing else is probed and there is no
+setting to add a path.
+
+## Attach and lifetime
+
+The browser outlives the plugin:
+
+1. `ensure()` reads `DevToolsActivePort` from the profile directory.
+2. It probes `GET http://127.0.0.1:<address>/json/version`. A stale file is deleted and Chrome
+   is launched again.
+3. Otherwise the running Chrome is adopted: the page target is read from `/json/list` (with
+   `/json/new?about:blank` as a fallback) and a client connects to it.
+
+One page per browser. `apply()` only constructs the `Sidecar`; no process exists until the
+first tool call, and `sidecar_state` reports a stopped browser without starting one.
+
+Shutdown asks Chrome to close (`Browser.close`), waits briefly, then sends `SIGTERM`, which is
+the point where Chrome flushes cookies. An idle timer closes the browser after 15 minutes; a
+tool call resets the clock, and a watching column defers the close when the timer fires, so a
+page someone is reading outlives the idle window.
+
+## Routes
+
+Everything hangs under `/dsh-inner-browser-use`, all same-origin, bodies capped at 1 MB.
+
+| Route | Kind | Purpose |
 | --- | --- | --- |
-| `GET /downlink?session=` | Host → tab | Server-sent events, one long-lived response per open tab. |
-| `POST /uplink?session=` | tab → Host | Replies and lifecycle frames. |
-| `POST /push?session=` | Host → tab | Diagnostic push without a waiting call. Not used by tools. |
-| `GET /watch` | Host → page | Server-sent events, one long-lived response per page (not per tab): the channel the page uses to learn that some chat needs a tab. |
-| `GET /state` | either | Which chats have a tab, how many calls are in flight, last client heartbeat. |
+| `GET /sidecar/frames?session=` | SSE | The mirror: `hello`, then frame messages, plus pointer messages. |
+| `GET /sidecar/state` | JSON | What the browser is doing. |
+| `POST /sidecar/open` | JSON | Start or reuse the browser, optionally navigating. |
+| `POST /sidecar/input` | JSON | `hover`, `move`, `click`, `wheel`, `text`, `key`; answers with the page's cursor. |
+| `POST /sidecar/nav` | JSON | `back`, `forward`, `reload`, or a `goto` with an address. |
+| `POST /sidecar/stop` | JSON | Close the browser now. |
+| `GET /downlink?session=` | SSE | Per-session notices; the only message today is `sidecar-wanted`. |
 
-## Surviving a reload of the other half
+The page half never learns the debugging address. It knows the route prefix and nothing else;
+the CDP socket stays in the server half.
 
-Each host half names itself (`epoch`) in every heartbeat reply. A page whose ask
-stream predates that name still holds an open socket to the old half, which can
-never open a tab. The next heartbeat (≤20 s) answers with a new name, and the page
-reopens the stream. Installing, or reloading the host, therefore needs no page
-reload.
+## Mirror
 
-## Routing a chat to its tab
+The server half starts `Page.startScreencast` with JPEG quality 72, `maxWidth` and `maxHeight`
+at 1440×900, `optimizeForSpeed`, `everyNthFrame: 1`, and acknowledges every frame it receives
+so Chrome keeps sending. Frames are never queued: with two frames in flight, further frames
+are dropped and the next one that fits takes their place. A slow reader loses frames, never
+freshness.
 
-The tool layer names a chat by its agent id; the tab the page opens may carry a
-different session id. Right after an ask, the page reports which tab it opened
-(`phase:"open"`, `opened:"current"`), and the host records that pair for the next
-30 s. Later calls resolve chat → tab through the pair, so two open tabs stay
-apart instead of both falling back to the single-seat rule.
+The viewport is pinned with `Emulation.setDeviceMetricsOverride` to the same 1440×900, so a
+frame is the whole page as laid out, not a crop.
 
-## Opening the tab on demand
+If `Browser.getVersion` reports `HeadlessChrome`, the user agent is overridden with an ordinary
+Chrome string, `acceptLanguage: 'zh-CN,zh;q=0.9,en;q=0.8'` and `platform: 'MacIntel'`, so a site
+that gates on headless gets the normal rendering.
 
-A tool cannot ask a user to click `+`, so the call carries the ask: when no seat
-exists, the Host pushes `wanted` down `/watch`, the page opens this chat's tab
-through `ctx.sidebarRight.openTabIn(sessionId, "browser")` — the product's own
-kind, the one with the address bar — and the call waits up to `openWaitMs` (8 s)
-for the seat to appear before it fails.
+The stream is SSE with a comment beat every 15 seconds. A response that falls more than 3 MB
+behind is given up rather than buffered, Nagle is off on the socket, and a session that opens a
+second stream replaces its first seat: one column per session, no fan-out of stale frames.
 
-`/watch` is per page rather than per tab on purpose: a page with no tab open has
-no `/downlink` stream, and it is exactly that page which must be able to obey.
+## Pointer, input, cursor
 
-## Seats
+Two pointers, two sources:
 
-One open tab is one seat, keyed by the chat id. A tool resolves its seat by the
-agent id that called it and falls back to the only seat when exactly one tab is
-open — that fallback is what lets a chat drive a tab another chat opened, which
-is occasionally what you want while debugging.
+- The agent's arrow comes from the tool calls. `movePointer()` sends `{type: 'pointer', w, h,
+  pointer}` on the same stream and the pane draws it at once, so the arrow does not wait for
+  the next frame. Hovering with your own mouse sends `mouseMoved` and never touches that state.
+- Your own cursor stays the system cursor. The pane asks the page which CSS cursor sits under
+  the hand (`cursorAt()`), the reply to `/sidecar/input` carries it, and the pane applies it
+  only when it is in the pane's allow-list.
 
-A seat that disappears mid-call rejects the waiter; it does not hang until the
-timeout. A seat that goes silent does hang until the timeout, which is
-deliberate: a page can be slow, and the model should see "did not finish" rather
-than a misleading success.
+Clicks are `Input.dispatchMouseEvent` down and up at one point. Typing is `Input.insertText`:
+a composed Chinese word or a pasted string lands as one insertion rather than key by key.
+Named keys go through `Input.dispatchKeyEvent` with a table mapping Enter, Tab, Escape,
+Backspace, Delete, the arrows, Home, End, PageUp and PageDown to their key and code, which is
+what makes Backspace delete a character on the page instead of nothing.
 
-## Frames
+## Session scoping
 
-```jsonc
-// Host → tab
-{ "type": "call", "id": "<random>", "tool": "click", "args": { "ref": 4 } }
-// tab → Host
-{ "type": "reply", "id": "<same>", "ok": true, "value": { "text": "…" } }
-{ "type": "reply", "id": "<same>", "ok": false, "error": "no control 4 on this page" }
-{ "type": "wanted", "session": "<chat id>" }
-{ "type": "client-alive", "phase": "registered", "tabType": true }
-```
+The right column is shared by every plugin and belongs to whichever session is on screen. A
+tool call pushes `sidecar-wanted` down that session's own `/downlink`, and the page half opens
+the mirror tab only when `sidebarRight.mounted` equals the session that asked. An unknown or
+empty `mounted` is a refusal, not permission.
 
-A navigation to the address the tab already shows is answered by `reloadIgnoringCache()`
-rather than `loadURL()`: a browser serves that second request from its own cache, so a
-page whose file changed on the machine would otherwise come back stale and the numbers
-handed to the model would point at text that no longer exists.
+The frame stream is opened by the pane with its own `session` in the query. A chat whose column
+sits on another session gets no frames, and a tool call in the background drives the same
+browser without pulling the column away from the person reading it.
 
-Frames are JSON, not binary, and they carry text, not screenshots. A page
-observation is a few kilobytes of text; a screenshot would be megabytes over the
-same socket, and it is not what the model needs to decide where to click.
+## Tool surface
 
-## The guest runtime
+`sidecarTools()` in `index.js` builds the eight definitions and registers them on the
+plugin's tool scope. All of them return one text block. A page read renumbers the controls and
+replaces the ref list, so `sidecar_click` by number means the read the model last saw.
+Calls that touch the browser are marked not concurrency-safe, and `sidecar_open` and
+`sidecar_view` carry longer timeouts than the rest.
 
-`client.js` keeps the whole in-page side as one string, evaluated per call:
+A system-prompt section (`browser-in-this-chat`) tells the model to reach for these tools
+without asking first when someone wants something done on a site.
 
-```js
-el.executeJavaScript(`(async function(){ ${RUNTIME}; return await run(${op}, ${args}) })()`)
-```
+## Files
 
-Rewriting it on every call costs a few milliseconds and buys immunity from the
-one failure that would otherwise break everything: the page navigating and
-taking an earlier injection with it. Nothing persists in the guest except what
-the call itself creates.
+| File | Half |
+| --- | --- |
+| `index.js` | Server: routes, tools, CDP page reads, system prompt. |
+| `sidecar.js` | Server: Chrome launch, attach, screencast, input, shutdown. |
+| `client.js` | Page: the column, its stream, the arrow, the address row. |
+| `locale/*.json` | Page: pane labels. |
 
-`view` numbers every control it can see (`a`, `button`, `input`, `select`,
-`textarea`, `[role=…]`, `[onclick]`, `[tabindex]`) in document order, trimming
-invisible and zero-sized nodes, and returns the first 2400 characters of visible
-text. The numbers are only valid for the page the model last read, which is why
-every mutating tool returns a fresh `view` afterwards.
-
-`click` and `type` scroll the target into view, move the pointer there, ripple,
-and dispatch real `MouseEvent`s (full `pointerdown/mousedown/mouseup/click`
-sequence) so frameworks that listen on any of them react.
-
-## The lease
-
-Only the rollback path (`NATIVE_MODE = false`) uses this. In the shipped mode the
-page drives the `<webview>` the product's browser tab already holds — it finds
-that node (right of the chat, `[data-sidebar-browser-frame="webview"]`, or a
-`webview` no other half parked) and never creates, moves, or disposes one.
-
-On the rollback path the tab does not create its own browser. It asks the Desktop
-main process:
-
-```js
-const reservation = await dshDesktop.browser.acquire("cwd:/path/to/workspace")
-webview.name = reservation.lease
-webview.partition = reservation.partition
-webview.src = `about:blank#${reservation.lease}`
-```
-
-All three attributes matter. The main process cancels `will-attach-webview` when
-the `src` hash does not match the lease it issued, so a webview configured
-loosely never attaches — it silently shows nothing. The partition is
-`dsh-sidebar-browser-<uuid>`, in memory, scoped to the workspace key: `cwd:<path>`
-for a chat in a workspace, `session:<id>` for an ungrouped one. Same key, same
-cookies as the built-in browser tab.
-
-In the shipped mode the partition is the product's own and outlives a restart, so
-no cookie bookkeeping is needed. On the rollback path that partition is in memory,
-so the page half files the cookies the page itself can read under `~/.dsh/inner-browser-use/cookies/<hash>.json`, mode 0600,
-keyed by the same workspace key: name, value, and the origin the page reported,
-nothing else, on this machine only. When that workspace's pane opens again, its
-remembered page loads, the kept cookies for that origin are written back, and the
-page loads once more — a cookie set from the page cannot affect a document that is
-already open. A workspace holds several sites, so a save replaces only the origin
-the page is on.
-
-The debugger is not an option for this: a `<webview>` element in the shipped app
-does not expose one, and the main process keeps the guest session to itself.
-Cookies marked `HttpOnly` are invisible to the page, so a login that relies only on
-those does not survive; anything the page reads from `document.cookie` does.
-
-## Failure modes, by design
-
-- **No tab:** the call asks for one, waits, and fails with one sentence if none opens.
-- **No Desktop:** the body renders "Desktop app only"; nothing else registers.
-- **Page refuses:** the error string reaches the model as a tool error.
-- **Plugin stops:** every seat closes, every waiter rejects.
+Data on disk is confined to `~/.dsh/inner-browser-use/`: `chrome/<profile>` for the browser,
+`screenshots/` for `sidecar_shot`.

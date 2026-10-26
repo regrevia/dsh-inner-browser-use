@@ -1,82 +1,120 @@
 # dsh-inner-browser-use
 
-**让 agent 直接操作 DeepSeek Harness 右侧栏里那个内置浏览器——不是再开一个窗口。**
+一个由 agent 自己养的 Chrome，实时投到 DeepSeek Harness 的右栏里。
 
-模型可以打开网址、把页面读成带编号的控件、点击、输入、执行脚本。你能看见它做每一步：指针移到目标上，落点有涟漪。页面就跑在产品自己租用的 `<webview>` 里，分区和 cookie 都没换，所以你手动登录过的那页，就是 agent 操作的那页。
+agent 打开网页、读页面、点、输入、滚动。这个浏览器是独立的 Chrome 进程，用自己的磁盘
+profile，不是产品自带的那个浏览页签：右栏放的是它的画面，而画面上的鼠标仍然是你自己的。
 
-> **关于名字：** *inner* 指 Harness 侧边栏里内置的浏览器。这个插件不另开窗口，也不接管 Chrome。
-
-## 提供的工具
+## 工具
 
 | 工具 | 作用 |
 | --- | --- |
-| `browser_navigate` | 在本文的内置浏览器里打开网址，返回页面。 |
-| `browser_view` | 返回地址、标题、可见文字，以及 `#1 … #80` 编号的控件。 |
-| `browser_click` | 点击一个编号控件，返回跳转后的页面。 |
-| `browser_type` | 往一个编号输入框里写字，可选回车。 |
-| `browser_script` | 执行 JavaScript，返回最后一个表达式。 |
-| `browser_selection` | 返回页面里选中的文字。 |
-| `browser_copy` | 把选中内容、或某个编号控件的文字，复制到剪贴板。 |
-| `browser_screenshot` | 存一张当前画面的 PNG，返回文件路径。 |
-| `browser_download` | 把网页给的文件存进本对话的项目目录。网页自己开始的下载也落在同一个目录，触发它的那次调用会报出路径。 |
-| `browser_upload` | 把本机文件塞进一个编号的文件框。 |
+| `sidecar_open` | 启动浏览器（已在跑就复用）并打开一个地址。传 `headless: false` 会改为在桌面上开真实窗口。 |
+| `sidecar_view` | 返回地址、标题、编号成 `1 … 120` 的控件，以及可见文字。 |
+| `sidecar_click` | 点编号控件，或点 `x`/`y` 坐标。`double: true` 双击。 |
+| `sidecar_type` | 往焦点输入框输入文字，也可以先点一个编号控件。中文整段送进去。`submit: true` 回车提交。 |
+| `sidecar_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
+| `sidecar_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
+| `sidecar_shot` | 存一张原尺寸 PNG 到 `~/.dsh-inner-browser-use/screenshots`，返回路径。 |
+| `sidecar_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题，以及有几个右栏在看它。 |
 
-每次调用都可见：指针先滑到控件上，套一个光圈，页面会先把目标滚进视野。
+`sidecar_view` 一次给一页文本：
 
-第一次调用会自己把标签页开出来：侧边栏里出现**内置浏览器**，不用先点 `+`。那是产品自己的标签页——同样的标签类型、同样的地址栏、同样的分区——插件只借用它，不往「开始」里加任何东西。你手动开的那页，就是 agent 操作的那页。
+```
+https://example.com
+Example Domain
+
+1 [a] More information
+7 [input] Search
+```
+
+编号到下一次读之前都有效。任何改动页面的操作都会顺带返回一次新的读取。
+
+## 右栏
+
+那一栏显示的是浏览器的画面，按会话自己的流发 JPEG：1440×900，质量 72，每帧都发；静止
+页面上约 82 KB 一帧、每秒 25 帧。
+
+画面上有两个指针：
+
+- **黑色箭头是 agent。** 它标在 agent 上一次点击的落点上，新的点击一发出箭头就动，不等
+  页面重绘。
+- **鼠标是你自己的。** 悬停、点击、滚轮、按键都当作真实输入交给浏览器，所以对拦截脚本点击
+  的站也照常管用。移动鼠标不会带动黑色箭头。
+
+画面上方那行地址就是地址栏：输入域名回车，页面换成它；旁边是后退、前进、刷新。你在编辑时
+它不会跟着页面跳。
+
+输入分两路进来：输入法合成的文字（中文、emoji 等）整段插入，按键则按原样送过去，所以
+Backspace 在页面上删掉的是一个字。
+
+右栏只在向它要过页面的那个会话里打开。别的会话调用工具时用的是同一个浏览器，但不会抢走
+别人正在看的这一栏。
+
+## 登录态
+
+profile 是独立目录：`~/.dsh/inner-browser-use/chrome/default`。它在产品自己的浏览数据之外
+——那份数据是每个进程临时建的，进程一退就没了，所以在这里登过的账号第二天还在。
+
+- **插件重载。** 重载会接上仍在运行的那个 Chrome，页面也还在原处。
+- **Harness 重启。** 重新打开同一个目录，cookie、`localStorage` 和 Chrome 存下的密码都留着。
+- **退出。** 关浏览器是请它自己关（`Browser.close`），Chrome 在这一步才把 cookie 落盘；空闲
+  15 分钟会关掉，有右栏在看时不计这段空闲。
+
+profile 之外只写一样东西：`~/.dsh-inner-browser-use/screenshots/` 里的截图。
+
+## 实测
+
+| | |
+| --- | --- |
+| 打开页面到第一帧 | 约 850 ms，含网络加载 |
+| 单帧 | 1440×900 JPEG，约 82 KB |
+| 画面 | 约 25 帧每秒 |
+| 指针移动到箭头跟上 | 0.8–7 ms |
 
 ## 安装
 
 ```bash
 git clone https://github.com/regrevia/dsh-inner-browser-use
-```
-
-然后在 DeepSeek Harness 里：**插件 → 从文件夹安装**，选中该目录。或命令行：
-
-```bash
 dsh plugin install /path/to/dsh-inner-browser-use
 ```
 
-也可以直接装打包好的发布版，不用 clone、不用 npm 账号：
+在应用里走 **插件 → 从文件夹安装**，选这个仓库目录。要装打包好的 tgz，就在该目录里打一个再装：
 
 ```bash
-dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/download/v0.11.40/dsh-inner-browser-use-0.11.40.tgz
+npm pack                                  # 得到 dsh-inner-browser-use-0.12.0.tgz
+dsh plugin install ./dsh-inner-browser-use-0.12.0.tgz
 ```
 
-装好后**插件**列表里出现 *内置浏览器*。需要桌面版，因为侧边栏浏览器是桌面能力。
+装好后在 **插件** 里显示为 *后台浏览器*。机器上要有 Google Chrome 或 Chromium，细节见
+[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
 
 ## 使用
 
-1. 打开你想让它浏览的那个会话。
-2. 直接提要求：*「打开 example.com，告诉我标题」*。第一次调用会把内置浏览器在右侧栏开出来；自己按 **+ → 内置浏览器** 也是同一个标签页。
+1. 打开你想让 agent 代跑的会话。
+2. 直接说要页面上的什么事：*「打开 example.com，告诉我标题」*。
 
-标签属于会话：每个会话在同一套内置浏览器里各有一页。会话里还没开过时，工具会替你在那里开。
+第一次调用会启动浏览器，并把镜像放进这个会话的右栏。没有调用就不会有东西自己打开：没要过
+页面的会话，右栏保持原样。
 
-## 数据双向流动
+## 不做什么
 
-- **页面 → 聊天：** `browser_script` 返回字符串，`browser_screenshot` 存成 PNG，模型可以把页面内容写进对话，也可以把图片路径交给你。
-- **选中即用：** `browser_selection` 把你在页面里选中的文字交到对话里；`browser_copy` 把它压进剪贴板，⌘V 就粘进输入框。
-- **聊天 → 页面：** `browser_type` 写进输入框；`browser_script` 可以设置那些没法输入的字段。
+- **不动你自己的 Chrome。** 浏览器跑在单独的 profile 上，和你正在用的窗口没有关系。
+- **视口固定。** 1440×900、桌面布局，不缩放，也不模拟手机。
+- **没有第二个页签。** 一个浏览器一页；要开新窗口的链接就地打开。
+- **没有下载、上传和脚本执行。** 上面八个工具就是全部；读页面加真实输入已经够用。
 
-## 它不做什么
-
-- **不另开浏览器。** 没有新窗口，没有 Chrome 配置目录，没有 CDP 镜像。
-- **只有页面能读到的 cookie 才活过重启。** 访客分区在内存里，页面能读到的 cookie 按工作区存到 `~/.dsh/inner-browser-use/cookies/`，该工作区的侧边栏再次打开时写回；只存在 `HttpOnly` cookie 里的登录要重新输密码。
-- **截图只有可视区域。** `<webview>` 抓到的是看得见的那块，不是整页；要拍长页面先滚动。
-- **一个工作区一个分区。** 同一工作区的两个会话共用浏览器存储，和内置浏览器开两个标签时一样。
-- **没有新窗口、没有权限弹窗。** 想在新的窗口打开的链接留在当前页里。
-- **没有标签时会替你开。** 会话里还没有内置浏览器时，第一次调用就在那里开一页；你自己开的那页同样会被接管。
-
-## 兼容
+## 兼容性
 
 | | |
 | --- | --- |
-| Harness | 桌面版，且侧边栏浏览器存在 |
-| 标签 kind | `browser`，就是内置浏览器自己那个 |
-| 运行环境 | Node 20+ |
+| Harness | 0.2.0 及以上 |
+| Chrome | Google Chrome、Chromium 或 Canary，112 及以上 |
+| 运行时 | Node 20 及以上 |
 | 许可 | MIT |
 
-链路细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，版本边界见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
+细节在 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)，两半怎么连起来在
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 开发
 
@@ -84,7 +122,7 @@ dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/do
 node --test test/*.test.mjs
 ```
 
-宿主半边是零依赖 ESM，客户端半边是动态客户端模块，都没有构建步骤，应用直接加载。
+服务端那一半是零依赖 ESM，页面那一半是运行时加载的客户端模块，都不需要构建。
 
 ## 许可
 

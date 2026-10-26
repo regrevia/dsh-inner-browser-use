@@ -1,7 +1,7 @@
 {
   "name": "dsh-inner-browser-use",
-  "version": "0.11.44",
-  "description": "Drive the DeepSeek Harness sidebar browser itself: a leased inner-browser tab with a visible agent pointer, click and type, and a two-way data channel to the chat.",
+  "version": "0.12.0",
+  "description": "An agent-owned Chromium sidecar mirrored into the DeepSeek Harness right column: the agent drives it, the person watches and can take the mouse, and logins survive restarts.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -13,10 +13,12 @@
   },
   "files": [
     "index.js",
+    "sidecar.js",
     "client.js",
     "locale/*.json",
     "cordis.patch.yml",
     "icon.svg",
+    "scripts/doctor.mjs",
     "docs/",
     "README.md",
     "README.zh.md",
@@ -28,8 +30,9 @@
     "dsh-plugin",
     "browser-use",
     "computer-use",
-    "sidebar-browser",
-    "webview",
+    "chrome",
+    "cdp",
+    "screencast",
     "deepseek"
   ],
   "engines": {

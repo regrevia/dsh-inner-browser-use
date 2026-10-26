@@ -1,104 +1,74 @@
 # Compatibility
 
-What this plugin assumes, and what it degrades to when an assumption fails.
+What this plugin assumes, and what it does when an assumption fails.
 
-## Requirements
+| | |
+| --- | --- |
+| Harness | 0.2.0 or newer, with the right column |
+| Runtime | Node 20 or newer |
+| Browser | Google Chrome, Chromium or Canary, 112 or newer |
+| System | macOS 12 or newer; Linux x86_64 or arm64 |
+| License | MIT |
 
-| Capability | Needed for | Missing means |
-| --- | --- | --- |
-| Desktop app (`dshDesktop.browser`) | Leasing the app's own browser tab | The call answers that the built-in browser is not available; tools stay registered. |
-| `sidebar.right.pane.tab` slot | The tab body | Nothing registers; no tab appears in the **+** menu. |
-| `ctx.sidebarRightTabs` | Tab type registration | Registration is skipped silently; the tab never appears. |
-| `ctx.sidebarRight.openTabIn` | Placing a tab in the column | Tools need the tab opened by hand; the call says so in one sentence. |
-| `ctx.webServer.register` | The whole wire | Plugin fails to load, visibly. |
-| `ctx.tools.register` | The tool surface | Bridge still runs; the model sees no `browser_*` tools. |
-| `EventSource` in the page | Learning that a tab is wanted | Same as the row above. |
+## Where Chrome is looked for
 
-## What it never touches
+The plugin starts a browser it finds at one of these paths, in this order:
 
-Installing this plugin changes nothing a user already had:
+```
+/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+/Applications/Chromium.app/Contents/MacOS/Chromium
+/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary
+/usr/bin/google-chrome
+/usr/bin/chromium
+```
 
-- Nothing shipped is wrapped or shadowed: the browser tab, its kind, its tools'
-  behaviour and its partition are the product's; this plugin only drives them.
-- No guide card: the `开始` pane renders exactly the entries it had before. A
-  client test asserts the registered tab type carries no `guide` array.
-- No global CSS: every rule is scoped to the page it drives.
-- No slot occupant on any slot it does not own, and no `computerUse`/`browserUse`
-  provider registration, so the shipped browser's own providers keep their seats.
-- Removing the bundle removes every one of the above.
+That is the whole list. A Chromium kept elsewhere (snap, flatpak, a home directory, a bundled
+runtime) is not found, and there is no setting to point at one. Installing Chrome the ordinary
+way, or placing the binary at `/usr/bin/chromium`, is the supported arrangement.
 
-## Version notes
+If nothing in the list exists, the first tool call returns `sidecar: no Chrome found on this
+machine` and nothing is written to disk.
 
-- **Node 20+** on the Host. The plugin uses only `node:http`, `node:fs/promises`,
-  `URL`, and `AbortSignal`.
-- **No dependencies.** No bundler, no build step, no post-install script.
-- `engines.dsh` is `>= 0.2.0`. Checked against Desktop builds whose sidebar
-  browser tab kind is `browser` and whose guest handshake is an `about:blank#`
-  webview carrying the workspace partition; on any other shape the plugin treats
-  the Desktop bridge as absent rather than guessing.
+Chrome 112 is the floor: the mirror needs `--headless=new` and a screencast that survives an
+idle page.
 
-## Coexistence
+## macOS
 
-- The tab kind is `browser` — the built-in browser's own. This plugin registers no
-  tab kind of its own.
-- The route prefix is `/dsh-inner-browser-use`. Nothing is mounted under `/api`.
-- The guest partition is the one the app leases for the workspace
-  (`dsh-sidebar-browser-<uuid>`). Two plugins leasing the same workspace key share
-  storage, exactly as two built-in tabs do.
+The browser is launched with `--use-mock-keychain` and `--password-store=basic`, so no keychain
+dialog appears on the person's screen and no password is read from the OS keyring. Chrome's own
+password store inside the profile still works.
 
-## Known limits
+The profile directory is created under the home directory of whoever runs DSH, which is the
+same user the browser runs as. Running that process as a different user leaves the profile
+unwritable, and running it as root leaves Chrome unable to start its sandbox: run DSH as the
+person using it.
 
-| Limit | Why | Workaround |
-| --- | --- | --- |
-| A login is kept only if the page can read its cookie | `HttpOnly` cookies are not visible to the page half | Sites that keep the session in a readable cookie come back signed in |
-| One storage partition per workspace | The lease key is the workspace CWD | Use one workspace per account you need isolated |
-| One chat is on screen at a time | The column shows one chat, so another chat's page does not exist | Open the chat that asks; the call answers in about a second |
-| Text-only observations | Frames are JSON over one SSE socket | Use `browser_script` to pull exact values |
-| A capture needs that page drawn | The app has no surface to read for a page another tab covers | Bring the chat's tab forward; the call says so |
+## Linux
 
-## Downloads land in the chat folder
+The two Linux entries above are the same lookup list; put Chrome or Chromium there. The browser
+runs without a display, so no X or Wayland session is needed for the mirror itself.
 
-The app cancels its own downloads, so a page cannot save a file by itself. The
-page half therefore collects what a page offers — an `<a download>`, a `blob:`
-address, a `data:` address, or a link whose path ends in an archive, office
-document, PDF, text, image or media extension — and hands the bytes to the Host,
-which writes them under `<chat folder>/.dsh-inner-browser-use/downloads/`. The
-call returns that path, and `browser_download` with no argument prints the files
-already collected.
+Linux has not been part of the release test pass; macOS is where this plugin is developed and
+checked.
 
-Limits that come from the page, not from the plugin:
+## Windows
 
-- One offered file is capped at 7 MB and six are taken in one go; a file the
-  page could not hand over is named with its size in the answer, so the page can
-  be asked again. The Host refuses an upload over 8 MB with the size named.
-- A page whose `connect-src` forbids the site's own address cannot fetch it; the
-  plugin then has only what the page already holds, so ask the page for the file
-  through its own UI.
-- A file streams only while the page keeps answering. A page that navigates away
-  mid-save ends the transfer, and the call says so instead of writing half a file.
+Not supported. There is no Windows path in the lookup list, and no installation of this plugin
+on Windows has been checked.
 
-## Checking an install
+## When an assumption fails
 
-Run these in the chat whose tab is open, in this order. Each line is what a
-working install answers.
+| Assumption | What happens |
+| --- | --- |
+| No Chrome at a listed path | First tool call returns the error above; no profile, no process. |
+| Harness older than 0.2.0 | The plugin does not load. |
+| A Harness build with no right column | The tools still drive the browser; there is nowhere to show the mirror. |
+| A site that refuses headless | The user agent is replaced with an ordinary desktop Chrome string; a site that insists on a window can be opened with `headless: false`. |
+| A page wider than 1440×900 | The viewport is fixed, so the page lays out for 1440 wide; nothing is scaled. |
+| Two plugin instances, one profile | The second adopts the Chrome already running on that profile rather than starting another. |
+| The debugging file left by a crashed Chrome | It is removed and the browser is started again. |
 
-1. `browser_navigate` to `https://example.com/` → title `Example Domain`, one control.
-2. `browser_view` → the same page, so the tab is the one this chat owns.
-3. `browser_script` adding a button, then `browser_click` it → `Clicked #2 [button] clicked at 120,160`.
-4. `browser_screenshot` → a path under `.dsh-inner-browser-use/`, or the sentence
-   naming the tab to bring forward.
-5. Restart the app once if `browser_selection` answers `unknown tool`: the tool
-   list is read at start.
+## Limits by design
 
-## A tab that is not the active one
-
-The strip mounts only the tab it shows, and after a restart the restored tab is
-not the active one. Nothing in the tab face switches it: `openTabIn` with
-`activate`/`focus`, `focus(id)`, `focus(session, id)`, `active(id)`,
-`tab.activate` and `tab.focus` were each tried and left the active tab
-unchanged; the tab bar's controls are not inside `sidebarRight.host`, so there is
-no element to click.
-
-A call therefore never depends on that switch. On load, the chat on screen gets
-its own tab back and the page it had; every other chat opens nothing, because a
-tab lands in the column that is showing.
+One page per browser, fixed 1440×900 viewport, no mobile emulation, no downloads, no uploads, no
+script evaluation. The eight tools in the README are the whole surface.

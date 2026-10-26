@@ -1,38 +1,26 @@
 /**
- * Host-half tests: the bridge wire and the tool surface, over a real socket.
+ * Host-half tests: the mirror wire, the tool surface, and the promise that the
+ * built-in browser's routes are gone for good.
  *
  * The transport is the part that cannot be trusted by reading it, so every case
- * here speaks HTTP to the route the plugin registers. There is no fake of the
- * Client: an SSE reader plays the tab, which is exactly what the tab does.
+ * here speaks HTTP to the route the plugin registers. Nothing in this file
+ * starts Chrome: the cases that would are the ones that prove a bad frame is
+ * refused before the browser is touched.
  */
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
-
-const proofDir = await mkdtemp(join(tmpdir(), 'dsh-ib-test-'))
-process.env.DSH_INNER_BROWSER_PROOF = join(proofDir, 'proof.jsonl')
-
-const { Bridge, ROUTE, apply, clientState, workBase } = await import('../index.js')
 
 /** @type {Array<{path: string, handler: any}>} */
 const routes = []
 /** @type {Map<string, any>} */
 const defs = new Map()
+/** @type {any[]} */
+const prompts = []
 let server
 let origin
 
-/** A chat's folder, as the Host knows it. */
-const HOST_FOLDER = '/home/somebody/project'
-
-/** What the Host answers when a chat's tab never named its folder. */
-const services = {
-  sessions: { get: (id) => (id === '' ? undefined : { id }) },
-  workingDirectory: { get: () => HOST_FOLDER },
-}
+const { Bridge, ROUTE, apply } = await import('../index.js')
 
 /**
  * A plugin context with only what the plugin touches.
@@ -62,7 +50,14 @@ function context() {
         return disposable
       },
     },
-    get: (name) => services[name],
+    get: (name) => (name === 'systemPrompt'
+      ? {
+        section(config) {
+          prompts.push(config)
+          return disposable
+        },
+      }
+      : undefined),
     logger: { info() {} },
   }
 }
@@ -70,57 +65,34 @@ function context() {
 /** @param {string} path - path under the plugin route. @param {RequestInit} [init] - request. */
 const call = (path, init) => fetch(`${origin}${ROUTE}${path}`, init)
 
-/**
- * Open a downlink and read frames until `until` says stop.
- * @param {string} session - chat the tab belongs to.
- * @returns {Promise<{frames: any[], stop: () => void}>} frames seen so far.
- */
-async function tab(session, workspace = '') {
+/** @param {string} session - chat the tab belongs to. @returns {Promise<any>} the tab's first frame. */
+async function hello(session) {
   const controller = new AbortController()
-  const query = workspace === '' ? '' : `&workspace=${encodeURIComponent(workspace)}`
-  const response = await fetch(`${origin}${ROUTE}/downlink?session=${encodeURIComponent(session)}${query}`, {
-    signal: controller.signal,
-  })
+  const response = await fetch(`${origin}${ROUTE}/downlink?session=${encodeURIComponent(session)}`, { signal: controller.signal })
   const reader = response.body.getReader()
-  const frames = []
   const decoder = new TextDecoder()
   let buffer = ''
-  const pump = (async () => {
-    try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) return
-      buffer += decoder.decode(value, { stream: true })
-      for (let cut = buffer.indexOf('\n\n'); cut !== -1; cut = buffer.indexOf('\n\n')) {
-        const block = buffer.slice(0, cut)
-        buffer = buffer.slice(cut + 2)
-        const line = block.split('\n').find((row) => row.startsWith('data: '))
-        if (line === undefined) continue
-        frames.push(JSON.parse(line.slice(6)))
-      }
+  for (let waited = 0; waited < 3_000; waited += 10) {
+    const { value } = await reader.read()
+    buffer += decoder.decode(value, { stream: true })
+    /* Every SSE block has to leave the buffer once it is read, or the retry
+       hint would be parsed over and over and the real frame never reached. */
+    for (let cut = buffer.indexOf('\n\n'); cut !== -1; cut = buffer.indexOf('\n\n')) {
+      const block = buffer.slice(0, cut)
+      buffer = buffer.slice(cut + 2)
+      const line = block.split('\n').find((row) => row.startsWith('data: '))
+      if (line === undefined) continue
+      controller.abort()
+      void reader.cancel().catch(() => {})
+      return JSON.parse(line.slice(6))
     }
-    } catch {
-      /* the tab closed */
-    }
-  })()
-  /** @returns {Promise<any>} next frame the Host pushes, or a failure when the tab is closed. */
-  const next = async () => {
-    for (let waited = 0; waited < 5_000; waited += 10) {
-      const frame = frames.findIndex((frame) => frame.type !== 'hello')
-      if (frame !== -1) return frames.splice(frame, 1)[0]
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-    throw new Error('no frame arrived')
   }
-  const stop = () => {
-    controller.abort()
-    void reader.cancel().catch(() => {})
-  }
-  return { frames, next, stop, pump }
+  controller.abort()
+  throw new Error('the tab heard nothing')
 }
 
 before(async () => {
-  apply(context(), { proofLog: process.env.DSH_INNER_BROWSER_PROOF, openWaitMs: 0 })
+  apply(context(), {})
   assert.equal(routes.length, 1)
   server = createServer((req, res) => {
     for (const route of routes) {
@@ -138,514 +110,91 @@ before(async () => {
 after(async () => {
   server.closeAllConnections()
   await new Promise((resolve) => server.close(resolve))
-  await rm(proofDir, { recursive: true, force: true })
 })
 
-test('registers the page tools and nothing else', () => {
+test('registers the sidecar tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
-    'browser_click',
-    'browser_copy',
-    'browser_download',
-    'browser_navigate',
-    'browser_screenshot',
-    'browser_script',
-    'browser_selection',
-    'browser_type',
-    'browser_upload',
-    'browser_view',
+    'sidecar_click',
+    'sidecar_key',
+    'sidecar_open',
+    'sidecar_scroll',
+    'sidecar_shot',
+    'sidecar_state',
+    'sidecar_type',
+    'sidecar_view',
   ])
-  for (const definition of defs.values()) {
-    assert.equal(definition.isConcurrencySafe(), false)
+  for (const [name, definition] of defs) {
+    assert.ok(name.startsWith('sidecar_'), `${name} drives its own browser`)
     assert.equal(definition.parameters.additionalProperties, false)
     assert.equal(definition.output.schema.type, 'object')
+    assert.deepEqual(definition.output.schema.required, ['text'])
+    assert.deepEqual(definition.output.render({}, { text: 'hi' }), [{ type: 'text', text: 'hi' }])
+    /* Reading where the sidecar stands is safe anywhere; driving it is not. */
+    assert.equal(definition.isConcurrencySafe(), name === 'sidecar_state')
   }
-  assert.equal(defs.get('browser_navigate').timeoutMs, 65_000)
 })
 
-test('reports an empty bridge before any tab opens', async () => {
-  const state = await call('/state').then((response) => response.json())
-  assert.deepEqual(state.connected, [])
-  assert.equal(state.pending, 0)
+test('the model is told to use the sidecar and the right column', () => {
+  assert.equal(prompts.length, 1)
+  assert.equal(prompts[0].name, 'browser-in-this-chat')
+  assert.match(prompts[0].text, /sidecar_view/)
+  assert.match(prompts[0].text, /右栏/)
+  assert.doesNotMatch(prompts[0].text, /browser_click/)
 })
 
-test('a tool without a tab says how to open one', async () => {
-  await assert.rejects(
-    defs.get('browser_view').execute({}, { agent: { id: 'chat-1' } }),
-    /The built-in browser is not open for this chat yet/,
-  )
+test('a chat with no tab receives nothing', () => {
+  assert.equal(new Bridge().push('chat-1', { type: 'sidecar-wanted' }), false)
 })
 
-test('push without a tab is refused, not buffered', async () => {
-  const response = await call('/push?session=chat-1', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'call', id: 'x' }),
-  })
-  assert.equal(response.status, 409)
-  assert.deepEqual(await response.json(), { delivered: false })
-})
-
-test('one tool call round-trips through the tab and back', async () => {
-  const seat = await tab('chat-1')
-  const pending = defs.get('browser_view').execute({}, { agent: { id: 'chat-1' } })
-  const call_ = await seat.next()
-  assert.equal(call_.type, 'call')
-  assert.equal(call_.tool, 'view')
-  const reply = await call('/uplink?session=chat-1', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: call_.id, ok: true, value: { text: 'Example Domain' } }),
-  })
-  assert.equal(reply.status, 200)
-  assert.deepEqual(await pending, { text: 'Example Domain' })
-  seat.stop()
-})
-
-test('a refusal from the page reaches the model as an error', async () => {
-  const seat = await tab('chat-2')
-  const pending = defs.get('browser_click').execute({ ref: 9 }, { agent: { id: 'chat-2' } })
-  const settled = assert.rejects(pending, /no control 9 on this page/)
-  const frame = await seat.next()
-  await call('/uplink?session=chat-2', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: false, error: 'no control 9 on this page' }),
-  })
-  await settled
-  seat.stop()
-})
-
-test('a silent tab fails the call instead of hanging it', async () => {
-  const seat = await tab('chat-3')
-  const definition = defs.get('browser_view')
-  const pending = definition.execute({}, { agent: { id: 'chat-3' } })
-  const settled = assert.rejects(pending, /did not finish view in time/)
-  await seat.next()
-  await settled
-  seat.stop()
-})
-
-test('a chat with no tab of its own is never served by another chat\'s tab', async () => {
-  const seat = await tab('chat-4')
-  const outcome = await defs.get('browser_view').execute({}, { agent: { id: 'another-chat' } }).then(
-    (value) => value,
-    (error) => error,
-  )
-  assert.equal(seat.frames.filter((one) => one.type === 'call').length, 0, 'the other chat page is not steered')
-  assert.match(String(outcome?.message ?? outcome), /not open for this chat/i)
-  seat.stop()
-})
-
-test('the state route says where each chat writes', async () => {
-  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-state-'))
-  const seat = await tab('chat-11', `cwd:${project}`)
-  const state = await call('/state').then((response) => response.json())
-  assert.deepEqual(state.connected, ['chat-11'])
-  assert.equal(state.folders['chat-11'], project)
-  seat.stop()
-  await rm(project, { recursive: true, force: true })
-})
-
-test('a chat with no folder in its tab still reports the folder the Host knows', async () => {
-  const seat = await tab('chat-12')
-  const state = await call('/state').then((response) => response.json())
-  assert.equal(state.folders['chat-12'], HOST_FOLDER)
-  seat.stop()
-})
-
-test('a client heartbeat is visible in the state route', async () => {
-  await call('/uplink', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'client-alive', phase: 'registered', tabType: true }),
-  })
-  const state = await call('/state').then((response) => response.json())
-  assert.equal(state.client.phase, 'registered')
-  assert.equal(state.client.tabType, true)
-  assert.equal(state.client.fresh, true)
-})
-
-test('an unknown path is a 404, not a hang', async () => {
-  const response = await call('/nope')
-  assert.equal(response.status, 404)
-})
-
-test('a file the page offers lands in the chat folder', async () => {
-  const seat = await tab('chat-6')
-  const cwd = await mkdtemp(join(tmpdir(), 'dsh-ib-cwd-'))
-  const pending = defs.get('browser_download').execute(
-    { url: 'https://example.com/files/report.txt' },
-    { agent: { id: 'chat-6', cwd } },
-  )
-  const frame = await seat.next()
-  assert.equal(frame.tool, 'download')
-  const ticket = String(frame.args.ticket)
-  const first = await call(`/grab?ticket=${ticket}&name=report.txt&offset=0&final=0`, { method: 'POST', body: 'hello ' })
-  assert.equal(first.status, 200)
-  const second = await call(`/grab?ticket=${ticket}&name=report.txt&offset=6&final=1`, { method: 'POST', body: 'world' })
-  const landed = await second.json()
-  assert.equal(landed.path, join(cwd, '.dsh-inner-browser-use', 'downloads', 'report.txt'))
-  assert.equal(landed.bytes, 11)
-  await call('/uplink?session=chat-6', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { path: landed.path, bytes: landed.bytes } }),
-  })
-  const answered = await pending
-  assert.equal(answered.text, `Saved ${landed.path} (11 bytes)\n\nhello world`)
-  assert.equal(await readFile(landed.path, 'utf8'), 'hello world')
-  seat.stop()
-})
-
-test('a page that saves a file on its own lands it in the chat folder', async () => {
-  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-auto-'))
-  const seat = await tab('chat-auto', `cwd:${project}`)
-  const refused = await call('/land?session=chat-auto&id=a&name=r.bin&offset=0&final=1', {
-    method: 'POST',
-    body: 'x',
-  })
-  assert.equal(refused.status, 403)
-  const id = 'auto-1'
-  const first = await call(`/land?session=chat-auto&id=${id}&name=r.bin&offset=0&final=0`, {
-    method: 'POST',
-    body: 'ab',
-    headers: { 'x-dshib-land': '1' },
-  })
-  assert.equal(first.status, 200)
-  const second = await call(`/land?session=chat-auto&id=${id}&name=r.bin&offset=2&final=1`, {
-    method: 'POST',
-    body: 'cd',
-    headers: { 'x-dshib-land': '1' },
-  })
-  const landed = await second.json()
-  assert.equal(landed.path, join(project, '.dsh-inner-browser-use', 'downloads', 'r.bin'))
-  assert.equal(landed.bytes, 4)
-  assert.equal(await readFile(landed.path, 'utf8'), 'abcd')
-  seat.stop()
-})
-
-test('a name a page asks for cannot reach outside the downloads folder', async () => {
-  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-name-'))
-  const seat = await tab('chat-name', `cwd:${project}`)
-  const id = 'name-1'
-  const answer = await call(`/land?session=chat-name&id=${id}&name=${encodeURIComponent('../../evil.sh')}&offset=0&final=1`, {
-    method: 'POST',
-    body: 'x',
-    headers: { 'x-dshib-land': '1' },
-  })
-  const landed = await answer.json()
-  const dir = join(project, '.dsh-inner-browser-use', 'downloads')
-  assert.equal(landed.path, join(dir, 'evil.sh'))
-  assert.equal(await readFile(landed.path, 'utf8'), 'x')
-  seat.stop()
-})
-
-test('a file lands in the folder the chat works in, not the profile', async () => {
-  const project = await mkdtemp(join(tmpdir(), 'dsh-ib-project-'))
-  const elsewhere = await mkdtemp(join(tmpdir(), 'dsh-ib-elsewhere-'))
-  const seat = await tab('chat-9', `cwd:${project}`)
-  const pending = defs.get('browser_download').execute(
-    { url: 'https://example.com/files/n.txt' },
-    { agent: { id: 'chat-9', cwd: elsewhere } },
-  )
-  const frame = await seat.next()
-  const ticket = String(frame.args.ticket)
-  const done = await call(`/grab?ticket=${ticket}&name=n.txt&offset=0&final=1`, { method: 'POST', body: 'x' })
-  const landed = await done.json()
-  assert.equal(landed.path, join(project, '.dsh-inner-browser-use', 'downloads', 'n.txt'))
-  assert.deepEqual(await readdir(join(project, '.dsh-inner-browser-use')).then((rows) => rows.sort()), [
-    '.gitignore',
-    'downloads',
-  ])
-  await call('/uplink?session=chat-9', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: landed }),
-  })
-  await pending
-  seat.stop()
-  await rm(project, { recursive: true, force: true })
-  await rm(elsewhere, { recursive: true, force: true })
-})
-
-test('a picture for a chat that is not being read is refused instead of moving the panel', async () => {
-  const seat = await tab('chat-5')
-  await call('/uplink?session=chat-other', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'client-alive', phase: 'ready', tabType: true, session: 'chat-other' }),
-  })
-  await assert.rejects(
-    () => defs.get('browser_screenshot').execute({}, { agent: { id: 'chat-5', cwd: '/tmp' } }),
-    /not the one being read/,
-  )
-  /* The beat is shared state: put it back so the next test starts unread. */
-  await call('/uplink?session=chat-5', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'client-alive', phase: 'ready', tabType: true, session: 'chat-5' }),
-  })
-  seat.stop()
-})
-
-test('a transfer nobody opened is refused instead of writing', async () => {
-  const response = await call('/grab?ticket=unknown&name=a.txt&offset=0&final=1', { method: 'POST', body: 'x' })
-  assert.equal(response.status, 404)
-})
-
-test('a screenshot lands on disk and the tool returns its path', async () => {
-  const seat = await tab('chat-5')
-  const cwd = await mkdtemp(join(tmpdir(), 'dsh-ib-cwd-'))
-  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64')
-  const pending = defs.get('browser_screenshot').execute({}, { agent: { id: 'chat-5', cwd } })
-  const frame = await seat.next()
-  assert.equal(frame.tool, 'shot')
-  await call('/uplink?session=chat-5', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { png } }),
-  })
-  const { text } = await pending
-  assert.ok(text.startsWith(join(cwd, '.dsh-inner-browser-use', 'screenshots')), text)
-  const bytes = await readFile(text)
-  assert.equal(bytes.length, 8)
-  /* The work folder keeps itself out of the project's own version control. */
-  assert.equal(await readFile(join(cwd, '.dsh-inner-browser-use', '.gitignore'), 'utf8').then((t) => t.includes('*')), true)
-  seat.stop()
-  await rm(cwd, { recursive: true, force: true })
-})
-
-test('upload carries the file into the page and refuses a missing one', async () => {
-  const seat = await tab('chat-6')
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-ib-file-'))
-  const file = join(dir, 'note.txt')
-  await writeFile(file, 'hello')
-  const pending = defs.get('browser_upload').execute({ ref: 2, path: file }, { agent: { id: 'chat-6' } })
-  const frame = await seat.next()
-  assert.equal(frame.tool, 'upload')
-  assert.equal(frame.args.name, 'note.txt')
-  assert.equal(frame.args.type, 'text/plain')
-  assert.equal(Buffer.from(frame.args.base64, 'base64').toString(), 'hello')
-  await call('/uplink?session=chat-6', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { text: 'Attached' } }),
-  })
-  assert.deepEqual(await pending, { text: 'Attached' })
-  seat.stop()
-  await rm(dir, { recursive: true, force: true })
-  await assert.rejects(
-    defs.get('browser_upload').execute({ ref: 1, path: '/nope/missing.bin' }, { agent: { id: 'chat-6' } }),
-    /no file at/,
-  )
-})
-
-test('a tab that opens in time answers the waiting call', async () => {
+test('a second stream for one chat replaces the first', () => {
   const bridge = new Bridge()
-  const seen = []
-  bridge.watch({ write: (chunk) => seen.push(String(chunk)), end() {} })
-  const waiting = bridge.waitSeat('chat-late', 2_000, undefined)
-  bridge.attach('chat-late', { write: () => true, end() {} })
-  assert.equal(await waiting, true)
-  bridge.want('chat-late')
-  assert.match(seen.at(-1), /"type":"wanted"/)
-  assert.match(seen.at(-1), /"session":"chat-late"/)
+  /** @param {string} tag - which stream. @returns {any} a response-shaped sink. */
+  const sink = (tag) => ({ tag, ended: false, frames: [], end() { this.ended = true }, write(frame) { this.frames.push(frame) } })
+  const first = sink('first')
+  const second = sink('second')
+  bridge.attach('chat-1', first)
+  bridge.attach('chat-1', second)
+  assert.equal(first.ended, true, 'the old stream is closed, not left half-open')
+  assert.deepEqual(bridge.connected(), ['chat-1'])
+  bridge.push('chat-1', { type: 'sidecar-wanted', session: 'chat-1' })
+  assert.equal(second.frames.length, 1)
+  bridge.detach('chat-1', first)
+  assert.deepEqual(bridge.connected(), ['chat-1'], 'a stream already replaced cannot remove its successor')
+  bridge.detach('chat-1', second)
+  assert.deepEqual(bridge.connected(), [])
 })
 
-test('a waiting call gives up when no tab opens', async () => {
-  const bridge = new Bridge()
-  const started = Date.now()
-  assert.equal(await bridge.waitSeat('chat-none', 120, undefined), false)
-  assert.ok(Date.now() - started < 2_000)
+test('a tab hears its own chat named back', async () => {
+  const frame = await hello('chat-9')
+  assert.equal(frame.type, 'hello')
+  assert.equal(frame.session, 'chat-9')
 })
 
-test('a page that cannot take the panel says so without waiting it out', async () => {
-  const bridge = new Bridge()
-  bridge.refused.set('chat-elsewhere', 'the page is in another chat')
-  const started = Date.now()
-  assert.equal(await bridge.waitSeat('chat-elsewhere', 5_000, undefined), false)
-  assert.ok(Date.now() - started < 1_500)
-})
-
-test('a step the page reports reaches the chat that asked', () => {
-  const bridge = new Bridge()
-  bridge.noteStep({ phase: 'open', step: 'other-chat', session: 'chat-9' })
-  assert.match(String(bridge.refused.get('chat-9')), /not the one on screen/)
-  bridge.noteStep({ phase: 'seen', step: 'other-chat', session: 'chat-9' })
-  assert.equal(bridge.refused.size, 1)
-})
-
-test('one ask per burst, and no ask when no page is listening', async () => {
-  const bridge = new Bridge()
-  const seen = []
-  bridge.want('chat-1')
-  assert.equal(seen.length, 0)
-  bridge.watch({ write: (chunk) => seen.push(String(chunk)), end() {} })
-  bridge.want('chat-1')
-  bridge.want('chat-1')
-  assert.equal(seen.length, 1)
-  bridge.want('chat-2')
-  assert.equal(seen.length, 2)
-})
-
-test('a heartbeat reports its own age', () => {
-  assert.equal(clientState(undefined), null)
-  const frame = { type: 'client-alive', phase: 'ready', tabType: true }
-  const fresh = clientState({ ms: 1_000, frame }, 2_000)
-  assert.equal(fresh.fresh, true)
-  assert.equal(fresh.phase, 'ready')
-  const stale = clientState({ ms: 1_000, frame }, 120_000)
-  assert.equal(stale.fresh, false)
-  assert.equal(stale.tabType, true)
-})
-
-test('a tab that names another chat does not take this chat call', () => {
-  const bridge = new Bridge()
-  const frames = []
-  bridge.watch({ write: (frame) => frames.push(frame), end: () => {} })
-  assert.equal(bridge.want('chat-a'), undefined)
-  bridge.noteOpen({ opened: 'current', session: 'tab-77' })
-  bridge.attach('tab-77', { write: () => {}, end: () => {} })
-  assert.equal(bridge.hasSeat('chat-a'), false)
-  assert.deepEqual(bridge.connected(), ['tab-77'])
-})
-
-test('two open tabs stay apart: a chat reaches only its own', () => {
-  const bridge = new Bridge()
-  const heard = []
-  bridge.watch({ write: () => {}, end: () => {} })
-  bridge.want('chat-a')
-  bridge.noteOpen({ opened: 'session', session: 'chat-a' })
-  bridge.attach('chat-a', { write: (frame) => heard.push(['a', frame]), end: () => {} })
-  bridge.attach('chat-b', { write: (frame) => heard.push(['b', frame]), end: () => {} })
-  assert.equal(bridge.push('chat-a', { type: 'call' }), true)
-  assert.deepEqual(heard.map(([seat]) => seat), ['a'])
-})
-
-test('two halves never share an epoch, and every heartbeat reply names one', () => {
-  const one = new Bridge()
-  const two = new Bridge()
-  assert.notEqual(one.epoch, two.epoch)
-  assert.match(one.epoch, /^[a-z0-9]+-[a-z0-9]+$/)
-})
-
-test('a page that just came back takes the call on the second try', async () => {
-  const seat = await tab('chat-7')
-  const pending = defs.get('browser_click').execute({ ref: 2 }, { agent: { id: 'chat-7' } })
-  const first = await seat.next()
-  await call('/uplink?session=chat-7', {
-    method: 'POST',
-    body: JSON.stringify({
-      type: 'reply',
-      id: first.id,
-      ok: false,
-      error: 'The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.',
-    }),
-  })
-  const second = await seat.next()
-  assert.notEqual(second.id, first.id)
-  assert.equal(second.tool, 'click')
-  await call('/uplink?session=chat-7', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: second.id, ok: true, value: 'Clicked #2' }),
-  })
-  assert.deepEqual(await pending, { text: 'Clicked #2' })
-  seat.stop()
-})
-
-test('the selection comes back as the text it holds', async () => {
-  const seat = await tab('chat-sel')
-  const pending = defs.get('browser_selection').execute({}, { agent: { id: 'chat-sel' } })
-  const frame = await seat.next()
-  assert.equal(frame.tool, 'selection')
-  await call('/uplink?session=chat-sel', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: true, value: { text: 'the quoted paragraph' } }),
-  })
-  assert.deepEqual(await pending, { text: 'the quoted paragraph' })
-  seat.stop()
-})
-
-test('copy carries the control it was given, and its failure reaches the model', async () => {
-  const seat = await tab('chat-copy')
-  const pending = defs.get('browser_copy').execute({ ref: 4 }, { agent: { id: 'chat-copy' } })
-  const settled = assert.rejects(pending, /nothing is selected on this page/)
-  const frame = await seat.next()
-  assert.equal(frame.tool, 'copy')
-  assert.equal(frame.args.ref, 4)
-  await call('/uplink?session=chat-copy', {
-    method: 'POST',
-    body: JSON.stringify({ type: 'reply', id: frame.id, ok: false, error: 'nothing is selected on this page' }),
-  })
-  await settled
-  seat.stop()
-})
-
-test('a sign-in cookie is kept for the workspace, in a file only its user may read', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'dsh-ib-cookies-'))
-  process.env.DSH_HOME = home
-  const key = 'session:chat-cookies'
-  const saved = { cookies: [
-    { name: 'sid', value: 'abc', domain: 'example.test', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' },
-    { name: 'junk' },
-    { value: 'no-name', domain: 'example.test' },
-  ] }
-  const put = await call(`/cookies?key=${encodeURIComponent(key)}`, { method: 'POST', body: JSON.stringify(saved) })
-  assert.equal(put.status, 200)
-  assert.deepEqual(await put.json(), { kept: 1 })
-
-  const got = await call(`/cookies?key=${encodeURIComponent(key)}`).then((response) => response.json())
-  assert.equal(got.cookies.length, 1)
-  assert.equal(got.cookies[0].name, 'sid')
-  assert.equal(got.cookies[0].value, 'abc')
-
-  const { cookiePath } = await import('../index.js')
-  const file = cookiePath(key)
-  const info = await stat(file)
-  assert.equal(info.mode & 0o777, 0o600)
-  assert.match(file, new RegExp(join(home, 'inner-browser-use', 'cookies')))
-
-  const empty = await call('/cookies?key=no-such-workspace').then((response) => response.json())
-  assert.deepEqual(empty, { cookies: [] })
-  const refused = await call('/cookies', { method: 'POST', body: '{}' })
-  assert.equal(refused.status, 400)
-  delete process.env.DSH_HOME
-  await rm(home, { recursive: true, force: true })
-})
-
-test('a page running the previous copy is named instead of driven', async () => {
-  const bridge = new Bridge()
-  bridge.native = false
-  await assert.rejects(() => bridge.call('chat-old', 'view', {}, undefined, 200), /previous copy of this plugin/)
-})
-
-test('a page that drives the product browser is driven', async () => {
-  const bridge = new Bridge()
-  bridge.native = true
-  const seen = []
-  bridge.attach('chat-new', { write: (each) => { seen.push(each); return true }, end() {}, on() {} }, '')
-  const pending = bridge.call('chat-new', 'view', {}, undefined, 300)
-  await new Promise((resolve) => setTimeout(resolve, 20))
-  assert.match(seen.join(''), /"tool":"view"/)
-  bridge.settle({ id: JSON.parse(seen.at(-1).replace(/^data: /, '')).id, ok: true, value: 'the page' })
-  assert.equal(await pending, 'the page')
-})
-
-test('a page is asked for a chat only when the ask carries its gate', async () => {
-  const refused = await call('/want?session=chat-want', { method: 'POST' })
-  assert.equal(refused.status, 403)
-  const asked = await call('/want?session=chat-want', { method: 'POST', headers: { 'x-dshib-want': '1' } })
-  assert.equal(asked.status, 200)
-  assert.deepEqual(await asked.json(), { ok: true, session: 'chat-want', watchers: 0 })
-})
-
-test('a chat that named no project still lands in a folder a person can find', () => {
-  const bridge = {
-    cwdOf: () => '/home/somebody/project',
-    folderOf: () => '/home/somebody/other',
+test('the built-in browser routes are gone', async () => {
+  for (const path of ['/watch', '/cookies', '/state', '/grab', '/land', '/uplink', '/want', '/push', '/page-reload']) {
+    const response = await call(path)
+    assert.equal(response.status, 404, `${path} must not answer any more`)
+    assert.equal((await response.json()).text, 'no such route')
   }
-  assert.equal(workBase(bridge, 'chat-1'), '/home/somebody/project')
-  assert.equal(workBase(bridge, 'chat-1', '/tmp/run'), '/home/somebody/project')
-  assert.equal(workBase({ cwdOf: () => undefined, folderOf: () => '/home/somebody/other' }, 'chat-2'), '/home/somebody/other')
-  /* Nothing named at all: the answer is the account's home, never the folder
-     the app happened to start in. */
-  const nothing = workBase({ cwdOf: () => undefined, folderOf: () => undefined }, 'chat-3')
-  assert.equal(nothing, homedir())
-  assert.notEqual(nothing, process.cwd())
 })
 
-test('a page that is gone is named, not replaced by a look-alike', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  assert.match(source, /const PAGE_LOST = /)
-  assert.match(source, /if \(frame\.step === 'page-lost'\) this\.refused\.set\(frame\.session, PAGE_LOST\)/)
+test('a malformed frame is refused before the browser is touched', async () => {
+  for (const path of ['/sidecar/input', '/sidecar/nav']) {
+    const response = await call(path, { method: 'POST', body: 'not json' })
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).text, 'bad frame')
+  }
+})
+
+test('a state read on a stopped sidecar says so without starting one', async () => {
+  const state = await call('/sidecar/state').then((response) => response.json())
+  assert.equal(state.alive, false)
+  assert.equal(state.profile, 'default')
+  assert.equal(state.url, '')
+})
+
+test('stopping a browser that never started is a no-op', async () => {
+  const response = await call('/sidecar/stop', { method: 'POST' })
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).ok, true)
 })

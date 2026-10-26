@@ -1,119 +1,139 @@
 # dsh-inner-browser-use
 
-**Lets an agent drive the built-in sidebar browser of DeepSeek Harness — the one already in the right panel, not a new window.**
+A Chrome that the agent owns, mirrored into the right column of DeepSeek Harness.
 
-The agent navigates, reads the page as numbered controls, clicks, types, and runs JavaScript. You watch it happen: a pointer moves to each target and ripples where it lands. Everything runs inside the `<webview>` the product already leases, with the same partition and the same cookies, so a page you signed into by hand is the page the agent works on.
+The agent opens pages, reads them, clicks, types and scrolls. The browser is a separate
+Chrome with its own profile on disk, not the tab the product ships: the column shows a
+live picture of that browser, and your own cursor keeps working on the picture.
 
-> **On the name:** *inner* means the browser built into the Harness sidebar. This plugin opens no window of its own and never attaches to Chrome.
-
-## What you get
+## Tools
 
 | Tool | What it does |
 | --- | --- |
-| `browser_navigate` | Opens a URL in this chat's built-in browser and returns the page. |
-| `browser_view` | Returns the address, title, visible text, and every control as `#1 … #80`. |
-| `browser_click` | Clicks one numbered control and returns the page it leads to. |
-| `browser_type` | Types into one numbered field, optionally pressing Enter. |
-| `browser_script` | Evaluates JavaScript and returns the last expression. |
-| `browser_selection` | Returns the text currently selected in the page. |
-| `browser_copy` | Copies the selection, or one control's text, to the clipboard. |
-| `browser_screenshot` | Saves a PNG of the tab and returns its path. |
-| `browser_download` | Saves a file the page offers into this chat's project folder. A file the page starts saving on its own lands there too, and the call that caused it reports the path. |
-| `browser_upload` | Attaches a local file to a numbered file field. |
+| `sidecar_open` | Starts the browser (or reuses the running one) and opens an address. `headless: false` shows a real window on the desktop instead. |
+| `sidecar_view` | Returns the address, the title, every control as `1 … 120`, and the visible text. |
+| `sidecar_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. |
+| `sidecar_type` | Types text into the focused field, or clicks a numbered control first. Chinese goes in as one string. `submit: true` presses Enter. |
+| `sidecar_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down, Home, End, PageUp, PageDown. |
+| `sidecar_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
+| `sidecar_shot` | Saves a full-size PNG into `~/.dsh-inner-browser-use/screenshots` and returns the path. |
+| `sidecar_state` | Reports whether the browser runs, which profile it uses, its address and title, and how many columns are showing it. |
 
-Every call is visible: the pointer travels to the control, a ring marks it, and the page scrolls the target into view first.
-
-The first call opens the tab for you: the page half hears that a chat needs one and opens **内置浏览器** in the right sidebar. That tab is the product's own — same tab kind, same address bar, same partition — and this plugin adds nothing to the guide pane. A tab you opened by hand is the tab the agent drives.
-
-## Where files land
-
-The tab reports the folder its chat works in when it connects, and everything this plugin writes goes under one
-folder of that working directory:
+`sidecar_view` answers with one page of text:
 
 ```
-.dsh-inner-browser-use/
-  .gitignore     keeps the folder out of your project's own version control
-  screenshots/   PNGs from browser_screenshot
-  downloads/     files the page offered to browser_download
+https://example.com
+Example Domain
+
+1 [a] More information
+7 [input] Search
 ```
+
+Numbers stay valid until the next read. Anything that changes the page returns a fresh read.
+
+## The column
+
+The pane is a picture of the browser, sent as JPEG over the session's own stream: 1440×900,
+quality 72, every frame, about 82 KB and 25 per second on a page at rest.
+
+Two pointers live on that picture:
+
+- **The black arrow** is the agent. It marks where its last click landed, and it moves the
+  moment a new one is dispatched, without waiting for the page to repaint.
+- **Your cursor** is the real one. Hovering, clicking, the wheel and keystrokes are sent to
+  the browser as real mouse and keyboard input, so a site that rejects scripted clicks still
+  works. Moving your mouse never moves the black arrow.
+
+The address row above the picture is an address bar: type an address and press Enter, or use
+back, forward and reload. The field follows the page except while you are editing it.
+
+Typing arrives two ways: composed text (Chinese, emoji, anything the input method produces)
+lands as one insertion, and keys arrive as themselves, so Backspace deletes one character on
+the page.
+
+The pane opens only in the session that asked for it. A tool call in another session drives
+the same browser without taking the column that someone else is reading.
+
+## Logins
+
+The profile is a directory of its own: `~/.dsh/inner-browser-use/chrome/default`. It sits
+outside the product's browser storage, which is created per process and gone on restart, so a
+sign-in here is still there the next day.
+
+- **Plugin reload.** A reload adopts the Chrome that is still running, with the page it was on.
+- **Harness restart.** The same directory is opened again, so cookies, `localStorage` and
+  passwords that Chrome saved all survive.
+- **Shutdown.** The browser is asked to close rather than killed, which is when Chrome writes
+  the last of its cookies; an idle browser is closed after 15 minutes, and the clock stops
+  while a column is watching.
+
+Screenshots are the only thing written outside the profile:
+`~/.dsh-inner-browser-use/screenshots/`.
+
+## Measured
+
+| | |
+| --- | --- |
+| Navigate to first frame | ~850 ms, network included |
+| Frame | 1440×900 JPEG, ~82 KB |
+| Stream | ~25 frames per second |
+| Pointer move to arrow | 0.8–7 ms |
 
 ## Install
 
 ```bash
 git clone https://github.com/regrevia/dsh-inner-browser-use
-```
-
-Then in DeepSeek Harness: **Plugins → Install from folder**, and pick the clone. Or from a shell:
-
-```bash
 dsh plugin install /path/to/dsh-inner-browser-use
 ```
 
-Or install the packed release, no clone and no npm account:
+In the app: **Plugins → Install from folder**, and pick the clone. To install the packed
+tarball instead, build it from that directory and install the file:
 
 ```bash
-dsh plugin install https://github.com/regrevia/dsh-inner-browser-use/releases/download/v0.11.40/dsh-inner-browser-use-0.11.40.tgz
+npm pack                                  # writes dsh-inner-browser-use-0.12.0.tgz
+dsh plugin install ./dsh-inner-browser-use-0.12.0.tgz
 ```
 
-The plugin appears under **Plugins** as *内置浏览器*. It needs the Desktop app, because the sidebar browser is a Desktop capability.
+The plugin appears under **Plugins** as *Background browser*. It needs Google Chrome or
+Chromium on the machine; see [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Use
 
 1. Open the chat you want the agent to browse for.
-2. Ask the agent for something on a page: *"打开 example.com，告诉我标题"*. The first call opens the built-in browser in the right panel; pressing **+ → 内置浏览器** yourself lands on the same tab.
+2. Ask for something on a page: *"open example.com and tell me the title"*.
 
-The tab is per chat: each chat has its own in the same built-in browser. A call for a chat that never opened one opens it there.
+The first call starts the browser and puts its mirror in this chat's right column. Nothing
+opens before a call: a chat that never asked for a page keeps its column as it was.
 
-## Drag data both ways
+## What it does not do
 
-- **Page → chat:** `browser_script` returns strings and `browser_screenshot` saves a PNG, so the agent can read what the page shows and quote it — or hand you the image path — in the conversation.
-- **Chat → page:** `browser_type` puts text into a field; `browser_script` can set values the page cannot be typed into.
-- **Page → chat, by hand:** select text on the page and a **Drag to chat** handle appears in the tab's
-  status row. Drag it into the conversation to carry that text with you. After the agent downloads something
-  for this chat, the same handle carries that file, so a page's picture or PDF can be dropped into the chat
-  as an attachment without leaving the app. The agent gets the same content through `browser_selection`,
-  `browser_copy` and `browser_download`.
-
-## What it will not do
-
-- **It does not create a second browser.** No new window, no Chrome profile, no CDP mirror.
-- **A sign-in outlives a restart only when the page can read its cookie.** The guest partition lives in memory; the cookies this page can see are kept per workspace in `~/.dsh/inner-browser-use/cookies/` and written back when that workspace's pane opens again. A login held only in an `HttpOnly` cookie needs the password again.
-- **Screenshots are viewport-sized.** A `<webview>` captures what is visible, not the whole scroll height; scroll first, then capture.
-- **One partition per workspace.** Two chats in the same workspace share the browser's storage, exactly as two tabs of the built-in browser do.
-- **No popups or permission prompts.** A link that wants a new window stays in the tab it is in. A file the page
-  offers comes out through `browser_download`, which saves it into this chat's project folder and hands the path
-  back to the conversation. A file the page starts saving by itself needs no call: it lands in the same folder,
-  and the call that pressed the link reports where it went.
-- **It opens the tab only when a call needs it.** A call for the chat you are reading may open the right
-  panel; a call for any other chat gets a page out of sight instead, so the panel stays as you arranged it.
-  At most three such pages are kept, and the oldest goes first.
-- **A capture of a chat you are not looking at.** Reading, clicking and typing work on a tab that chat already
-  had, because they drive the page itself; a tab is opened only for the chat on screen. Pixels come from a surface the app is drawing, and a view
-  behind another tab of the same pane is not drawn: the capture tries to bring this chat's tab forward, and if the
-  page still has no surface it says so in a couple of seconds instead of waiting. Read what you need from the page
-  instead — `browser_script` returns the same content.
+- **It does not touch your Chrome.** The browser runs from a separate profile with no
+  connection to the window you are using.
+- **The viewport is fixed.** 1440×900, desktop layout, no resizing and no mobile emulation.
+- **No second tab.** One page per browser; a link that asks for a new window opens in that page.
+- **No downloads, uploads or script evaluation.** The eight tools above are the whole surface;
+  reading the page and driving real input cover the rest.
 
 ## Compatibility
 
 | | |
 | --- | --- |
-| Harness | Desktop app, sidebar browser present |
-| Tab kind | `browser` — the built-in browser's own kind |
-| Host | Node 20+ |
+| Harness | 0.2.0 or newer |
+| Chrome | Google Chrome, Chromium or Canary, 112 or newer |
+| Runtime | Node 20 or newer |
 | License | MIT |
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the wire and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for version limits.
+Details in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md); how the halves connect in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Develop
+## Development
 
 ```bash
 node --test test/*.test.mjs
 ```
 
-The host half is plain ESM with no dependencies; the client half is a dynamic client module with no build step. Both are loaded by the app as-is.
-
-- **The page comes back on its own.** The pane is rebuilt from time to time; when that leaves the view blank, the
-  next tool call reopens the page that chat was last told to open, so a run is not interrupted by it.
+The server half is zero-dependency ESM, the page half is a client module loaded at runtime.
+Neither has a build step.
 
 ## License
 

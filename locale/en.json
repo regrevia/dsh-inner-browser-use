@@ -1,26 +1,15 @@
 {
   "meta": {
-    "title": "Inner Browser Use",
-    "description": "Drive the sidebar browser itself: a visible agent pointer, click and type, and a two-way channel to the chat."
+    "title": "Background browser",
+    "description": "A browser the agent drives behind the chat, mirrored into the right column."
   },
-  "type.label": "Inner browser",
-  "guide.title": "Inner browser",
-  "guide.description": "Let the assistant drive a page in the sidebar",
-  "phase.opening": "Opening…",
-  "phase.ready": "Connected",
-  "phase.closed": "Closed",
-  "error.desktopOnly": "Requires the desktop app",
-  "error.lease": "Could not open the browser panel",
-  "pane.address": "Type an address",
-  "error.background": "This chat is not open on screen — open it to drive its page.",
-  "phase.act.navigate": "Opening the page",
-  "phase.act.click": "Clicking",
-  "phase.act.read": "Reading the page",
-  "phase.act.type": "Typing",
-  "phase.act.scroll": "Scrolling",
-  "phase.act.shot": "Taking an image",
-  "phase.act.download": "Saving a file",
-  "phase.act.upload": "Uploading",
-  "phase.act.eval": "Working on the page",
-  "phase.act.select": "Choosing"
+  "side.label": "Background browser",
+  "side.empty": "No page open",
+  "side.connecting": "Connecting…",
+  "side.failed": "The picture did not connect",
+  "side.back": "Back",
+  "side.forward": "Forward",
+  "side.reload": "Reload",
+  "side.address": "Enter an address",
+  "side.type": "Type here"
 }
