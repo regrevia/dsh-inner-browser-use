@@ -2297,7 +2297,7 @@ window.__ModuleLoader__.load({
         let registered = false
         /* The version this copy was published as: a page that finds another one
            published reloads until it has it, read from the disk. */
-        const REV = '0.11.28'
+        const REV = '0.11.29'
         beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
@@ -2344,10 +2344,13 @@ window.__ModuleLoader__.load({
               sessionStorage.setItem('dshib.tries', String(tries + 1))
               await warmBundles()
               try {
-                /* The address carries this build so the shell fetches the graph
-                   that serves it instead of answering from its cache. */
+                /* The address carries this build so the document is fetched
+                   rather than reused. 'dshib' is a name the app does not read,
+                   so the shell keeps its own route; an earlier build left its
+                   marker in the address and is dropped here. */
                 const next = new URL(location.href)
-                next.searchParams.set('interface', `dshib-${build}`)
+                next.searchParams.delete('interface')
+                next.searchParams.set('dshib', build)
                 location.replace(next.href)
               } catch {
                 location.reload()

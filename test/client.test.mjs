@@ -569,3 +569,12 @@ test('a window nobody is looking at still comes back on the published build', ()
   assert.doesNotMatch(source, /if \(!document\.hidden\) watchBuild\(\)/)
   assert.match(source, /'visibilitychange'/)
 })
+
+test('a catch-up reload leaves the app its own route name', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* 'interface' is the app's own selector — a page that writes it is asking
+     the shell to switch interfaces. The reload only needs a new address. */
+  assert.doesNotMatch(source, /searchParams\.set\('interface'/)
+  assert.match(source, /searchParams\.delete\('interface'\)/)
+  assert.match(source, /searchParams\.set\('dshib', build\)/)
+})
