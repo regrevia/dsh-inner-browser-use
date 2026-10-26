@@ -116,6 +116,7 @@ const CLIENT_TTL_MS = 60_000
 const NO_TAB = 'The built-in browser is not open for this chat yet. The next call opens it in the right sidebar.'
 const ELSEWHERE = 'This chat is not the one on screen. Open it, then call again.'
 const NO_PANEL = 'The browser panel could not be taken here. Open the 内置浏览器 tab in the right sidebar, then call again.'
+const PAGE_LOST = 'The page this chat was using is gone: the browser released it or replaced it, so nothing here can carry on in the same state. Call browser_navigate to open the address again as a new page, and read the state afresh.'
 const LEGACY_PAGE = 'The window is still running the previous copy of this plugin. Reload the page once, then call again.'
 const NOT_DRAWN = "This chat's page is not the one being read. Open this chat, then call again; browser_script reads the page as it is." 
 
@@ -308,6 +309,7 @@ export class Bridge {
     if (frame?.phase !== 'open' || typeof frame.session !== 'string' || frame.session === '') return
     if (frame.step === 'other-chat') this.refused.set(frame.session, ELSEWHERE)
     if (frame.step === 'rightbar') this.refused.set(frame.session, NO_PANEL)
+    if (frame.step === 'page-lost') this.refused.set(frame.session, PAGE_LOST)
     /* A page that opened answers with the tab it opened; only a refusal is news. */
     if (frame.step === undefined) return
     this.note('refused', { chat: frame.session, reason: String(frame.step) })

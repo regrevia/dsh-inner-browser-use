@@ -650,3 +650,32 @@ test('a tab showing a checkpoint gets its page back, and nothing else is pressed
     globalThis.__panels = []
   }
 })
+
+/* The page a chat's calls go to is remembered by identity, not looked up
+   again: a second look is how a call lands in a page that only looks alike. */
+test('the page chosen for a chat is kept, and a lost one is reported', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /const pageBindings = new Map\(\)/)
+  assert.match(source, /function bindPage\(sessionId, el\)/)
+  assert.match(source, /function boundPage\(sessionId\)/)
+  /* A kept page answers before any search runs. */
+  assert.match(source, /const bound = boundPage\(sessionId\)\n      if \(bound !== undefined\) return bound\.el/)
+  /* The guest behind the element is the proof the page is the same one. */
+  assert.match(source, /typeof el\.getWebContentsId === 'function'/)
+  assert.match(source, /phase: 'open', step: 'page-lost'/)
+})
+
+test('a chat that had a page of the product\'s never gets a quiet stand-in', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /if \(hasTab\(who\) === true \|\| pageBindings\.has\(who\) \|\| pageLost\.has\(who\)\) \{/)
+  assert.match(source, /resident-refused|step: hasTab\(who\) === true \? 'kept' : 'page-lost'/)
+  /* Finding the page is what records the fact the guard reads. */
+  assert.match(source, /function bindPage[\s\S]{0,1500}?rememberTab\(who, el\)/)
+})
+
+test('tabs are the person\'s and the shell is never reloaded on its own', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /function tidyTabs\(sessionId\) \{\n      \/\* Tabs belong to the person/)
+  assert.match(source, /dshib:auto-reload/)
+  assert.match(source, /if \(wanted !== true\) \{/)
+})

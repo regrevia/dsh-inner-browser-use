@@ -9,6 +9,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -641,4 +642,10 @@ test('a chat that named no project still lands in a folder a person can find', (
   const nothing = workBase({ cwdOf: () => undefined, folderOf: () => undefined }, 'chat-3')
   assert.equal(nothing, homedir())
   assert.notEqual(nothing, process.cwd())
+})
+
+test('a page that is gone is named, not replaced by a look-alike', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(source, /const PAGE_LOST = /)
+  assert.match(source, /if \(frame\.step === 'page-lost'\) this\.refused\.set\(frame\.session, PAGE_LOST\)/)
 })

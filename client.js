@@ -1114,6 +1114,60 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /* One chat, one page. The element a chat's operations were first aimed at is
+       kept here, with the guest number behind it, so a later call goes to that
+       same page instead of looking again and finding whatever is drawn now. */
+    const pageBindings = new Map()
+    /* A chat whose page went away is remembered as lost: it does not get a quiet
+       stand-in that looks the same and holds none of the same state. */
+    const pageLost = new Map()
+
+    /** @param {any} el - a page element. @returns {number} the guest behind it, or 0 when it does not say. */
+    function guestNumber(el) {
+      try {
+        if (el === null || el === undefined) return 0
+        if (typeof el.getWebContentsId === 'function') return Number(el.getWebContentsId()) || 0
+        return 0
+      } catch {
+        return 0
+      }
+    }
+
+    /** Keep this page as the one this chat's operations go to. @param {string} sessionId - chat. @param {any} el - the page element. @returns {void} */
+    function bindPage(sessionId, el) {
+      const who = String(sessionId ?? '')
+      if (who === '' || el === null || el === undefined) return
+      const held = pageBindings.get(who)
+      /* A different element for the same chat is a different page: the person is
+         told, because the state they left is not in this one. */
+      if (held !== undefined && held.el !== el) beat({ tabType: true, phase: 'page-rebound', session: who, error: 'the product drew another page for this chat' })
+      const guest = guestNumber(el)
+      pageBindings.set(who, { el, guest, at: Date.now() })
+      /* Who this chat's page is, said out loud once, so a person can check that
+         two calls went to one guest instead of two that look alike. */
+      beat({ tabType: true, phase: 'page-bound', session: who, error: String(guest) })
+      pageLost.delete(who)
+      rememberTab(who, el)
+    }
+
+    /** @param {string} sessionId - chat. @returns {{el: any, guest: number}|undefined} its page while that same page is still there. */
+    function boundPage(sessionId) {
+      const who = String(sessionId ?? '')
+      const held = pageBindings.get(who)
+      if (held === undefined) return undefined
+      const gone = held.el?.isConnected !== true
+      /* Same node, different guest: the element was moved or its content was
+         rebuilt, so it no longer holds the page this chat was working on. */
+      const replaced = gone !== true && held.guest !== 0 && guestNumber(held.el) !== held.guest
+      if (gone === true || replaced === true) {
+        pageBindings.delete(who)
+        pageLost.set(who, gone === true ? 'unmounted' : 'replaced')
+        beat({ tabType: true, phase: 'open', step: 'page-lost', session: who, error: pageLost.get(who) })
+        return undefined
+      }
+      return held
+    }
+
     /** Whether this chat was ever given a browser of the product's. @param {string} sessionId - chat. @returns {boolean} whether its page lives in that browser. */
     function hasTab(sessionId) {
       try {
@@ -1125,6 +1179,8 @@ window.__ModuleLoader__.load({
 
     /** That chat's page in the product's browser tab, once the tab made one. */
     function nativeElement(sessionId) {
+      const bound = boundPage(sessionId)
+      if (bound !== undefined) return bound.el
             /* Ours is never the page: a guest this plugin parked is out of the flow of
          the column and answers nothing the person is reading. */
       const ours = (node) => {
@@ -1151,7 +1207,11 @@ window.__ModuleLoader__.load({
       if (String(sessionId ?? '') !== '') {
         for (const panel of panelOf(sessionId)) {
           const found = inside(panel)
-          if (found !== null) return found
+          if (found !== null) {
+            /* The first page this chat is given is the one its calls keep. */
+            bindPage(String(sessionId ?? ''), found)
+            return found
+          }
         }
         return null
       }
@@ -1422,6 +1482,10 @@ window.__ModuleLoader__.load({
     /** One chat keeps one browser tab: extra ones are closed here, and only in
         the column of the chat being read. @param {string} sessionId - chat. @returns {void} */
     function tidyTabs(sessionId) {
+      /* Tabs belong to the person. Closing one is not this plugin's call, and a
+         page closed here is a page whose state is gone. */
+      return
+      // eslint-disable-next-line no-unreachable
       if (mayShow(sessionId) !== true) return
       for (const panel of panelOf(sessionId)) {
         let chips
@@ -1822,6 +1886,21 @@ window.__ModuleLoader__.load({
     /** @param {string} sessionId - chat that has no mounted pane. @returns {void} */
     function keepResident(sessionId) {
       if (sessionId === '') return
+      /* A chat that already had a page of the product's never gets a quiet
+         copy of it here: the copy looks the same and holds none of the same
+         state, so a lost page is reported instead. */
+      const who = String(sessionId ?? '')
+      /* In the product's own mode a page of our own is a stand-in: same URL,
+         none of the state. A chat out of sight is answered with a refusal
+         instead, and its work waits for the person to come back to it. */
+      if (NATIVE_MODE === true) {
+        beat({ tabType: true, phase: 'open', step: 'out-of-sight', session: who, error: 'native-mode' })
+        return
+      }
+      if (hasTab(who) === true || pageBindings.has(who) || pageLost.has(who)) {
+        beat({ tabType: true, phase: 'open', step: hasTab(who) === true ? 'kept' : 'page-lost', session: who, error: hasTab(who) === true ? 'page-exists' : pageLost.get(who) ?? 'bound' })
+        return
+      }
       /* This window lends a page only to the product's own tab, and that tab
          lives in the column of the chat being read. A chat out of sight waits
          for its turn instead of opening a column in front of someone else. */
@@ -2132,7 +2211,7 @@ window.__ModuleLoader__.load({
                     /* A chat whose column is not on screen keeps a page of its own
                        out of sight, so the work goes on while the person reads
                        another chat. */
-                    let own = hasTab(options.sessionId) === true
+                    let own = NATIVE_MODE === true
                       ? undefined
                       : residents.get(options.sessionId)?.view?.() ?? paneGuests.get(options.sessionId)?.view?.()
                     if (own === undefined) {
@@ -2891,6 +2970,19 @@ window.__ModuleLoader__.load({
               /* A call in flight owns the page; taking it out from under the
                  stream is what a person sees as a crash. It reloads next time. */
               if (acting.size > 0) return
+              /* Reloading the shell throws away every page it holds, so it is
+                 never done on this plugin's own initiative: `dshib:auto-reload`
+                 set to 1 is the person asking for it. */
+              let wanted = false
+              try {
+                wanted = String(window.localStorage.getItem('dshib:auto-reload') ?? '') === '1'
+              } catch {
+                wanted = false
+              }
+              if (wanted !== true) {
+                beat({ tabType: true, phase: 'build-behind', session: '' })
+                return
+              }
               const tries = Number(sessionStorage.getItem('dshib.tries') ?? '0')
               const last = Number(sessionStorage.getItem('dshib.last') ?? '0')
               if (!Number.isFinite(tries) || tries >= 12) return
@@ -3120,13 +3212,6 @@ window.__ModuleLoader__.load({
             /* The current chat is the one place a page may open a tab without an id;
                the id path is the fallback for a page showing another chat. */
             let opened = ''
-            /* No column of the product's is up for this chat, so its page is
-               kept out of sight: the call runs where nobody is reading, and no
-               column in front of the person is taken. */
-            if (NATIVE_MODE === true && nativeElement(sessionId) === null && panelOf(sessionId).length === 0) {
-              wireNative(sessionId, String(frame.url ?? ''))
-              beat({ tabType: registered, phase: 'open', step: 'out-of-sight', session: sessionId })
-            }
             const strip = scope.sidebarRight
             /* Every open page hears this broadcast, so a page must open the
                asking chat's tab by id. Opening "the current chat" instead is how
@@ -3134,14 +3219,9 @@ window.__ModuleLoader__.load({
             /* A chat's own pane already holds the page. Opening the tab again
                rebuilds it, which closes the page a call is about to use. */
             if (nativeElement(sessionId) !== null) {
-              /* A page already in that chat's column is the page the call uses;
-                 opening the tab again would rebuild it mid-call. */
-              opened = 'page'
-            }
-            if (nativeElement(sessionId) !== null) {
               /* The product's tab is already the page this call wants; the word
                  for that is `current`, which the call accepts. */
-              if (opened === '') opened = 'current'
+              opened = 'current'
             } else if (take || NATIVE_MODE === true) {
               /* One tab, holding the page this call is for, so the column shows
                  it instead of an address bar waiting for input. A call made
@@ -3164,7 +3244,9 @@ window.__ModuleLoader__.load({
             beat({ tabType: registered, phase: 'open', opened, session: sessionId, req: String(frame.req ?? '') })
             /* The page lives in the product's tab, so the wire is opened for it
                here: a call that arrives next finds a tab to answer it. */
-            if (take || NATIVE_MODE === true) wireNative(sessionId)
+            /* The wire follows a page that is really there: a chat with no
+               panel of the product's gets a refusal, never a page of ours. */
+            if (take || (NATIVE_MODE === true && nativeElement(sessionId) !== null)) wireNative(sessionId)
             /* An out-of-sight chat has no page to lend: the product's tab lives
                in the column of the chat being read, so nothing is opened here. */
             /* A page the wire already keeps is the one a call will answer from;
