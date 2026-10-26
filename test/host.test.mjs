@@ -488,14 +488,14 @@ test('a heartbeat reports its own age', () => {
   assert.equal(stale.tabType, true)
 })
 
-test('a tab that reports its own id still answers the chat that asked', () => {
+test('a tab that names another chat does not take this chat call', () => {
   const bridge = new Bridge()
   const frames = []
   bridge.watch({ write: (frame) => frames.push(frame), end: () => {} })
   assert.equal(bridge.want('chat-a'), undefined)
   bridge.noteOpen({ opened: 'current', session: 'tab-77' })
   bridge.attach('tab-77', { write: () => {}, end: () => {} })
-  assert.equal(bridge.hasSeat('chat-a'), true)
+  assert.equal(bridge.hasSeat('chat-a'), false)
   assert.deepEqual(bridge.connected(), ['tab-77'])
 })
 
@@ -504,9 +504,9 @@ test('two open tabs stay apart: a chat reaches only its own', () => {
   const heard = []
   bridge.watch({ write: () => {}, end: () => {} })
   bridge.want('chat-a')
-  bridge.noteOpen({ opened: 'current', session: 'tab-a' })
-  bridge.attach('tab-a', { write: (frame) => heard.push(['a', frame]), end: () => {} })
-  bridge.attach('tab-b', { write: (frame) => heard.push(['b', frame]), end: () => {} })
+  bridge.noteOpen({ opened: 'session', session: 'chat-a' })
+  bridge.attach('chat-a', { write: (frame) => heard.push(['a', frame]), end: () => {} })
+  bridge.attach('chat-b', { write: (frame) => heard.push(['b', frame]), end: () => {} })
   assert.equal(bridge.push('chat-a', { type: 'call' }), true)
   assert.deepEqual(heard.map(([seat]) => seat), ['a'])
 })

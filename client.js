@@ -203,6 +203,7 @@ window.__ModuleLoader__.load({
         'phase.closed': '已关闭',
         'error.desktopOnly': '需要在桌面版中使用',
         'error.lease': '无法打开浏览器面板',
+        'error.captureUnavailable': '页面现在不可截图',
         'pane.drag': '拖到聊天',
         'pane.dragHint': '把这一页的选中文字拖进聊天',
         'phase.act.select': '正在选择',
@@ -224,6 +225,7 @@ window.__ModuleLoader__.load({
         'phase.closed': 'Closed',
         'error.desktopOnly': 'Requires the desktop app',
         'error.lease': 'Could not open the browser panel',
+        'error.captureUnavailable': 'The page cannot be captured right now',
         'pane.drag': 'Drag to chat',
         'pane.dragHint': 'Drag the selected text of this page into the chat',
         'phase.act.select': 'Choosing',
@@ -1078,10 +1080,13 @@ window.__ModuleLoader__.load({
           const around = pane.closest?.('[data-sidebar-right-session]')
           if (around !== null && around !== undefined) return [around]
         }
-        const frame = nativeElement(sessionId)
-        if (frame !== null) {
-          const own = frame.closest?.('[data-sidebar-right-session]')
-          if (own !== null && own !== undefined) return [own]
+        /* A browser the product drew sits in the column that names this chat.
+           It is found from the column's own mark, never by asking for the page
+           first: that lookup asks this function back, and the two would chase
+           each other until the stack ran out. */
+        for (const frame of Array.from(document.querySelectorAll('[data-sidebar-browser-frame]'))) {
+          const around = frame.closest?.('[data-sidebar-right-session]')
+          if (around !== null && around !== undefined && String(around.dataset?.sidebarRightSession ?? '') === String(sessionId)) return [around]
         }
         return Array.from(document.querySelectorAll('[data-sidebar-right-session]'))
           .filter((node) => node.dataset?.sidebarRightSession === sessionId)
@@ -1104,6 +1109,15 @@ window.__ModuleLoader__.load({
           if (box === null || box.width < 80) return false
           return String(node.dataset?.sidebarRightSession ?? '') !== String(sessionId ?? '')
         })
+      } catch {
+        return false
+      }
+    }
+
+    /** Whether this chat was ever given a browser of the product's. @param {string} sessionId - chat. @returns {boolean} whether its page lives in that browser. */
+    function hasTab(sessionId) {
+      try {
+        return String(window.localStorage.getItem('dshib:tab:' + String(sessionId ?? '')) ?? '') !== ''
       } catch {
         return false
       }
@@ -1348,16 +1362,26 @@ window.__ModuleLoader__.load({
     /** A tab in the column, in either markup the product has drawn. */
     const TAB_SEL = '[data-dockkit-tab], [data-sidebar-right-tab]'
 
+    /** A chip drawn for a browser, not for a file or a terminal. @param {Element} chip - tab header. @returns {boolean} whether it is a browser chip. */
+    function browserChip(chip) {
+      try {
+        const words = String(chip.textContent ?? '') + ' ' + String(chip.getAttribute?.('aria-label') ?? '')
+        return /浏览器|Browser/i.test(words)
+      } catch {
+        return false
+      }
+    }
+
     /** @param {string} sessionId - chat. @returns {boolean} whether its tab was brought to the front. */
     function showTab(sessionId) {
       for (const panel of panelOf(sessionId)) {
         let chips
         try {
-          chips = Array.from(panel.querySelectorAll(TAB_SEL))
+          chips = Array.from(panel.querySelectorAll(TAB_SEL)).filter(browserChip)
         } catch {
           continue
         }
-        const chip = chips[chips.length - 1]
+        const chip = chips[0]
         if (chip === undefined) continue
         try {
           if (typeof chip.click === 'function') chip.click()
@@ -1380,8 +1404,9 @@ window.__ModuleLoader__.load({
         } catch {
           continue
         }
-        if (chips.length < 2) continue
-        const extra = chips.slice(0, chips.length - 1)
+        const browsers = chips.filter(browserChip)
+        if (browsers.length < 2) continue
+        const extra = browsers.slice(1)
         for (const chip of extra) {
           const shut = chip.querySelector('[data-dockkit-tab-close], [data-sidebar-right-tab-close], [aria-label*="关闭"], button, [role="button"]')
           try {
@@ -1818,7 +1843,11 @@ window.__ModuleLoader__.load({
       let key = ''
       let lease
       let webview
-      let owns = true
+      /* What this end made, and what it only borrowed, are never the same node:
+         a page the product drew is dropped by the product, and deleting it here
+         would take the person's browser away with this end. */
+      let ownedElement
+      let leaseId = ''
       let cancel = () => {}
       let cookieTimer
 
@@ -1828,8 +1857,10 @@ window.__ModuleLoader__.load({
         steer.delete(options.sessionId)
         cancel()
         clearInterval(cookieTimer)
-        if (webview !== undefined && owns === true) webview.remove()
-        if (bridge !== undefined && lease !== undefined) bridge.release(lease)
+        try {
+          if (ownedElement !== undefined) ownedElement.remove()
+        } catch { /* an element the window already took */ }
+        if (bridge !== undefined && leaseId !== '') bridge.release(leaseId)
         options.onPhase('closed')
       }
 
@@ -1844,7 +1875,7 @@ window.__ModuleLoader__.load({
             /* The product's tab owns the page. This end answers that page's
                wire and nothing else: no lease, no element of its own. */
             owns = false
-            const early = await nativeReady(8, options.sessionId)
+            const early = await nativeReady(20, options.sessionId)
             webview = early
             if (webview === undefined) {
               const first = rememberedPage(options.sessionId)
@@ -1902,6 +1933,7 @@ window.__ModuleLoader__.load({
             try {
               key = await options.key()
               lease = await bridge.acquire(key)
+              leaseId = String(lease?.lease ?? '')
             } catch (error) {
               probe?.({ why: 'resident-lease-failed', error: String(error?.message ?? error).slice(0, 80) })
               options.onPhase('waiting')
@@ -1913,6 +1945,7 @@ window.__ModuleLoader__.load({
               return
             }
             webview = document.createElement('webview')
+            ownedElement = webview
             ownViews.add(webview)
             webview.className = 'dshib-guest'
             webview.setAttribute('name', lease.lease)
@@ -1966,8 +1999,10 @@ window.__ModuleLoader__.load({
           } else {
             key = await options.key()
             lease = await bridge.acquire(key)
+            leaseId = String(lease?.lease ?? '')
             if (disposed) return
             webview = document.createElement('webview')
+            ownedElement = webview
             ownViews.add(webview)
             webview.className = 'dshib-guest'
             webview.setAttribute('name', lease.lease)
@@ -2063,22 +2098,17 @@ window.__ModuleLoader__.load({
                     const shown = nativeElement(options.sessionId)
                     if (shown !== null && shown.isConnected === true) webview = shown
                   }
-                  /* A chat that is not the one on screen has no column to draw in,
-                     so its own out-of-sight page answers even if the product left a
-                     hidden element behind. */
-                  if (NATIVE_MODE === true && webview !== undefined && mayShow(options.sessionId) !== true) {
-                    try {
-                      const box = webview.getBoundingClientRect()
-                      if (box.width < 2 || box.height < 2) webview = undefined
-                    } catch {
-                      webview = undefined
-                    }
-                  }
+                  /* A page the product folded away is still this chat's page.
+                     Small or absent surface only says the column is not drawn; it
+                     is not evidence that the page is gone, and a second page would
+                     not carry the form, the scroll or the state the first holds. */
                   if (NATIVE_MODE === true && (webview === undefined || webview.isConnected !== true)) {
                     /* A chat whose column is not on screen keeps a page of its own
                        out of sight, so the work goes on while the person reads
                        another chat. */
-                    let own = residents.get(options.sessionId)?.view?.() ?? paneGuests.get(options.sessionId)?.view?.()
+                    let own = hasTab(options.sessionId) === true
+                      ? undefined
+                      : residents.get(options.sessionId)?.view?.() ?? paneGuests.get(options.sessionId)?.view?.()
                     if (own === undefined) {
                       keepResident(options.sessionId)
                       for (let wait = 0; wait < 40 && own === undefined; wait += 1) {
@@ -2089,6 +2119,19 @@ window.__ModuleLoader__.load({
                     }
                     if (own !== undefined) {
                       webview = own
+                    } else if (hasTab(options.sessionId) === true) {
+                      /* This chat has a browser of the product's: the page it
+                         already holds is the one to drive, so it is looked for
+                         again instead of a second one being made here. */
+                      if (frame.tool === 'navigate') {
+                        const ask = String(frame.args?.url ?? '')
+                        if (ask !== '') await nativeOpen(options.sessionId, ask)
+                      }
+                      webview = await nativeReady(25, options.sessionId)
+                      if (webview === undefined) {
+                        reply({ ok: false, error: L('error.background') })
+                        return
+                      }
                     } else {
                     const ask = String(frame.args?.url ?? '')
                     if (frame.tool === 'navigate' && ask !== '') await nativeOpen(options.sessionId, ask)
@@ -2130,25 +2173,12 @@ window.__ModuleLoader__.load({
                       return
                     }
                   }
-                  /* This chat's tab collapsed has no surface to drive. Only its
-                     own column is asked for: another chat keeps what it shows. */
-                  /* A page kept out of sight on purpose answers where it is: the
-                     person asked for work, not for the column to come forward. */
-                  const parkedOwn = NATIVE_MODE === true && (ownWires.has(options.sessionId) || residents.has(options.sessionId))
-                  if (NATIVE_MODE === true && parkedOwn !== true && (hidden() || room().width < 2 || room().height < 2)) {
-                    try {
-                      reveal?.(String(frame.session ?? ''))
-                    } catch {
-                      /* the wait below reports the surface it got */
-                    }
-                    for (let wait = 0; wait < 30; wait += 1) {
-                      await new Promise((resolve) => setTimeout(resolve, 100))
-                      if (!hidden() && room().width >= 2 && room().height >= 2) break
-                    }
-                    if (hidden() || room().width < 2 || room().height < 2) {
-                      reply({ ok: false, error: L('error.background') })
-                      return
-                    }
+                  /* A page the product keeps but does not draw answers script,
+                     reads and ordinary clicks where it is. Nothing is brought
+                     forward for a chat the person is not reading. */
+                  if (NATIVE_MODE === true && frame.tool === 'shot' && (hidden() || room().width < 2 || room().height < 2)) {
+                    reply({ ok: false, error: L('error.captureUnavailable') })
+                    return
                   }
                   if (frame.tool !== 'navigate' && frame.tool !== 'shot') {
                     const asked = rememberedPage(frame.session)
@@ -2456,6 +2486,37 @@ window.__ModuleLoader__.load({
         alive: () => disposed !== true && webview !== undefined && webview.isConnected !== false,
         /** @returns {HTMLElement | undefined} the page this guest holds, when it has one. */
         view: () => (disposed !== true && webview !== undefined && webview.isConnected !== false ? webview : undefined),
+        /** Put this page into a slot of its own chat, keeping the page itself.
+         *  @param {HTMLElement | null | undefined} shelf - the slot to fill.
+         *  @returns {boolean} whether the page moved there. */
+        adopt(shelf) {
+          if (shelf === undefined || shelf === null) return false
+          const el = held.view()
+          /* Only a page this end made can be moved: a page the product drew is
+             placed by the product, and moving it would take it off its tab. */
+          if (el === undefined || ownedElement === undefined) return false
+          try {
+            shelf.appendChild(el) // ui-copy-ignore
+            return true
+          } catch {
+            return false
+          }
+        },
+        /** Take this page out of sight without losing it, so the chat it
+         *  belongs to finds it as it was when the person comes back.
+         *  @returns {boolean} whether the page was kept. */
+        park() {
+          if (held.view() === undefined || ownedElement === undefined) {
+            dispose()
+            return false
+          }
+          try {
+            stashHost().appendChild(ownedElement) // ui-copy-ignore
+            return true
+          } catch {
+            return false
+          }
+        },
       }
       if (options.pane === true) paneGuests.set(options.sessionId, held)
       return held
@@ -2464,7 +2525,7 @@ window.__ModuleLoader__.load({
     /* The product's browser tab holds the page, so nothing of ours is mounted
        for it and no slot of ours is drawn: the wire is opened here instead, for
        the chat whose tab exists. Without it every call would find no tab. */
-    function wireNative(sessionId) {
+    function wireNative(sessionId, page = '') {
       const who = String(sessionId ?? '')
       if (NATIVE_MODE !== true || who === '') return
       const held = paneGuests.get(who)
@@ -2477,7 +2538,18 @@ window.__ModuleLoader__.load({
       /* A tab of the product's is used when this chat's column is on screen: the
          person sees the page and the pointer. A chat that is not being read has
          no column to put a tab in, so the page is kept out of sight instead. */
-      const own = NATIVE_MODE === true && panelOf(who).length === 0
+      /* A chat that was already given a browser of the product's keeps that page
+         even while its column is not drawn: a second page made here would look
+         the same and hold none of the same state. */
+      let own = NATIVE_MODE === true && panelOf(who).length === 0 && hasTab(who) !== true
+      /* A page with an address belongs in the product's tab of the chat on
+         screen: the person sees it and the pointer has somewhere to be. Any
+         other chat keeps its page out of sight. */
+      const asked = String(page ?? '')
+      if (own && asked !== '') {
+        const put = openNativeTab(who, NATIVE_KIND, asked)
+        if (put === 'asked' || put === 'kept' || put === 'page') own = false
+      }
       if (own) ownWires.add(who)
       beat({ tabType: true, phase: own ? 'wired-own' : 'wired', session: who })
       mountGuest({
@@ -2510,6 +2582,13 @@ window.__ModuleLoader__.load({
         if (page !== null) ownWires.delete(who)
         if (page === null || held.alive() !== true) {
           const born = wireBorn.get(who) ?? 0
+          /* The product may keep this chat's page mounted while it draws another
+             chat's column. Nothing here can be sure the page is gone, so a chat
+             that was given a browser keeps its wire. */
+          if (page === null && held.alive() === true && hasTab(who) === true) {
+            beat({ tabType: true, phase: 'wire-tab-kept', session: who })
+            continue
+          }
           if (page === null) {
             restoreFace(who)
             if (Date.now() - born < WIRE_GRACE_MS) continue
@@ -2572,7 +2651,11 @@ window.__ModuleLoader__.load({
         paneHosts.set(props.sessionId, host.current) // ui-copy-ignore
         currentSession = props.sessionId
         onScreen.add(props.sessionId)
-        const guest = mountGuest({
+        /* A page this chat already had comes back as it was: it is moved into
+           the column, not made again. */
+        const before = paneGuests.get(props.sessionId)
+        const kept = before !== undefined && before.alive() === true && before.adopt(host.current) === true ? before : undefined // ui-copy-ignore
+        const guest = kept ?? mountGuest({
           shelf: host.current, // ui-copy-ignore
           pane: true,
           sessionId: props.sessionId,
@@ -2589,7 +2672,9 @@ window.__ModuleLoader__.load({
           paneHosts.delete(props.sessionId)
           onScreen.delete(props.sessionId)
           if (currentSession === props.sessionId) currentSession = ''
-          guest.dispose()
+          /* Leaving a chat parks its page; only a page this end does not own is
+             dropped, because the product holds that one. */
+          guest.park()
         }
       }, [props.sessionId])
       React.useEffect(() => { setDraft(href) }, [href])
@@ -2611,20 +2696,9 @@ window.__ModuleLoader__.load({
           } else {
             onScreen.delete(props.sessionId)
             if (currentSession === props.sessionId && routedSession() === '') currentSession = ''
-            if (openedByUs && onScreen.size === 0) {
-              /* Our page went behind another chat and nothing of ours is left
-                 on screen: the panel we opened now shows nothing. */
-              openedByUs = false
-              setTimeout(() => {
-                if (onScreen.size !== 0) return
-                try {
-                  column?.(false)
-                  beat({ tabType: registered, phase: 'open', step: 'autoclose' })
-                } catch {
-                  /* nothing to close */
-                }
-              }, 900).unref?.()
-            }
+            /* The page stepped out of sight; the column, its tab and the page
+               stay exactly as the person left them. Nothing is closed here. */
+            openedByUs = false
             return
           }
           el.executeJavaScript('(() => String(window.getSelection() || "").slice(0, 4000))()', true)
@@ -2954,7 +3028,7 @@ window.__ModuleLoader__.load({
                  no page while the column is still opening. */
               setTimeout(() => {
                 try {
-                  wireNative(sessionId)
+                  wireNative(sessionId, String(frame.url ?? ''))
                 } catch {
                   /* the ask below opens a page instead */
                 }
@@ -3019,7 +3093,7 @@ window.__ModuleLoader__.load({
                kept out of sight: the call runs where nobody is reading, and no
                column in front of the person is taken. */
             if (NATIVE_MODE === true && nativeElement(sessionId) === null && panelOf(sessionId).length === 0) {
-              wireNative(sessionId)
+              wireNative(sessionId, String(frame.url ?? ''))
               beat({ tabType: registered, phase: 'open', step: 'out-of-sight', session: sessionId })
             }
             const strip = scope.sidebarRight
@@ -3054,7 +3128,7 @@ window.__ModuleLoader__.load({
               }
             }
             if (NATIVE_MODE === true && nativeElement(sessionId) === null) restoreFace(sessionId)
-            beat({ tabType: registered, phase: 'open', opened, session: sessionId })
+            beat({ tabType: registered, phase: 'open', opened, session: sessionId, req: String(frame.req ?? '') })
             /* The page lives in the product's tab, so the wire is opened for it
                here: a call that arrives next finds a tab to answer it. */
             if (take || NATIVE_MODE === true) wireNative(sessionId)

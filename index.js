@@ -101,9 +101,18 @@ const DOWNLOAD_TIMEOUT_MS = 120_000
 const OPEN_WAIT_MS = 20_000
 
 /** Shown when a tool runs without the tab that owns the guest. */
+const EVENT_KEEP = 300
+/** Said when a tool run does not name the chat it belongs to. */
+const NO_CHAT = 'this call has no chat identity, so no page is touched'
+
+/** @param {any} exec - tool run context. @returns {string} the chat id, never empty. */
+function chatOf(exec) {
+  const chat = String(exec?.agent?.id ?? '')
+  if (chat === '') throw new Error(NO_CHAT)
+  return chat
+}
 const ASK_GAP_MS = 3_000
 const CLIENT_TTL_MS = 60_000
-const ASK_ALIAS_MS = 30_000
 const NO_TAB = 'The built-in browser is not open for this chat yet. The next call opens it in the right sidebar.'
 const ELSEWHERE = 'This chat is not the one on screen. Open it, then call again.'
 const NO_PANEL = 'The browser panel could not be taken here. Open the 内置浏览器 tab in the right sidebar, then call again.'
@@ -253,14 +262,16 @@ export class Bridge {
     /** The last few beats, so a page that fell over keeps what it said on the way.
      *  @type {Array<{at: string, frame: any}>} */
     this.trail = []
+    /** The decisions this bridge made, newest last: which chat asked, which tab
+     *  answered, who was refused. A wrong page is traced from here, not guessed.
+     *  @type {Array<{at: string, what: string, chat?: string, reason?: string}>} */
+    this.events = []
     /** Whether the page said it drives the product's own browser; undefined until it says. @type {boolean | undefined} */
     this.native = undefined
     /** @type {Set<import('node:http').ServerResponse>} open watch streams: the page's listener that can open tabs. */
     this.watchers = new Set()
     /** When each chat last asked for a tab, so one ask per call burst. @type {Map<string, number>} */
     this.asked = new Map()
-    /** @type {Map<string, string>} chat id the tool layer uses → tab id the page reported. */
-    this.aliases = new Map()
     /** Named in every heartbeat reply: a page whose stream predates this bridge
      * still looks connected and reaches nothing, so the reply tells it to reopen. */
     this.epoch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -288,19 +299,45 @@ export class Bridge {
    * @param {{phase?: string, step?: string, session?: string}} frame - heartbeat from the page.
    * @returns {void}
    */
+  note(what, detail = {}) {
+    this.events.push({ at: new Date().toISOString(), what, ...detail })
+    if (this.events.length > EVENT_KEEP) this.events.splice(0, this.events.length - EVENT_KEEP)
+  }
+
   noteStep(frame) {
     if (frame?.phase !== 'open' || typeof frame.session !== 'string' || frame.session === '') return
     if (frame.step === 'other-chat') this.refused.set(frame.session, ELSEWHERE)
     if (frame.step === 'rightbar') this.refused.set(frame.session, NO_PANEL)
+    this.note('refused', { chat: frame.session, reason: frame.step ?? String(frame.phase ?? '') })
   }
 
   noteOpen(frame) {
     const asking = this.asking
     if (asking === undefined) return
-    if (frame?.opened !== 'current' && frame?.opened !== 'session') return
-    if (Date.now() - asking.at > ASK_ALIAS_MS) return
+    /* Only an answer that says what it opened is an answer; the page also
+       reports tab housekeeping under the same phase, and that is not a reply. */
+    const opened = frame?.opened
+    if (opened === undefined || opened === null || opened === '') return
+    if (opened !== 'current' && opened !== 'session') {
+      this.note('open-ignored', { chat: asking.chat, reason: String(opened) })
+      return
+    }
+    /* The answer names the chat it opened for, and only that chat may take it:
+       pairing by arrival time is how one chat's call was once answered with
+       another chat's tab. */
+    if (String(frame?.session ?? '') !== asking.chat) {
+      this.note('open-rejected', { chat: asking.chat, reason: `answer named ${String(frame?.session ?? '')}` })
+      return
+    }
+    const req = String(frame?.req ?? '')
+    if (req !== '' && asking.req !== '' && req !== asking.req) {
+      this.note('open-rejected', { chat: asking.chat, reason: 'answer for another ask' })
+      return
+    }
+    /* The page that opened it attaches its own stream; the call waits for that
+       seat rather than one being invented from the answer. */
     this.asking = undefined
-    this.alias(asking.chat, String(frame.session ?? ''))
+    this.note('open-answered', { chat: asking.chat })
   }
 
   /** @param {import('node:http').ServerResponse} res - closed SSE response. */
@@ -318,30 +355,19 @@ export class Bridge {
     if (last !== undefined && now - last < ASK_GAP_MS) return
     if (this.watchers.size === 0) return
     this.asked.set(sessionId, now)
-    this.asking = { chat: sessionId, at: now, page }
-    const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId, url: page })}\n\n`
+    this.note('asked', { chat: sessionId, reason: page === '' ? 'no address' : page.slice(0, 120) })
+    const req = `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    this.asking = { chat: sessionId, at: now, page, req }
+    const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId, url: page, req })}\n\n`
     for (const res of this.watchers) res.write(frame)
-  }
-
-  /**
-   * The page names the tab it opened, and that name is not always the id the
-   * tool layer uses for this chat. One ask maps to the tab it produced.
-   * @param {string} chatId - id the tool layer used.
-   * @param {string} tabId - id the page reported for its tab.
-   */
-  alias(chatId, tabId) {
-    if (chatId === '' || tabId === '' || chatId === tabId) return
-    this.aliases.set(chatId, tabId)
   }
 
   /** @param {string} sessionId - chat asking. @returns {object | undefined} the tab that can take it. */
   seatFor(sessionId) {
-    const direct = this.seats.get(sessionId)
-    if (direct !== undefined) return direct
     /* A tab belongs to the chat that opened it. Handing one chat's call to
-       another chat's tab steers a page the person is reading, so a chat with
-       no tab of its own waits for its own. */
-    return this.seats.get(this.aliases.get(sessionId) ?? '')
+       another chat's tab steers a page the person is reading, so a chat with no
+       tab of its own waits for its own instead of borrowing one. */
+    return this.seats.get(sessionId)
   }
 
   /** @param {string} sessionId - chat asking. @returns {boolean} whether a tab can take the call now. */
@@ -382,6 +408,7 @@ export class Bridge {
    * @param {string} workspace - lease key of the chat's workspace, as the tab reports it.
    */
   attach(sessionId, res, workspace) {
+    this.note('attached', { chat: sessionId, reason: String(workspace ?? '') })
     const previous = this.seats.get(sessionId)
     if (previous !== undefined && previous.res !== res) previous.res.end()
     this.seats.set(sessionId, { res, sessionId, workspace })
@@ -425,6 +452,7 @@ export class Bridge {
   detach(sessionId, res) {
     const seat = this.seats.get(sessionId)
     if (seat !== undefined && seat.res === res) {
+      this.note('detached', { chat: sessionId })
       this.seats.delete(sessionId)
       /* The page that answers next may be a different copy. */
       this.native = undefined
@@ -502,7 +530,11 @@ export class Bridge {
       if (screen !== '' && screen !== sessionId) throw new Error(NOT_DRAWN)
     }
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    if (!this.push(sessionId, { type: 'call', id, tool, args, session: sessionId })) throw new Error(NO_TAB)
+    if (!this.push(sessionId, { type: 'call', id, tool, args, session: sessionId })) {
+      this.note('call-no-tab', { chat: sessionId, reason: tool })
+      throw new Error(NO_TAB)
+    }
+    this.note('called', { chat: sessionId, reason: tool })
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(id)
@@ -651,7 +683,11 @@ function tools(bridge, sinks) {
    * @returns {Promise<{text: string}>} rendered value.
    */
   const run = async (tool, args, exec, timeoutMs) => {
-    const value = await bridge.call(String(exec.agent?.id ?? ''), tool, args ?? {}, exec.signal, timeoutMs)
+    /* A call without the identity of the chat it belongs to cannot be placed:
+       guessing one is how a page from another chat got driven. */
+    const chat = String(exec.agent?.id ?? '')
+    if (chat === '') throw new Error(NO_CHAT)
+    const value = await bridge.call(chat, tool, args ?? {}, exec.signal, timeoutMs)
     return asValue(typeof value === 'string' ? value : (value?.text ?? JSON.stringify(value ?? null)))
   }
 
@@ -773,7 +809,7 @@ function tools(bridge, sinks) {
        */
       execute: async (args, exec) => {
         const value = await bridge.call(
-          String(exec.agent?.id ?? ''),
+          chatOf(exec),
           'shot',
           { offscreen: args?.offscreen === true },
           exec.signal,
@@ -781,7 +817,7 @@ function tools(bridge, sinks) {
         )
         const png = value?.png
         if (typeof png !== 'string' || png === '') throw new Error('the page returned no image')
-        const chat = String(exec.agent?.id ?? '')
+        const chat = chatOf(exec)
         const base = workBase(bridge, chat, exec.agent?.cwd)
         const dir = await bridge.room(base, SHOT_DIR)
         const file = join(dir, `shot-${Date.now()}.png`)
@@ -810,7 +846,7 @@ function tools(bridge, sinks) {
        * @returns {Promise<{text: string}>} absolute path of the saved file.
        */
       execute: async (args, exec) => {
-        const chat = String(exec.agent?.id ?? '')
+        const chat = chatOf(exec)
         const base = workBase(bridge, chat, exec.agent?.cwd)
         const dir = await bridge.room(base, DOWNLOAD_DIR)
         /* The page never names a folder: this ticket is the one folder its bytes
@@ -819,7 +855,7 @@ function tools(bridge, sinks) {
         sinks.set(ticket, { dir, file: '' })
         try {
           const value = await bridge.call(
-            String(exec.agent?.id ?? ''),
+            chatOf(exec),
             'download',
             { ticket, url: args?.url, ref: args?.ref, name: args?.name },
             exec.signal,
@@ -867,7 +903,7 @@ function tools(bridge, sinks) {
         const bytes = await readFile(file)
         const name = file.slice(file.lastIndexOf('/') + 1)
         const value = await bridge.call(
-          String(exec.agent?.id ?? ''),
+          chatOf(exec),
           'upload',
           { ref: args.ref, name, type: mediaType(file), base64: bytes.toString('base64') },
           exec.signal,
@@ -1049,6 +1085,9 @@ export function apply(ctx, config = {}) {
       res.end(JSON.stringify({
         connected: bridge.connected(),
         pending: bridge.waiters.size,
+        /* Why the last few answers went where they did. */
+        events: bridge.events.slice(-60),
+        asking: bridge.asking === undefined ? null : { chat: bridge.asking.chat, at: new Date(bridge.asking.at).toISOString() },
         client: clientState(bridge.client),
         trail: bridge.trail.map((entry) => entry.frame),
         /* Where a chat's files would land, when its tab told us the folder. */
