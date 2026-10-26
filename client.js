@@ -1442,7 +1442,28 @@ window.__ModuleLoader__.load({
       view.setAttribute('src', first === '' ? 'about:blank' : first)
       const ready = waitEvent(view, 'dom-ready', 45_000)
       shelf.appendChild(view) // ui-copy-ignore
-      if ((await ready) === false) throw new Error(L('error.background'))
+      if ((await ready) === false) {
+        const box = view.getBoundingClientRect()
+        let wc = 'none'
+        try {
+          wc = String(view.getWebContentsId())
+        } catch (error) {
+          wc = `ERR ${String(error?.message ?? error).slice(0, 40)}`
+        }
+        let bare = 'none'
+        try {
+          const plain = document.createElement('webview')
+          plain.setAttribute('src', 'about:blank')
+          const open = waitEvent(plain, 'dom-ready', 6_000)
+          shelf.appendChild(plain) // ui-copy-ignore
+          bare = String(await open)
+          plain.remove()
+        } catch (error) {
+          bare = `ERR ${String(error?.message ?? error).slice(0, 40)}`
+        }
+        beat({ phase: 'guest-probe', session: sessionId, part, src: view.getAttribute('src') ?? '', w: Math.round(box.width), h: Math.round(box.height), inPage: document.body.contains(view), wc, bare })
+        throw new Error(L('error.background'))
+      }
       beat({ phase: 'hidden-open', session: sessionId, part })
       return view
     }
