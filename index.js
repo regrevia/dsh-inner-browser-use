@@ -312,14 +312,14 @@ export class Bridge {
    * Ask every listening page to open this chat's tab.
    * @param {string} sessionId - chat that needs a tab.
    */
-  want(sessionId) {
+  want(sessionId, page = '') {
     const now = Date.now()
     const last = this.asked.get(sessionId)
     if (last !== undefined && now - last < ASK_GAP_MS) return
     if (this.watchers.size === 0) return
     this.asked.set(sessionId, now)
-    this.asking = { chat: sessionId, at: now }
-    const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId })}\n\n`
+    this.asking = { chat: sessionId, at: now, page }
+    const frame = `data: ${JSON.stringify({ type: 'wanted', session: sessionId, url: page })}\n\n`
     for (const res of this.watchers) res.write(frame)
   }
 
@@ -461,7 +461,9 @@ export class Bridge {
     if (this.native === false) throw new Error(LEGACY_PAGE)
     if (!this.hasSeat(sessionId)) {
       this.refused.delete(sessionId)
-      this.want(sessionId)
+      /* The tab opens at the address the call needs, so a chat never gets an
+         empty browser beside the page it asked for. */
+      this.want(sessionId, typeof args?.url === 'string' ? args.url : '')
       await this.waitSeat(sessionId, this.openWaitMs, signal)
       /* A page that cannot come says so at once, instead of letting the call
          wait out the whole opening window. */

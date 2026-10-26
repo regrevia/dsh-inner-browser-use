@@ -1082,8 +1082,12 @@ window.__ModuleLoader__.load({
         }
       }
       const inside = (root) => {
-        const known = root.querySelector('[data-sidebar-browser-frame="webview"]')
+        const known = root.querySelector('webview[data-sidebar-browser-frame], [data-sidebar-browser-frame="webview"]')
         if (known !== null && !ours(known)) return known
+        /* What the product's browser tab draws is marked as its frame; a webview
+           without the mark belongs to something else in the column, and driving
+           it would be driving the wrong page. */
+        if (NATIVE_MODE === true) return null
         const guests = Array.from(root.querySelectorAll('webview')).filter((node) => !ours(node))
         return guests.length > 0 ? guests.at(-1) : null
       }
@@ -1099,6 +1103,7 @@ window.__ModuleLoader__.load({
       }
       const known = deepFind(document.body, '[data-sidebar-browser-frame="webview"]')
       if (known !== null && onRight(known) && !ours(known)) return known
+      if (NATIVE_MODE === true) return null
       const guests = Array.from(document.querySelectorAll('webview'))
         .filter((node) => onRight(node) && !ours(node))
       return guests.length > 0 ? guests.at(-1) : null
@@ -1192,16 +1197,52 @@ window.__ModuleLoader__.load({
     /* A tab type that holds many pages gives a new tab for every ask, so one
        chat asks once and keeps the tab it got. */
     const nativeTabs = new Set()
+    const tabKey = (session) => 'dshib:tab:' + String(session ?? '')
+    /** @param {string} sessionId - chat. @returns {string} tab id this chat was given, '' when none. */
+    function givenTab(sessionId) {
+      try {
+        return String(window.localStorage.getItem(tabKey(sessionId)) ?? '')
+      } catch {
+        return ''
+      }
+    }
+    /** The tab this chat was given is still drawn in its column. @param {string} sessionId - chat. @returns {boolean} true when it is. */
+    function givenTabDrawn(sessionId) {
+      const id = givenTab(sessionId)
+      if (id === '') return false
+      try {
+        return panelOf(sessionId).some((panel) => panel.querySelector('[data-sidebar-right-tab="' + id + '"]') !== null)
+      } catch {
+        return false
+      }
+    }
+    /** Remember which tab is this chat's, so a reload does not ask for a second one. @param {string} sessionId - chat. @param {any} page - the page's own element. */
+    function rememberTab(sessionId, page) {
+      try {
+        const body = page?.closest?.('[data-sidebar-right-tab]')
+        const id = String(body?.getAttribute?.('data-sidebar-right-tab') ?? '')
+        if (id !== '') window.localStorage.setItem(tabKey(sessionId), id)
+      } catch {
+        /* a page that became stale already said which tab it was */
+      }
+    }
     /** @param {string} sessionId - the chat the tab belongs to. @param {string} [kind] - the type to ask for. @returns {string} what was done. */
     function openNativeTab(sessionId, kind = NATIVE_KIND, address = '', shown = false, face = undefined) {
       const who = String(sessionId ?? '')
       const slot = who + ':' + String(kind)
       if (who === '') return 'none'
-      /* Only the chat being read gets a tab: asking on another chat's behalf
-         grows a browser in a column the person is not looking at. */
-      if (shown !== true && mayShow(who) !== true) return 'elsewhere'
+      /* Only the chat being read gets a tab by name; the product opens it in
+         that chat's own column, which is out of sight when someone reads
+         elsewhere. The ask carries the id, so it never lands in another column. */
+      if (NATIVE_MODE !== true && shown !== true && mayShow(who) !== true) return 'elsewhere'
       const page = String(address ?? '')
       if (nativeTabs.has(slot + ':' + page)) return 'kept'
+      /* The tab this chat was given is still there: asking again would put a
+         second browser beside it. */
+      if (page !== '' && givenTabDrawn(who) === true) {
+        nativeTabs.add(slot + ':' + page)
+        return 'kept'
+      }
       if (nativeElement(who) !== null) {
         nativeTabs.add(slot + ':' + page)
         return 'page'
@@ -1221,6 +1262,71 @@ window.__ModuleLoader__.load({
       return 'asked'
     }
 
+    /** @param {string} sessionId - chat. @returns {number} tabs drawn in that chat's column. */
+    function tabsIn(sessionId) {
+      let count = 0
+      for (const panel of panelOf(sessionId)) {
+        try {
+          count += panel.querySelectorAll('[data-sidebar-right-tab]').length
+        } catch {
+          /* a column mid-teardown draws no tabs */
+        }
+      }
+      return count
+    }
+
+    /* The product's browser tab can come back as a checkpoint of the page it
+       last had, with one button that brings the page back. A checkpoint is not a
+       page, so the column would keep showing a card instead of the site. */
+    const restoreTried = new Map()
+    const RESTORE_WORD = /^(恢复页面|恢复|Restore page|Restore)$/
+    /** Press the control that shows `word`, whether it is a button or a link. @param {Element} root - column to look in. @param {RegExp} word - the words a control shows. @returns {boolean} whether one was pressed. */
+    function pressWord(root, word) {
+      let all
+      try {
+        all = Array.from(root.querySelectorAll('button, a, [role="button"]'))
+      } catch {
+        return false
+      }
+      for (const one of all) {
+        if (word.test(String(one.textContent ?? '').trim()) !== true) continue
+        try {
+          one.click()
+          return true
+        } catch {
+          return false
+        }
+      }
+      /* A control whose words sit in a child is found by the words itself. */
+      try {
+        for (const one of Array.from(root.querySelectorAll('span, div'))) {
+          if (word.test(String(one.textContent ?? '').trim()) !== true) continue
+          const control = one.closest('button, a, [role="button"]') ?? one
+          control.click()
+          return true
+        }
+      } catch {
+        return false
+      }
+      return false
+    }
+    /** Bring back the page a tab shows only a checkpoint of. @param {string} sessionId - chat whose column to look in. @returns {boolean} whether a control was pressed. */
+    function restoreFace(sessionId) {
+      const who = String(sessionId ?? '')
+      const last = restoreTried.get(who) ?? 0
+      if (Date.now() - last < 5_000) return false
+      let clicked = false
+      for (const root of who === '' ? [document.documentElement] : panelOf(who)) {
+        if (root === null || root === undefined) continue
+        if (pressWord(root, RESTORE_WORD) !== true) continue
+        restoreTried.set(who, Date.now())
+        clicked = true
+        break
+      }
+      if (clicked === true) beat({ tabType: true, phase: 'restore-face', session: who })
+      return clicked
+    }
+
     /** Type into the product's address bar: how an empty tab is made to hold a page. */
     async function nativeOpen(sessionId, url) {
       if (url === '') return 'no-url'
@@ -1231,9 +1337,9 @@ window.__ModuleLoader__.load({
         } catch {
           face = undefined
         }
-        /* A chat that is not on screen gets no tab: the product opens one in
-           whatever column is showing, which takes the page the person reads. */
-        if (face !== undefined && face !== null && mayShow(sessionId) === true) openNativeTab(sessionId)
+        /* The tab opens at the page this call is for: an empty browser tab is a
+           second browser beside the one the person is reading. */
+        if (face !== undefined && face !== null && (mayShow(sessionId) === true || NATIVE_MODE === true)) openNativeTab(sessionId, NATIVE_KIND, url)
         let webview = nativeElement(sessionId)
         let slot = { form: null, input: null }
         for (let i = 0; i < 20; i += 1) {
@@ -2137,6 +2243,90 @@ window.__ModuleLoader__.load({
       return held
     }
 
+    /* The product's browser tab holds the page, so nothing of ours is mounted
+       for it and no slot of ours is drawn: the wire is opened here instead, for
+       the chat whose tab exists. Without it every call would find no tab. */
+    function wireNative(sessionId) {
+      const who = String(sessionId ?? '')
+      if (NATIVE_MODE !== true || who === '') return
+      const held = paneGuests.get(who)
+      if (held !== undefined && held.alive() === true) return
+      if (held !== undefined) paneGuests.delete(who)
+      wireBorn.set(who, Date.now())
+      beat({ tabType: true, phase: 'wired', session: who })
+      mountGuest({
+        shelf: stashHost(), // ui-copy-ignore
+        pane: true,
+        sessionId: who,
+        key: () => String(who),
+        onPhase: (next, message) => beat({ tabType: true, phase: `wire-${next}`, session: who, error: message ?? '' }),
+      })
+    }
+
+    /* A wire outlives its page unless it is looked after: the tab is closed by
+       the person, not by us, so the page it was driving is checked for, and who
+       is on screen is read from the pixels the page is given. */
+    /** When each wire was made, so one still looking for its page is not dropped. */
+    const wireBorn = new Map()
+    /** How long a wire may look for its page before it is given up on. */
+    const WIRE_GRACE_MS = 20_000
+    function tendWires() {
+      if (NATIVE_MODE !== true) return
+      for (const [who, held] of Array.from(paneGuests.entries())) {
+        const page = nativeElement(who)
+        if (page === null || held.alive() !== true) {
+          const born = wireBorn.get(who) ?? 0
+          if (page === null) {
+            restoreFace(who)
+            if (Date.now() - born < WIRE_GRACE_MS) continue
+            paneGuests.delete(who)
+            wireBorn.delete(who)
+            held.dispose()
+            beat({ tabType: true, phase: 'wire-gone', session: who })
+          }
+          continue
+        }
+        let wide = false
+        try {
+          const box = page.getBoundingClientRect()
+          wide = box.width >= 2 && box.height >= 2 && page.closest('[hidden]') === null
+        } catch {
+          wide = false
+        }
+        if (wide === true) {
+          onScreen.add(who)
+          currentSession = who
+        } else {
+          onScreen.delete(who)
+          if (currentSession === who) currentSession = ''
+        }
+      }
+    }
+    if (globalThis.__dshibWires !== true) {
+      globalThis.__dshibWires = true
+      setInterval(tendWires, 3_000) // ui-copy-ignore
+    }
+
+    /* A column left on a checkpoint is put back to its page before the person
+       has to look at it: the chats this page drives, and the one on screen. */
+    function tendFaces() {
+      if (NATIVE_MODE !== true) return
+      const chats = new Set(paneSessions)
+      for (const who of paneGuests.keys()) chats.add(who)
+      if (currentSession !== '') chats.add(currentSession)
+      for (const who of chats) {
+        try {
+          if (nativeElement(who) === null) restoreFace(who)
+        } catch {
+          /* a column mid-teardown is measured on a later beat */
+        }
+      }
+    }
+    if (globalThis.__dshibFaces !== true) {
+      globalThis.__dshibFaces = true
+      setInterval(tendFaces, 2_500) // ui-copy-ignore
+    }
+
     /** @param {{sessionId: string, key: () => Promise<string>}} props - slot props. @returns {any} element. */
     function Body(props) {
       const host = React.useRef(null) // ui-copy-ignore
@@ -2418,6 +2608,21 @@ window.__ModuleLoader__.load({
               beat({ tabType: registered, phase: 'route', session: seen })
             }
             beat({ tabType: registered, phase: 'alive', native: NATIVE_MODE, session: currentSession })
+            /* A tab the person reopened is wired again, so the next call finds
+               it without asking for anything. */
+            if (NATIVE_MODE === true && currentSession !== '') {
+              try {
+                if (nativeElement(currentSession) !== null) {
+                  if (paneGuests.has(currentSession) !== true) wireNative(currentSession)
+                } else {
+                  /* A reload leaves the tab on a checkpoint; the page comes back
+                     by itself so the column is never left asking to be restored. */
+                  restoreFace(currentSession)
+                }
+              } catch {
+                /* a page mid-teardown is wired on a later beat */
+              }
+            }
           }, ALIVE_MS)
           return () => clearInterval(tick)
         }, 'dsh-inner-browser-use: alive')
@@ -2649,10 +2854,14 @@ window.__ModuleLoader__.load({
             }
             if (paneSessions.has(sessionId) || nativeElement(sessionId) !== null) {
               if (opened === '') opened = 'page'
-            } else if (take && !foreignColumn(sessionId)) {
-              /* One tab, holding the page last seen in this chat, so the column
-                 shows it instead of an address bar waiting for input. */
-              const asked = openNativeTab(sessionId, NATIVE_MODE === true ? NATIVE_KIND : KIND, rememberedPage(sessionId), true, myStrip)
+            } else if ((take || NATIVE_MODE === true) && (NATIVE_MODE === true || !foreignColumn(sessionId))) {
+              /* One tab, holding the page this call is for, so the column shows
+                 it instead of an address bar waiting for input. A call made
+                 while someone reads another chat asks by id, and the tab lands
+                 in this chat's own column, out of sight. */
+              const kind = NATIVE_MODE === true ? NATIVE_KIND : KIND
+              const address = String(frame.url ?? '') || rememberedPage(sessionId)
+              const asked = openNativeTab(sessionId, kind, address, take, myStrip)
               opened = asked === 'asked' ? 'session' : asked
               if (asked === 'asked') {
                 let drawn = panelOf(sessionId).length > 0
@@ -2663,7 +2872,11 @@ window.__ModuleLoader__.load({
                 if (drawn !== true) opened = 'no-panel'
               }
             }
+            if (NATIVE_MODE === true && nativeElement(sessionId) === null) restoreFace(sessionId)
             beat({ tabType: registered, phase: 'open', opened, session: sessionId })
+            /* The page lives in the product's tab, so the wire is opened for it
+               here: a call that arrives next finds a tab to answer it. */
+            if (take || NATIVE_MODE === true) wireNative(sessionId)
             /* An out-of-sight chat has no page to lend: the product's tab lives
                in the column of the chat being read, so nothing is opened here. */
             keepResident(sessionId)

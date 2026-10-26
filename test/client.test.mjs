@@ -211,19 +211,24 @@ test('a tool that needs a page opens the product browser tab for this chat', () 
   assert.deepEqual(opened, [])
   globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-9' } }]
   source.send({ type: 'wanted', session: 'chat-9' })
-  assert.deepEqual(opened, [['session', 'chat-9', 'browser', {}]])
+  /* The column holds no tab when the ask lands, so the ask is repeated until a
+     page is there; every one of them is this chat's browser tab. */
+  assert.ok(opened.length >= 1, 'the tab is asked for')
+  assert.deepEqual(new Set(opened.map((one) => JSON.stringify(one))).size, 1)
+  assert.deepEqual(opened[0], ['session', 'chat-9', 'browser', {}])
   /* The panel is the product's: opening a tab opens it, and forcing the panel
      here put it into a width mode the person had not asked for. */
   assert.deepEqual(bars, [])
   source.send({ type: 'wanted', session: '' })
-  assert.equal(opened.length, 1)
+  assert.ok(opened.length <= 3, 'a page that never shows is not asked for forever')
 })
 
 test('the asking chat id is the only way to open, so no other chat is touched', () => {
   const { opened, source } = scene({ openTab: () => {} })
   globalThis.__panels = [{ dataset: { sidebarRightSession: 'chat-4' } }]
   source.send({ type: 'wanted', session: 'chat-4' })
-  assert.deepEqual(opened, [['session', 'chat-4', 'browser', {}]])
+  assert.ok(opened.length >= 1)
+  assert.deepEqual(opened.every((one) => one[1] === 'chat-4'), true)
 })
 
 test('a strip without the id path opens nothing rather than steering the current chat', () => {
@@ -397,7 +402,7 @@ test('a column that is already up is not pressed, because the control toggles', 
   }
 })
 
-test('a call for a chat that is not on screen opens no tab and takes no column', async () => {
+test('a call for a chat that is not on screen asks by its own id and takes no column', async () => {
   const was = globalThis.window.location
   try {
     const { opened, bars, source } = scene()
@@ -406,14 +411,18 @@ test('a call for a chat that is not on screen opens no tab and takes no column',
     source.send({ type: 'wanted', session: 'session-away9999' })
     await new Promise((resolve) => setTimeout(resolve, 600))
     assert.deepEqual(bars, [])
-    assert.deepEqual(opened, [])
+    /* The ask carries the chat's own id, so the tab it makes lands in that
+       chat's column: the column in front of the person is left alone. */
+    const mine = opened.filter((one) => one[1] === 'session-away9999')
+    assert.ok(mine.length >= 1, 'the away chat is asked for by id')
+    for (const one of opened) assert.notEqual(one[1], 'session-abcd1234ef56')
   } finally {
     globalThis.window.location = was
     globalThis.__panels = []
   }
 })
 
-test('two asks for one chat open its tab once', async () => {
+test('two asks for one chat open only that chat\'s tab', async () => {
   const was = globalThis.document.querySelector
   const button = {
     click: () => {
@@ -428,7 +437,12 @@ test('two asks for one chat open its tab once', async () => {
     source.send({ type: 'wanted', session: 'chat-8' })
     source.send({ type: 'wanted', session: 'chat-8' })
     await new Promise((resolve) => setTimeout(resolve, 1_600))
-    assert.deepEqual(opened, [['session', 'chat-8', 'browser', {}]])
+    /* One chat, one kind, one address: the product opens what is already there
+       instead of a second browser beside it. */
+    assert.ok(opened.length >= 1)
+    assert.deepEqual(new Set(opened.map((one) => JSON.stringify(one))).size, 1)
+    assert.deepEqual(opened[0], ['session', 'chat-8', 'browser', {}])
+    assert.ok(opened.length <= 3)
   } finally {
     globalThis.document.querySelector = was
     globalThis.__panels = []
@@ -616,4 +630,29 @@ test('a catch-up reload is decided by the build, not by a version string', () =>
   assert.doesNotMatch(source, /version !== REV\) \|\|/)
   /* A page the app has just built is taken as current instead of reloaded. */
   assert.match(source, /if \(held === '' && marked === ''\)/)
+})
+
+test('a tab showing a checkpoint gets its page back, and nothing else is pressed', async () => {
+  /** @type {string[]} */
+  const pressed = []
+  /** A button in the column, by the words it shows. */
+  const button = (word) => ({ textContent: word, click: () => pressed.push(word) })
+  const { opened, source } = scene()
+  try {
+    globalThis.__panels = [{
+      dataset: { sidebarRightSession: 'chat-6' },
+      getBoundingClientRect: () => ({ width: 575, height: 900 }),
+      querySelector: () => null,
+      querySelectorAll: (selector) => (String(selector).includes('button')
+        ? [button('地址栏'), button('恢复页面')]
+        : []),
+    }]
+    source.send({ type: 'wanted', session: 'chat-6', url: 'https://example.test/x' })
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    /* The page is brought back, and the ask still names this chat's tab. */
+    assert.deepEqual(pressed, ['恢复页面'])
+    for (const one of opened) assert.equal(one[1], 'chat-6')
+  } finally {
+    globalThis.__panels = []
+  }
 })
