@@ -2338,8 +2338,8 @@ window.__ModuleLoader__.load({
               } catch {
                 marked = ''
               }
-              /* A page the app has just built carries no marker yet; it is the
-                 build the app fetched a moment ago, so it is taken as is. */
+              /* A page built by the app carries no marker yet: it is the build
+                 the app fetched a moment ago. */
               if (held === '' && marked === '') {
                 sessionStorage.setItem('dshib.build', build)
                 return
