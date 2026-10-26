@@ -578,3 +578,14 @@ test('a catch-up reload leaves the app its own route name', () => {
   assert.match(source, /searchParams\.delete\('interface'\)/)
   assert.match(source, /searchParams\.set\('dshib', build\)/)
 })
+
+test('a catch-up reload is decided by the build, not by a version string', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* A page that reloads once per build change settles after one try; a page
+     that reloads whenever a version string differs never settles, because the
+     app keeps serving its own copy until it is restarted. */
+  assert.match(source, /const behind = held !== build && marked !== build/)
+  assert.doesNotMatch(source, /version !== REV\) \|\|/)
+  /* A page the app has just built is taken as current instead of reloaded. */
+  assert.match(source, /if \(held === '' && marked === ''\)/)
+})

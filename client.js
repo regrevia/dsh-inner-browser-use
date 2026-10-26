@@ -2297,7 +2297,7 @@ window.__ModuleLoader__.load({
         let registered = false
         /* The version this copy was published as: a page that finds another one
            published reloads until it has it, read from the disk. */
-        const REV = '0.11.29'
+        const REV = '0.11.30'
         beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
@@ -2331,9 +2331,31 @@ window.__ModuleLoader__.load({
               const build = String(state?.clientBuild ?? '')
               const version = String(state?.version ?? '')
               if (build === '' || build === 'unknown') return
-              const behind = (version !== '' && version !== REV) || String(sessionStorage.getItem('dshib.build') ?? '') !== build
+              const held = String(sessionStorage.getItem('dshib.build') ?? '')
+              let marked = ''
+              try {
+                marked = String(new URL(location.href).searchParams.get('dshib') ?? '')
+              } catch {
+                marked = ''
+              }
+              /* A page the app has just built carries no marker yet; it is the
+                 build the app fetched a moment ago, so it is taken as is. */
+              if (held === '' && marked === '') {
+                sessionStorage.setItem('dshib.build', build)
+                return
+              }
+              /* Only the build the app is serving decides this. A different
+                 plugin version with the same build means the app itself is
+                 older than the files, which reloading this page cannot fix. */
+              const behind = held !== build && marked !== build
               if (!behind) {
                 sessionStorage.removeItem('dshib.tries')
+                /* The page is current but the app is not: it keeps serving the
+                   files it already loaded, so the page says so once. */
+                if (version !== '' && version !== REV && sessionStorage.getItem('dshib.old') !== '1') {
+                  sessionStorage.setItem('dshib.old', '1')
+                  beat({ phase: 'app-older', v: REV })
+                }
                 return
               }
               /* Reloading is worth a few tries; a window that cannot get the
