@@ -549,3 +549,23 @@ test('the send button wins over an unmarked one, near or far', () => {
   D.querySelectorAll = () => [off]
   assert.equal(sendControl(loose), null)
 })
+
+test('a file a page builds in memory is kept as it is built', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* Asking for the address again would build a different file, so the bytes
+     are held from the moment the page makes them. */
+  assert.match(source, /URL\.createObjectURL = \(object\) =>/)
+  assert.match(source, /__dshib_blobs\.set\(url, object\)/)
+  assert.match(source, /startsWith\('blob:'\)/)
+  /* A plain link to an archive or a document is a transfer too. */
+  assert.match(source, /zip\|rar\|7z\|tar\|gz\|xlsx\?\|docx\?/)
+  /* What was queued is awaited before the chat is handed the list. */
+  assert.match(source, /const file = await one/)
+})
+
+test('a window nobody is looking at still comes back on the published build', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /setInterval\(watchBuild, 6_000\)/)
+  assert.doesNotMatch(source, /if \(!document\.hidden\) watchBuild\(\)/)
+  assert.match(source, /'visibilitychange'/)
+})

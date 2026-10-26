@@ -618,35 +618,86 @@ window.__ModuleLoader__.load({
         }
         if (op === 'dl-watch') {
           /* A file the page starts on its own is read here, so the chat gets it
-             without being told to save it twice. The page's own network rules
-             still decide whether the bytes can be read at all. */
+             without being told to save it twice. A file a page builds in memory
+             is kept as it is built: asking for its address again would build a
+             different one. */
           if (W.__dshib_watch === true) return 'watching'
           W.__dshib_watch = true
           W.__dshib_land = []
+          W.__dshib_blobs = W.__dshib_blobs || new Map()
+          const keep = (blob, name, url) => {
+            if (!(blob instanceof Blob)) return
+            if (blob.size === 0 || blob.size > 7 * 1024 * 1024) return
+            if (W.__dshib_land.length >= 6) return
+            W.__dshib_land.push(
+              blob64(blob).then((data) => ({ name: name !== '' ? name : fileName({}, url, {}), size: blob.size, data })),
+            )
+          }
           const take = async (url, name) => {
             try {
-              if (W.__dshib_land.length >= 3) return
+              if (W.__dshib_land.length >= 6) return
+              const held = W.__dshib_blobs.get(url)
+              if (held !== undefined) return keep(held, name, url)
               const res = await fetch(url, { credentials: 'include', redirect: 'follow' })
               if (res.ok !== true) return
-              const blob = await res.blob()
-              if (blob.size === 0 || blob.size > 8 * 1024 * 1024) return
-              W.__dshib_land.push({ name: name !== '' ? name : fileName({}, url, res), size: blob.size, data: await blob64(blob) })
+              keep(await res.blob(), name !== '' ? name : fileName({}, url, res), url)
             } catch {
               /* a page that forbids reading its own file keeps its own save */
             }
           }
+          const address = (href, name) => {
+            if (href.startsWith('blob:') === true || href.startsWith('data:') === true) {
+              void take(href, name)
+              return
+            }
+            /* A plain link to a file is a transfer too; one to a page is not. */
+            if (W.__dshib_watch !== true || /\.(zip|rar|7z|tar|gz|xlsx?|docx?|pptx?|pdf|csv|txt|md|json|png|jpe?g|webp|mp3|mp4)$/i.test(href) !== true) return
+            void take(href, name)
+          }
+          const create = W.URL.createObjectURL.bind(W.URL)
+          W.URL.createObjectURL = (object) => {
+            const url = create(object)
+            try {
+              if (object instanceof Blob && W.__dshib_blobs.size < 12) W.__dshib_blobs.set(url, object)
+            } catch {
+              /* an address that cannot be kept is only an address */
+            }
+            return url
+          }
           D.addEventListener('click', (event) => {
             const node = event.target
-            const link = node !== null && typeof node.closest === 'function' ? node.closest('a[download]') : null
+            const link = node !== null && typeof node.closest === 'function' ? node.closest('a[download],a[href]') : null
             if (link === null) return
+            const href = String(link.href || '')
+            const name = String(link.getAttribute('download') || '')
+            const wanted = name !== '' || href.startsWith('blob:') === true || /\.[a-z0-9]{2,5}$/i.test(href)
+            if (wanted !== true) return
             event.preventDefault()
             event.stopPropagation()
-            take(link.href, String(link.getAttribute('download') || ''))
+            address(href, name)
           }, true)
+          const open = W.open.bind(W)
+          W.open = (url, ...rest) => {
+            try {
+              if (typeof url === 'string' && url.startsWith('blob:') === true) address(url, '')
+            } catch {
+              /* a window that opens on its own is left alone */
+            }
+            return open(url, ...rest)
+          }
           return 'watching'
         }
         if (op === 'dl-drain') {
-          const kept = Array.isArray(W.__dshib_land) ? W.__dshib_land.splice(0, W.__dshib_land.length) : []
+          const held = Array.isArray(W.__dshib_land) ? W.__dshib_land.splice(0, W.__dshib_land.length) : []
+          const kept = []
+          for (const one of held) {
+            try {
+              const file = await one
+              if (file !== null && file !== undefined) kept.push(file)
+            } catch {
+              /* a file that could not be read is not a file */
+            }
+          }
           return kept
         }
         throw new Error('unknown operation ' + op)
@@ -2246,7 +2297,7 @@ window.__ModuleLoader__.load({
         let registered = false
         /* The version this copy was published as: a page that finds another one
            published reloads until it has it, read from the disk. */
-        const REV = '0.11.27'
+        const REV = '0.11.28'
         beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
@@ -2305,7 +2356,12 @@ window.__ModuleLoader__.load({
             .catch(() => {})
         }
         setTimeout(watchBuild, 2_000)
-        setInterval(() => { if (!document.hidden) watchBuild() }, 4_000)
+        /* A window nobody is looking at still has to come back on the right
+           build: it is the one that gets looked at next. */
+        setInterval(watchBuild, 6_000)
+        if (typeof document.addEventListener === 'function') {
+          document.addEventListener('visibilitychange', () => { if (document.hidden !== true) watchBuild() })
+        }
         ctx.effect(() => {
           const tick = setInterval(() => {
             const seen = routedSession()
