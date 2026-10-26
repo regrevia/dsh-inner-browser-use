@@ -2312,7 +2312,7 @@ window.__ModuleLoader__.load({
         let registered = false
         /* The version this copy was published as: a page that finds another one
            published reloads until it has it, read from the disk. */
-        const REV = '0.11.32'
+        const REV = '0.11.33'
         beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)
@@ -2377,6 +2377,9 @@ window.__ModuleLoader__.load({
                  file waits instead of reloading itself in a loop. The wait
                  lengthens and the count is bounded, so a fix applied later
                  still reaches a window that was already stuck. */
+              /* A call in flight owns the page; taking it out from under the
+                 stream is what a person sees as a crash. It reloads next time. */
+              if (acting.size > 0) return
               const tries = Number(sessionStorage.getItem('dshib.tries') ?? '0')
               const last = Number(sessionStorage.getItem('dshib.last') ?? '0')
               if (!Number.isFinite(tries) || tries >= 12) return

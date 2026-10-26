@@ -574,6 +574,14 @@ test('a file a page builds in memory is kept as it is built', () => {
   assert.match(source, /const file = await one/)
 })
 
+test('a call in flight is not reloaded out from under', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The catch-up reload waits while a tool call owns the page. */
+  const at = source.indexOf('if (acting.size > 0) return')
+  assert.ok(at > 0)
+  assert.ok(at < source.indexOf("if (tries >= 6 && Number.isFinite(last)"))
+})
+
 test('a window that could not get the file waits instead of trying forever', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* Past a few tries the page stops for ten minutes, and after a bounded count
