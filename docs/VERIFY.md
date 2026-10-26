@@ -4,7 +4,7 @@ Ten minutes, one page, no debugger. Each step names what a failure looks like.
 
 ## Before you start
 
-- The plugin is installed and enabled in the profile (`0.3.0` or later).
+- The plugin is installed and enabled in the profile (`0.11.30` or later).
 - The app window was reloaded **after** the install: the page half only loads on
   a page load. A host-only reload is not enough.
 - A chat is open, own workspace or not.
@@ -232,19 +232,116 @@ A frame naming no chat at all, when no header reports, keeps the older behaviour
 the tab is placed and the panel may open, then closes itself after three seconds
 unless a page of ours mounted in it (`"step":"selfheal"`).
 
-## A call that cannot get the panel answers at once
+## A chat that is not on screen
 
-When the chat that asked is not the one on screen, the page says so on its next
-heartbeat instead of opening anything, and the Host turns that into the call's
-answer rather than waiting out `openWaitMs`:
+Pixels come from a painted surface. A page behind another chat's tab has a size
+but no surface, so the capture comes back empty; the tool then says which tab to
+bring forward instead of guessing. A second guest would be no help here: it would
+load the address again and photograph the top of a page whose scroll position and
+form state are not the ones the chat is reading, so the image would not be of the
+page the answer describes. Read the content instead — `browser_script` returns the
+same text, and `browser_view` returns the same controls.
+
+`browser_screenshot` with `offscreen: true` never opens the right column: it takes
+the image only if a surface already exists and otherwise says so at once.
+
+The proof log records what the capture found:
+
+```bash
+tail -3 /tmp/dsh-inner-browser-use.log   # "why":"capture-covered" carries href and error
+```
+
+A call for a chat the person is not reading never takes the column. If that chat
+has no page yet, one is mounted out of sight and answers from there; only if that
+is impossible does the call say which chat to open. The proof log shows the two
+halves:
+
+```bash
+grep -m1 '"phase":"wanted"' /tmp/dsh-inner-browser-use.log   # panes, screen
+grep -m1 'resident-open' /tmp/dsh-inner-browser-use.log      # the page made out of sight
+```
+
+At most three pages are kept out of sight, and the oldest goes first, so a long
+session cannot pile them up.
+
+## What has been run in the app
+
+Each line was run against the live pane on 2026-10-25 and is what the tool
+returned, not what the code was meant to do.
+
+| Tool | The page | Result |
+| --- | --- | --- |
+| `browser_navigate` | example.com | title `Example Domain` |
+| `browser_view` | the same page | one control, the link's text |
+| `browser_script` | the same page | added a button, a form, and an output to the page |
+| `browser_click` | the added button at 60,140 (120x40) | its label changed to `clicked`, its title to `probe clicked`, and the reply named the point: `at 120,160` |
+| the pointer | read from the page after a click | `translate3d(116px, 158px, 0px)`, opacity `1`, `z-index: 2147483647` — the click point less the pointer's hotspot |
+| `browser_type` | the added text field | the field held the text that was typed |
+| `browser_download` | a page with a "Download" link | the file is in `<chat folder>/.dsh-inner-browser-use/downloads/` and the tool returns that path |
+| `browser_upload` | the added file field | the field held the chosen file's name |
+| a link the page saves itself | a page whose own script saves a file | the reply names the file under the chat's folder; `POST /land` without the page's header answers 403 |
+| `browser_selection` | not yet run in the app | the host half that carries this tool loads on the next start; the bridge is covered by `test/host.test.mjs` |
+| `browser_copy` | not yet run in the app | same |
+| the page is remounted | the page went blank | the next call reopened it; frame `why:"restore"` |
+| `browser_screenshot` | a page the app is not drawing | said which tab to open; frame `why:"capture-covered"` |
+
+A capture of a page the app *is* drawing returned a 74 KB PNG of that page; the
+same call on a covered page has no surface to read, which is the boundary
+described above.
+
+## Both halves reload without restarting the app
+
+A change is verifiable without asking anyone to restart anything. The two halves
+load at different moments, and both get there on their own:
+
+- `index.js` (the host half) is re-imported as soon as the file changes. A route
+  added or removed answers at once: `curl -s -o /dev/null -w '%{http_code}'
+  http://127.0.0.1:49631/dsh-inner-browser-use/<route>` flips from 404 to 200 on
+  the next request, with no app restart.
+- `client.js` (the page half) replaces itself on its own: a loaded copy asks
+  `/state` every four seconds and reloads when the served build differs from its
+  own. A copy loaded before that self-check existed cannot replace itself, so the
+  window's refresh control is the one step that is not automatic; after it, the
+  page half keeps itself current. To prove which copy is loaded, read the hash
+  the page reports instead of guessing: `curl -s
+  http://127.0.0.1:49631/dsh-inner-browser-use/state | python3 -c "import json,sys;
+  print(json.load(sys.stdin)['client'])"` — `native: true` means the page runs a
+  copy that drives the product's own browser.
+
+So: no restart to check a behaviour, and no restart to see the result of one.
+
+To skip the wait, a reloader plugin mounted in the same app can be asked directly.
+`dsh-unlag` answers on `POST /dsh-unlag/reload` with the header `x-dsh-unlag: 1`;
+`GET /dsh-unlag/state` reports its two switches. It only acts while no turn is
+running, so a request made from inside a turn answers `{"status":"busy"}` — leave
+a waiter behind that asks again once the turn ends, and the next check runs on
+the new code.
+
+## The panel is taken only for the chat the person is looking at
+
+A tool call can arrive for a chat whose page is not open. Taking the right panel
+then would put an empty column in front of the chat the person is reading, so the
+page half first asks which chat is on screen and answers only that one.
+
+The answer comes from an occupant this plugin puts in the conversation header:
+it renders nothing, measures the nearest header container that has a size, and
+watches whether that container is on screen. Its beats name the chat:
 
 ```
-curl -s http://127.0.0.1:49631/dsh-inner-browser-use/state | grep -o '"pending":[0-9]*'
+grep -o '"phase":"seen","session":"[^"]*"' /tmp/dsh-inner-browser-use.log | tail -1
+```
+
+Switch chats in the app and the named chat follows, one line per switch. When the
+call is for another chat, its tab is placed in that chat's strip and the call
+answers that the tab is there — the panel is left alone:
+
+```
 grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
 ```
 
-The tool result names the tab strip of the chat being read, so the next step is
-the person opening that chat — no empty column, and no eight-second pause.
+A frame naming no chat at all, when no header reports, keeps the older behaviour:
+the tab is placed and the panel may open, then closes itself after three seconds
+unless a page of ours mounted in it (`"step":"selfheal"`).
 
 ## Where a login lives
 
@@ -301,5 +398,37 @@ Three flows were driven against the app itself, each one visible in its own outp
   `<image>.png 17033 bytes`. So a page reaches the chat, the chat reaches the
   folder, and the folder reaches the page again without anyone moving it by hand.
 
-The caller sat in one chat while the person read another, and the page work
-happened in the background chat's own guest: no pane was taken from the reader.
+## A chat that is not on screen
+
+The column shows one chat, so the page for any other chat does not exist while it
+is off screen. A call made from such a chat answers at once:
+
+```
+This chat is not the one on screen. Open it, then call again.
+```
+
+That answer is the guarantee, not a failure: bringing the column to the caller's
+chat would take the screen from whoever is reading. Switch to the caller's chat
+and the same call opens its page in the column it already belongs to.
+
+That answer comes from the page's own next heartbeat, not from a timeout:
+
+```
+curl -s http://127.0.0.1:<port>/dsh-inner-browser-use/state | grep -o '"pending":[0-9]*'
+grep -o '"step":"other-chat"' /tmp/dsh-inner-browser-use.log | tail -1
+```
+
+## Catching up on a published build
+
+The page half compares the build the app is serving with the build it is running
+and reloads itself once when they differ, so a plugin update does not need the
+window closed by hand. Two facts are worth reading off `/state` when it does not
+happen:
+
+- `client.v` below `version`: the page is older than the files. One reload
+  fixes it; a window that already used up its reloads is not retried, so close
+  and reopen the window once.
+- `phase:"app-older"` in the proof log: the page is current but the app process
+  started before the update. The app keeps serving the files it loaded, so the
+  new host half arrives on the next app start; nothing on screen changes until
+  then.
