@@ -1462,35 +1462,6 @@ window.__ModuleLoader__.load({
       return clicked
     }
 
-    const reviveTried = new Map()
-    /** A tab that lost its page to a reload shows that page again. @param {string} sessionId - chat whose column holds the tab. @param {string} url - page this chat last showed. @returns {Promise<boolean>} whether the address was sent. */
-    async function revivePage(sessionId, url) {
-      const who = String(sessionId ?? '')
-      if (url === '' || acting.size > 0) return false
-      /* Only the chat on screen has a column to put an address into. */
-      const screen = routedSession() || String(currentSession ?? '')
-      if (screen !== '' && screen !== who) return false
-      const last = reviveTried.get(who) ?? 0
-      if (Date.now() - last < 10_000) return false
-      const slot = addressIn(who)
-      if (slot.input === null) return false
-      reviveTried.set(who, Date.now())
-      try {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-        if (setter !== undefined) setter.call(slot.input, url)
-        else slot.input.value = url
-        slot.input.dispatchEvent(new Event('input', { bubbles: true }))
-        const form = slot.form
-        if (form !== null && typeof form.requestSubmit === 'function') form.requestSubmit()
-        else if (form !== null) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-        else slot.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
-        beat({ tabType: true, phase: 'revive', session: who, url: url.slice(0, 120) })
-        return true
-      } catch {
-        return false
-      }
-    }
-
     /** Type into the product's address bar: how an empty tab is made to hold a page. */
     async function nativeOpen(sessionId, url) {
       if (url === '') return 'no-url'
@@ -2568,28 +2539,6 @@ window.__ModuleLoader__.load({
     if (globalThis.__dshibWires !== true) {
       globalThis.__dshibWires = true
       setInterval(tendWires, 3_000) // ui-copy-ignore
-    }
-
-    /* A column left on a checkpoint is put back to its page before the person
-       has to look at it: the chats this page drives, and the one on screen. */
-    async function tendFaces() {
-      if (NATIVE_MODE !== true) return
-      const chats = new Set(paneSessions)
-      for (const who of paneGuests.keys()) chats.add(who)
-      if (currentSession !== '') chats.add(currentSession)
-      for (const who of chats) {
-        try {
-          if (nativeElement(who) !== null) continue
-          if (restoreFace(who) === true) continue
-          await revivePage(who, rememberedPage(who))
-        } catch {
-          /* a column mid-teardown is measured on a later beat */
-        }
-      }
-    }
-    if (globalThis.__dshibFaces !== true) {
-      globalThis.__dshibFaces = true
-      setInterval(tendFaces, 2_500) // ui-copy-ignore
     }
 
     /** @param {{sessionId: string, key: () => Promise<string>}} props - slot props. @returns {any} element. */
