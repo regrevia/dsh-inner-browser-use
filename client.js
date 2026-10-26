@@ -625,10 +625,15 @@ window.__ModuleLoader__.load({
           W.__dshib_watch = true
           W.__dshib_land = []
           W.__dshib_blobs = W.__dshib_blobs || new Map()
+          W.__dshib_skip = []
+          const skip = (name, size, why) => {
+            if (W.__dshib_skip.length < 6) W.__dshib_skip.push({ name, size, why })
+          }
           const keep = (blob, name, url) => {
             if (!(blob instanceof Blob)) return
-            if (blob.size === 0 || blob.size > 7 * 1024 * 1024) return
-            if (W.__dshib_land.length >= 6) return
+            if (blob.size === 0) return
+            if (blob.size > 7 * 1024 * 1024) return skip(name, blob.size, 'large')
+            if (W.__dshib_land.length >= 6) return skip(name, blob.size, 'many')
             W.__dshib_land.push(
               blob64(blob).then((data) => ({ name: name !== '' ? name : fileName({}, url, {}), size: blob.size, data })),
             )
@@ -686,6 +691,10 @@ window.__ModuleLoader__.load({
             return open(url, ...rest)
           }
           return 'watching'
+        }
+        if (op === 'dl-skip') {
+          const held = Array.isArray(W.__dshib_skip) ? W.__dshib_skip.splice(0, W.__dshib_skip.length) : []
+          return held
         }
         if (op === 'dl-drain') {
           const held = Array.isArray(W.__dshib_land) ? W.__dshib_land.splice(0, W.__dshib_land.length) : []
@@ -2092,11 +2101,17 @@ window.__ModuleLoader__.load({
                   await runIn(webview, 'dl-watch', {}).catch(() => '')
                   const answer = await runIn(webview, frame.tool, frame.args ?? {})
                   const landed = await landFiles(webview, String(frame.session ?? ''))
-                  if (landed.length === 0) {
+                  const skipped = await runIn(webview, 'dl-skip', {}).catch(() => [])
+                  const missed = (Array.isArray(skipped) ? skipped : [])
+                    .map((one) => (one?.why === 'many'
+                      ? `\nNot saved (six files at a time): ${String(one?.name ?? 'download')}`
+                      : `\nNot saved (over 7 MB): ${String(one?.name ?? 'download')} (${Number(one?.size ?? 0)} bytes)`))
+                    .join('')
+                  if (landed.length === 0 && missed === '') {
                     reply({ ok: true, value: answer })
                   } else {
                     const tail = landed.map((file) => `\nSaved ${file.path} (${file.bytes} bytes)`).join('')
-                    reply({ ok: true, value: typeof answer === 'string' ? answer + tail : { text: tail.trim(), files: landed } })
+                    reply({ ok: true, value: typeof answer === 'string' ? answer + tail + missed : { text: (tail + missed).trim(), files: landed } })
                   }
                 } catch (error) {
                   reply({ ok: false, error: String(error?.message ?? error) })
@@ -2297,7 +2312,7 @@ window.__ModuleLoader__.load({
         let registered = false
         /* The version this copy was published as: a page that finds another one
            published reloads until it has it, read from the disk. */
-        const REV = '0.11.30'
+        const REV = '0.11.31'
         beat({ tabType: false, phase: 'loaded', v: REV })
         probe = (frame) => beat({ tabType: registered, ...frame }) // ui-copy-ignore
         setTimeout(() => beat({ tabType: registered, phase: registered ? 'ready' : 'idle' }), 3_000)

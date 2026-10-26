@@ -329,6 +329,17 @@ test('a page that saves a file on its own has somewhere to put it', () => {
   assert.match(source, /\/land\?session=/)
 })
 
+test('a file the page cannot hand over is named, not dropped', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* Over the size the page will read, or past the sixth file in one go, the
+     call says which file stayed behind, so the person can ask the page again. */
+  assert.match(source, /blob\.size > 7 \* 1024 \* 1024\) return skip\(name, blob\.size, 'large'\)/)
+  assert.match(source, /if \(W\.__dshib_land\.length >= 6\) return skip\(name, blob\.size, 'many'\)/)
+  assert.match(source, /op === 'dl-skip'/)
+  assert.match(source, /Not saved \(over 7 MB\)/)
+  assert.match(source, /Not saved \(six files at a time\)/)
+})
+
 test('a page is looked for in the chat its call belongs to', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /data-sidebar-right-session/)

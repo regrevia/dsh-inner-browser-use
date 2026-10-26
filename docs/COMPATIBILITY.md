@@ -68,8 +68,9 @@ already collected.
 
 Limits that come from the page, not from the plugin:
 
-- One offered file is capped at 7 MB and twelve are tracked per page load; the
-  Host refuses an upload over 8 MB with the size named.
+- One offered file is capped at 7 MB and six are taken in one go; a file the
+  page could not hand over is named with its size in the answer, so the page can
+  be asked again. The Host refuses an upload over 8 MB with the size named.
 - A page whose `connect-src` forbids the site's own address cannot fetch it; the
   plugin then has only what the page already holds, so ask the page for the file
   through its own UI.
