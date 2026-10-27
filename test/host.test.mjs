@@ -276,3 +276,10 @@ test('extraction with no selector says what it needs', async () => {
   assert.match(await extractRows({}, {}), /Give a selector/)
   assert.match(await extractRows({}, { select: '  ' }), /Give a selector/)
 })
+
+test('the covering check asks the page what is on top', async () => {
+  const { covering } = await import('../read.js')
+  const said = covering(12)
+  assert.match(said, /elementFromPoint/)
+  assert.match(said, /find\(12\)/)
+})

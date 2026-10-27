@@ -278,6 +278,31 @@ export function resolve(ref) {
 })()`
 }
 
+/**
+ * What sits on top of a control at click time, when it is not the control.
+ * A cookie banner or a modal over the thing the agent meant to click is the
+ * commonest quiet failure on real pages: the click lands, nothing happens.
+ * @param {number} ref - ref from a read.
+ * @returns {string} an expression that answers `{tag, text}` or an empty string.
+ */
+export function covering(ref) {
+  return `(() => {
+  const reg = window.${REGISTRY}
+  if (!reg) return ''
+  const hit = reg.find(${Number(ref)})
+  if (!hit) return ''
+  const el = hit.el
+  const b = el.getBoundingClientRect()
+  const x = Math.round(b.left + b.width / 2)
+  const y = Math.round(b.top + b.height / 2)
+  if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return ''
+  const top = document.elementFromPoint(x, y)
+  if (top === null || top === el || el.contains(top) || top.contains(el)) return ''
+  const raw = String(top.innerText ?? top.value ?? top.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 80)
+  return JSON.stringify({ tag: String(top.tagName).toLowerCase(), text: raw })
+})()`
+}
+
 /** Where refs of controls inside iframes start. Main-frame refs stay small. */
 const FRAME_BASE = 900_000
 

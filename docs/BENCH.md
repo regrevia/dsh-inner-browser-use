@@ -102,12 +102,12 @@ answer), and a read now also asks for the frame tree.
 against 1291 chars for the same page read as text — and at a 500-char read
 budget the text read stops around row 12 while the list still returns 30.
 
-Breadth run (`npm run breadth`), 30 checks, all true: open shadow DOM read and
+Breadth run (`npm run breadth`), 31 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
 iframe read, iframe typing, iframe click, cross-site frame read and click,
 popup followed, download saved, network responses listed, a file uploaded
 into a file input, the page printed to a PDF, a changed-only read, names from `for=` and `aria-labelledby`, a click found by its words, a login filled by field names in one call,
-stale ref refused, a crashed renderer picked back up on the same page.
+stale ref refused, a crash picked back up on the same page, a list read as 30 rows, and a click under a full-screen cookie banner still answered with what covered it.
 
 ## Phase 4 — what a change costs
 

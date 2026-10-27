@@ -69,6 +69,12 @@ const PAGES = {
   '/list': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Catalog</h1><ul id="rows">${Array.from({ length: 30 }, (_, i) => `<li><a href="/item?id=${i + 1}">Item ${i + 1} sold</a> — <span>$${i + 1}</span></li>`).join('')}</ul>
     </body></html>`,
+  '/cover': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Covered</h1>
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">
+      We use cookies to remember you. <button id="yes">Accept</button></div></div>
+    <button id="under" onclick="document.title='under clicked'">Under the banner</button>
+    </body></html>`,
   '/partner': `<!doctype html><html><body style="font:16px system-ui;padding:12px">
     <p>a partner frame Chrome keeps apart</p><input placeholder="Partner field">
     <input type="file" aria-label="Partner file" onchange="document.title = 'partner got ' + this.files[0].name">
@@ -354,6 +360,13 @@ try {
   const wholeList = renderPage(await readPage(page, { mode: 'text', maxChars: 4000 }), { mode: 'text', maxChars: 4000 })
   const budgetList = renderPage(await readPage(page, { mode: 'text', maxChars: 500 }), { mode: 'text', maxChars: 500 })
   line('extract-rows', /^30 of 30 rows/.test(extracted) && extracted.includes('/item?id=30') && budgetList.includes('/item?id=30') === false, `${extracted.length} chars vs ${wholeList.length} whole, ${budgetList.length} at a 500-char budget · ${extracted.split('\n')[1]?.slice(0, 70)}`)
+
+  await page.navigate(`${base}/cover`)
+  const coverRead = await readPage(page, { mode: 'text', maxChars: 2000 })
+  const under = control(coverRead, 'Under the banner')
+  const clickTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
+  const covered = String((await clickTool.execute({ ref: under.ref })).text)
+  line('covered-click', covered.includes('covers it') && covered.includes('We use cookies'), covered.trim().split('\n').pop().slice(0, 90))
 
   await page.navigate(`${base}/words`)
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }

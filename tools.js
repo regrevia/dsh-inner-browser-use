@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, contextFor, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -163,6 +163,30 @@ export function personNote(sidecar) {
   const when = age < 3000 ? 'just now' : `${Math.round(age / 1000)} s ago`
   const at = person.kind === 'click' || person.kind === 'wheel' ? ` at ${Math.round(person.x)},${Math.round(person.y)}` : '' // ui-copy-ignore
   return `\nthe person also used the page: ${person.kind}${at}, ${when}`
+}
+
+/**
+ * Say when something else is sitting over the control, because a click that
+ * lands under a banner looks exactly like a click that did nothing.
+ * @param {any} page - sidecar page.
+ * @param {number} ref - ref that was about to be used.
+ * @returns {Promise<string>} a note, or an empty string.
+ */
+async function coverNote(page, ref) {
+  if (!(Number(ref) > 0) || Number(ref) >= 900_000) return ''
+  const said = await page.cdp.send('Runtime.evaluate', { expression: covering(Number(ref)), returnByValue: true }).catch(() => null)
+  const value = String(said?.result?.value ?? '')
+  if (value === '') return ''
+  let top = null
+  try {
+    top = JSON.parse(value)
+  } catch (error) {
+    return ''
+  }
+  if (top === null || typeof top !== 'object') return ''
+  const name = String(top.text ?? '')
+  const what = top.tag === 'div' || top.tag === 'section' ? 'an overlay' : `a ${String(top.tag)}`
+  return `\n${what} covers it${name === '' ? '' : `: ${name}`} — the click landed beneath it`
 }
 
 /** @param {number} ms - how long. */
@@ -561,11 +585,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         }
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from sidecar_view, or both x and y.'
         const button = args?.right === true ? 'right' : 'left'
+        const cover = args?.ref === undefined ? '' : await coverNote(page, Number(args.ref))
         await page.mouse('mouseMoved', point)
         await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await settle(page)
-        return acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
+        const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
+        return said + cover
       }),
     },
     {
@@ -588,6 +614,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
+        let cover = ''
         if (args?.ref !== undefined) {
           const spot = await locate(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE
@@ -595,13 +622,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           await page.mouse('mouseMoved', point)
           await page.mouse('mousePressed', { ...point, clickCount: 1 })
           await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+          cover = await coverNote(page, Number(args.ref))
           await wait(80)
         }
         if (args?.clear === true) await clearFocus(page)
         await page.insertText(String(args?.text ?? ''))
         if (args?.submit === true) await pressKey(page, 'Enter')
         await settle(page)
-        return acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type') // ui-copy-ignore
+        return (await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')) + cover // ui-copy-ignore
       }),
     },
     {
