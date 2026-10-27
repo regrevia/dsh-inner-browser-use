@@ -284,6 +284,58 @@ test('the covering check asks the page what is on top', async () => {
   assert.match(said, /find\(12\)/)
 })
 
+test('Chrome\'s own error page is never read as the site', async () => {
+  const { unreachable, isErrorPage } = await import('../tools.js')
+  const dead = { url: 'chrome-error://chromewebdata/', title: 'never-resolves-this.invalid', cdp: { send: async () => ({ result: { value: '' } }) } }
+  assert.equal(isErrorPage(dead), true, 'the address alone is enough to know')
+  const said = await unreachable(dead)
+  assert.match(said, /the network could not reach that address/)
+  assert.match(said, /never-resolves-this.invalid/, 'the address that failed is named')
+  assert.match(said, /not the site/, 'a model must not quote it as content')
+  assert.match(said, /sidecar_nav/, 'the sentence carries the way out')
+  // A real page costs one comparison and says nothing.
+  assert.equal(isErrorPage({ url: 'https://example.com/' }), false)
+  assert.equal(await unreachable({ url: 'https://example.com/' }), '')
+  // Edge writes its own scheme; a page that merely mentions one is not it.
+  assert.equal(isErrorPage({ url: 'edge-error://edgewebdata/' }), true)
+  assert.equal(isErrorPage({ url: 'https://example.com/chrome-error://x' }), false)
+  assert.equal(isErrorPage({}), false)
+})
+
+test('the error page reports its own failure code, not the site title', async () => {
+  const { unreachable } = await import('../tools.js')
+  let asked = ''
+  const page = {
+    url: 'chrome-error://chromewebdata/',
+    title: 'example.invalid',
+    cdp: { send: async (_method, params) => { asked = params.expression; return { result: { value: 'ERR_NAME_NOT_RESOLVED' } } } },
+  }
+  const said = await unreachable(page)
+  assert.match(asked, /ERR_\[A-Z0-9_\]\+/, 'the page is asked for the code')
+  assert.match(said, /ERR_NAME_NOT_RESOLVED/, 'a typo and a dead proxy are told apart')
+})
+
+test('a batch step says it cleared the way, in one clause', async () => {
+  const { coverLead } = await import('../tools.js')
+  const cover = { tag: 'div', text: 'We use cookies', dismiss: { x: 10, y: 20, name: 'Accept' } }
+  const clear = { tag: 'div', text: 'One', dismiss: null }
+  const seen = []
+  const page = { cdp: { send: async () => ({ result: { value: JSON.stringify(cover) } }) }, mouse: async (kind) => { seen.push(kind) } }
+  // Two probes are made: the banner at first, then nothing, because the click on
+  // its way out took it away.
+  let probe = 0
+  page.cdp.send = async () => ({ result: { value: JSON.stringify(probe++ === 0 ? cover : clear) } })
+  const lead = await coverLead(page, 3)
+  assert.equal(lead, 'after Accept on a banner, ')
+  assert.ok(seen.includes('mousePressed'), 'the way out is a real click')
+  // A page with nothing on top costs one probe and says nothing.
+  const plain = { cdp: { send: async () => ({ result: { value: '' } }) }, mouse: async () => { throw new Error('nothing to click') } }
+  assert.equal(await coverLead(plain, 3), '')
+  // The page refusing to say where the way out is never blocks the step.
+  const stuck = { cdp: { send: async () => ({ result: { value: JSON.stringify({ tag: 'div', text: 'Pay now', dismiss: null }) } }) }, mouse: async () => { throw new Error('nothing to click') } }
+  assert.equal(await coverLead(stuck, 3), '')
+})
+
 test('the covering check also finds the way out of the overlay', async () => {
   const { covering } = await import('../read.js')
   const said = covering(12)

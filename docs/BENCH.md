@@ -102,15 +102,19 @@ answer), and a read now also asks for the frame tree.
 against 1291 chars for the same page read as text — and at a 500-char read
 budget the text read stops around row 12 while the list still returns 30.
 
-Live run (`npm run live`), 6 checks, all true on the open internet: open
-example.com in 517 ms, read it for 785 chars, click the language link on
-wikipedia.org and land on en.wikipedia.org in 3.6 s, go back to
-www.wikipedia.org, extract ten list rows from the Web scraping article in 2 ms
-(1813 chars), type into the Wikipedia search box and reach a results URL in
-5.2 s. These are wall-clock end to end including the site's own load; the
-local numbers below are where the driver's own cost lives. Hacker News was
-unreachable from this machine (12 s connect timeout, confirmed with curl), so
-the list check uses Wikipedia.
+Live run (`npm run live`), 8 checks, all true on the open internet: open
+example.com in 566 ms, read it for 785 chars, click the language link on
+wikipedia.org and land on en.wikipedia.org in 2.3 s, go back to
+www.wikipedia.org, extract ten list rows from the Web scraping article in 3 ms
+(1813 chars), visit a host that cannot resolve (1.3 s to the browser's own
+error page, where a read, a click and a batch all refuse instead of quoting it),
+recover from there to a real page, and type into a search box and reach a
+results URL in 1.3 s. These are wall-clock end to end including the site's own
+load; the local numbers below are where the driver's own cost lives. Two hosts
+were unusable from this machine and are not plugin problems: Hacker News (12 s
+connect timeout, confirmed with curl) and Wikipedia's search redirect, which
+answers on the home page and times out on the query — the search check runs on
+Bing now, driven by the box's words rather than a control number.
 
 Breadth run (`npm run breadth`), 33 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
@@ -147,6 +151,12 @@ frame's corner is one `DOM.getFrameOwner` plus one call on the owner element.
 | `sidecar_click` on an uncovered control | 460 ms median (3 runs, page-load settle included) |
 | `sidecar_click` on the same control under a cookie banner | 630 ms median (3 runs) — the banner's own Accept click, a 150 ms beat, a re-probe, then the intended click |
 | the same under a modal that offers to delete the account | 456 ms — reported, nothing pressed |
+| one `sidecar_do` step on an uncovered control | 458 ms median (3 runs) |
+| the same step under the cookie banner | 633 ms median (3 runs) — cleared, then the step ran |
+
+A batch pays it once per step that has something over it, not once per call: a
+banner cleared by step 1 is gone for steps 2..n, so a five-step flow through a
+cookie wall costs one extra step's worth of time, not five.
 
 The probe costs nothing when nothing is in the way, which is the common case;
 the covered case pays about 170 ms to clear the banner and land the click in

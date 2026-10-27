@@ -145,6 +145,11 @@ reported, never accepted on the person's behalf. The whole exchange is one `Runt
 and a possible `mousePressed`/`mouseReleased` pair on an already-open CDP connection, so an
 uncovered click pays nothing.
 
+`sidecar_do` runs the same probe before a step that names a control — by `ref`, by
+text, or by field label — so a banner the first step clears is gone for the rest of
+the batch, and the step's own line says it in one clause (`after Accept on a banner,`).
+A batch therefore pays for one overlay, not one per step.
+
 An action answers with one line — address, title, focused field — and reads the page only when
 `read: true` is passed. That is what keeps a long batch cheap (see `BENCH.md`).
 

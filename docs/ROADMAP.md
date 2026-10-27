@@ -91,10 +91,17 @@ stealing the column from other chats.
   overlay in the way is cleared only when its own way out is a safe word
   (accept / agree / close / 同意 / 关闭 …) and the overlay says nothing about
   deleting, paying or signing out; otherwise it is reported, never taken.
+  Since 0.15.0 the same clearing runs before every control-naming step of a
+  `sidecar_do` batch, so a multi-step flow through a cookie wall fails zero times.
 - Crash recovery: attach to a still-running Chrome, rebuild the page, keep the
   profile; a killed host never leaves a zombie Chrome.
 - Every failure names what happened, what state the page is in, and the next
   call to make.
+- A failure that is the browser's, not the page's, is said in those words: on
+  Chrome's own error page a read, a click and a batch step all refuse with the
+  `ERR_…` code and the way out, while the tab list, console, failed requests and
+  address still answer, because those are how a stuck person finds out what
+  happened.
 
 ## Phase 6 — proof and packaging
 
@@ -103,6 +110,9 @@ stealing the column from other chats.
 - `docs/VERIFY.md` walk-through that a stranger can run; `scripts/doctor.mjs`
   green; 3 linters zero errors; tests covering every new tool.
 - Packed tarball, CHANGELOG per release, `0.x` bumps that match behaviour.
+  0.13.4 and 0.14.0 shipped tarballs without `tools.js` and `read.js` — a clone
+  hid it because the dev profile symlinks the repo. Since 0.15.0 a test walks the
+  import graph against `files`, and another unpacks the tarball and imports it.
 
 ## Order of work
 

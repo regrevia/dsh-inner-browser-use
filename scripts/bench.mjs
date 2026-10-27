@@ -170,6 +170,30 @@ async function main() {
     emit('cover-click', { page: label, medianMs: times[1], runs: times.length, cleared })
     server.close()
   }
+
+  const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  for (const label of ['plain', 'covered']) {
+    const html = domePage(label)
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(html)
+    })
+    await new Promise((ready) => server.listen(0, '127.0.0.1', ready))
+    const url = `http://127.0.0.1:${String(server.address().port)}/`
+    const times = []
+    let through = false
+    for (let i = 0; i < 3; i += 1) {
+      await sidecar.page.navigate(url)
+      await wait(250)
+      const at = Date.now()
+      const said = String((await doTool.execute({ steps: [{ tap: 'Target' }], read: 'none' })).text)
+      times.push(Date.now() - at)
+      through = said.includes('after Accept on a banner')
+    }
+    times.sort((left, right) => left - right)
+    emit('do-step', { page: label, medianMs: times[1], runs: times.length, cleared: through })
+    server.close()
+  }
   await sidecar.page.navigate(servers.dense.url)
   await wait(200)
   const clickAt = Date.now()

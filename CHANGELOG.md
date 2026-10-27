@@ -1,3 +1,17 @@
+## 0.15.0
+
+- **网站连不上时，工具不再把 Chrome 自己的报错页当成网站念回来。** Chrome 打不开地址时会把标签留在 `chrome-error://chromewebdata/`，而那个页面的 `readyState` 就是 `complete`——所以「等页面加载完」这类判断完全看不出区别。`unreachable()` 早就存在，但只有 `sidecar_open` 和 `sidecar_nav` 调它，于是 `sidecar_view` / `sidecar_click` / `sidecar_type` / `sidecar_do` 会把「无法访问此网站 · ERR_CONNECTION_CLOSED · 重新加载 · 详情」当成页面正文和一个有 3 个控件的页面交给模型：模型于是去点「重新加载」，把一次网络故障变成一串假进度。现在所有读和动作的工具都先看一眼地址，是浏览器自己的错误页就直接回绝，并把 `ERR_` 代号念出来（域名写错和代理挂了要分得清），再给出路：`the network could not reach that address — the browser stopped on its own error page (ERR_NAME_NOT_RESOLVED), which is not the site. Nothing on it is page content. Use sidecar_nav with another address, or fix the connection this machine needs.` 批量调用里某一步跳到错误页就停在那一步并说明，不再往「This site can't be reached」里输入文字。
+- **报浏览器本身的那几个工具仍然可用。** 页签列表、控制台、失败请求、地址、cookie、剪贴板、下载、弹窗都走 `withRawPage`，因为人在卡住的时候正是靠它们判断发生了什么；只有读内容和动页面被拦。`sidecar_nav` 也照旧能在错误页上工作——否则就没法从错误页走开。
+- **这条在真网上验过，不是只在单测里成立。** 新增两条 live 检查：打开 `https://never-resolves-this.invalid/`，读到 `ERR_` 且不是网站正文；同一页上读、点、批量三种调用全部回绝；然后导航回 example.com 必须真的回到真实页面（1319 ms / 1328 ms）。live 从 6 条变 8 条，8/8 全绿。
+- **顺手修掉一条一直在说谎的 live 检查。** `live-search` 一直用维基的搜索框，而这台机器上维基首页能开、搜索跳转却超时（`curl` 3 次里 1.3–2.1 s 返回 302，浏览器里却 24 s 停在错误页），连着三次跑挂在同一个地方，说的却不是插件的事。改用 Bing，并且按输入框自己的文字（`field: '搜索词'`）而不是控件编号去驱动——同一个搜索框，在一个引擎上是 `combobox`、在另一个上是 `input`，写死编号的检查本来就很脆。1.3 s 到结果页。
+- 测试：37 条单测（新增两条：错误页被认出来、真实页面一次比较就说空话；错误代号是从页面上问出来的，不是拿标题顶替）；广度 35 条全真。
+- **装出来的包一直是残的——现在修好了。** `package.json` 的 `files` 只列了 `index.js`、`sidecar.js`、`client.js`，漏掉 `tools.js` 与 `read.js`；`index.js` 第 123 行却 `import { sidecarTools } from './tools.js'`。0.13.4、0.14.0 的 tarball 里都没有这两个文件：`tar tzf … | grep tools.js` 是空的，把包装进干净目录后 `import` 直接 `Cannot find module`。开发环境一直正常，因为 profile 里的插件目录是指向仓库的符号链接，`files` 根本没参与解析——这条只在真装包的时候炸，而真正装包的人正是用户。现在两个文件都进了 `files`（tarball 从 17 个文件变 19 个），并加了两条守护测试：一条走真实的 import 图，逐个断言「被 import 的本地文件必须在 `files` 里」；另一条把磁盘上那个 tarball 真正解开、在包外 `import` 主半边的四个模块。把 `files` 里的两行删掉再跑，测试立刻红在 `tools.js is imported but not listed in package.json files`。
+- **一次批量调用里，遮罩也只挡一次。** 0.14.0 的「挡住就先关掉再点」只长在 `sidecar_click` 和 `sidecar_type` 上，`sidecar_do` 的每一步仍旧直接按坐标点——于是「点开搜索、输入、回车」这种批量流程，第一步就被 cookie 横幅吃掉，整串静默失败，还得模型自己回头发现。现在 `runStep` 里凡是按 `ref`、按文字、按字段名定位的步骤，都先过同一个探针：挡路的是带安全出口的横幅就点掉、确认没了、再执行这一步；每一步的编号行里只多一小句 `after Accept on a banner, `，五步流程也只付一次这个代价（第一步清掉的横幅对后面几步已经不在了）。
+- **批量步骤的措辞保持一行。** 单步结果本来就是「编号 + 一句话」，遮罩说明写成前置从句而不是另起一行，`1. after Accept on a banner, clicked "Under the banner"`，读起来还是一步一行，token 只多十来个字符。挡路的遮罩没有安全出口时（要删除、要支付）照样只报告，批量不会替人按下去——`guarded-overlay` 那条广度检查盯的正是这个边界。
+- 探针的代价还是可忽略：有东西挡路时一步 633 ms，没东西时 458 ms（各 3 次中位，`docs/BENCH.md` 的 Phase 5 新增两行），也就是「关掉横幅」这一步约 175 ms，换掉的是模型本来要花的一整个回合（读一次、点一次、再读一次）。
+- 真实网站回归照旧全绿：`npm run live` 6/6，打开 example.com 672 ms、按文字点到维基英文版 3.1 s、维基搜索 3.8 s（都在网站自己的加载时间里）。
+- 测试：35 条单测（新增一条 `coverLead`：在横幅上返回 `after Accept on a banner, `、在干净页面上返回空串且一次鼠标都不发、出口是「Pay now」时也不代按；新增两条打包检查，见上）；广度脚本 35 条全真，新增 `do-through-overlay`（批量步骤点穿横幅，标题变 `under clicked`）与 `do-field-overlay`（批量步骤在横幅下把 `#note` 填成 `kept`）。
+
 ## 0.14.0
 
 - **横幅挡着就自己关掉，再点你要点的那个。** 0.13.3 只把「an overlay covers it: We use cookies to remember you. Accept」说出来，等模型自己再发一次点击去关横幅——多一次读、多一个回合。现在同一个页面内的探针顺手找横幅自己的出口：弹层本身或它的容器够大（宽 ≥ 视口 60%、高 ≥ 50%），里面的按钮文字落在「接受 / 同意 / 允许 / 关闭 / 确定 / 知道了 / accept / agree / allow / close / dismiss / got it / i agree」这一小撮里，就点它、再确认挡着的东西没了、然后按原坐标点你要的控件，结果里两行都写清楚：`an overlay covers it: We use cookies… — the click landed beneath it` / `clicked Accept on it first, then the control`。`sidecar_click` 与 `sidecar_type`（给 `ref` 点聚焦那一步）都走这条路，一次调用把事办完。

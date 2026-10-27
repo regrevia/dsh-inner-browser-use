@@ -90,27 +90,57 @@ still hold the cookies.
 ## Live
 
 `node scripts/live.mjs` does the same work on the open internet, with no local
-fixture: it opens `example.com` (517 ms), reads it, clicks the language link on
-`wikipedia.org` and lands on `en.wikipedia.org` (3.6 s, the page's own load
+fixture: it opens `example.com` (566 ms), reads it, clicks the language link on
+`wikipedia.org` and lands on `en.wikipedia.org` (2.3 s, the page's own load
 included), goes back (URL back to `wikipedia.org`), reads ten list items out of
-the Web scraping article in one call (2 ms, 1813 chars), and types into the
-Wikipedia search box then presses Enter (5.2 s to a results URL). Six JSON
-lines; six `true` is the bar. A site being unreachable is reported as such and
-is not a plugin failure — the run says which site and how long it waited.
+the Web scraping article in one call (3 ms, 1813 chars), visits a host that
+cannot resolve, and types into a search box then presses Enter (1.3 s to a
+results URL). Eight JSON lines; eight `true` is the bar. A site being
+unreachable is reported as such and is not a plugin failure — the run says
+which site and how long it waited.
+
+Two of those checks are about failure rather than success. `live-dead-host`
+opens `https://never-resolves-this.invalid/`, waits for the browser to give up,
+then asks three tools — a read, a click, a batch — what the page says: all
+three must answer "the network could not reach that address", and none may
+quote the browser's own `ERR_…` text or `This site can't be reached` back as
+page content. `live-dead-host-recovers` navigates from there to a real address
+and requires the real page. The search check drives Bing by the box's words
+(`field: '搜索词'`) rather than a control number, because a search box is a
+`combobox` on one engine and an `input` on another; it used to use Wikipedia,
+whose home page answers while its search redirect times out on this network —
+three runs in a row failed there and said nothing about the tools.
 
 None of the numbers are the plugin's own latency: they are dominated by the
 site and the network, which is the point of having them next to the local
 measurements in [BENCH.md](BENCH.md).
+
+## The packed file is whole
+
+A clone works even when `package.json`'s `files` list is wrong, because the repo
+is right there. A tarball does not. After `npm pack`, the listing must contain
+the four modules the host half imports:
+
+```bash
+tar tzf dsh-inner-browser-use-*.tgz | grep -E 'package/(tools|read)\.js'
+```
+
+Two lines, or the install will fail with `Cannot find module` on first call.
+`node --test test/*.test.mjs` covers both halves of this: one test walks the
+import graph and fails when an imported file is not in `files`, another unpacks
+the tarball and imports it from outside the repo.
 
 ## Breadth
 
 `node scripts/breadth.mjs` drives a shadow-DOM component, a form (type, select,
 checkbox, submit), a native dialog, an iframe (read, type, click), a click that
 opens a tab, and a dead ref against local pages, and prints one JSON line per
-check. Thirty-three `true` lines is the bar; a `false` line names the check that
+check. Thirty-five `true` lines is the bar; a `false` line names the check that
 broke. Two of them cover a cross-site frame, which Chrome runs in its own
 process. Three cover a control under an overlay: the click clears a cookie
 banner and lands (`under clicked`), typing into a field under the same banner
 works, and a modal that offers to delete the account is reported without
-anything being pressed.
+anything being pressed. Two more drive the same overlay through `sidecar_do`:
+a batch step clears the banner before it clicks, and a batch step fills a field
+that was under it.
 

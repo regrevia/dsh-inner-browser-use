@@ -75,15 +75,40 @@ async function acted(page, args, look, label) {
 
 /**
  * Say the network failed, instead of reading Chrome's own error page as if it
- * were the site. Those pages mention proxies and firewalls, which is not what
- * the person asked about.
+ * were the site. Those pages mention proxies and firewalls, and they answer
+ * every question with something that looks like content — a read returns the
+ * text "This site can't be reached", a click lands on "Reload". A model that
+ * treats that as the page will report a broken site, or worse, act on it.
  * @param {any} page - sidecar page.
- * @returns {string} a sentence, or an empty string when the page is real.
+ * @returns {Promise<string>} a sentence, or an empty string when the page is real.
  */
-function unreachable(page) {
-  const url = String(page.url ?? '')
-  if (!url.startsWith('chrome-error://') && !url.startsWith('edge-error://')) return ''
-  return `the network could not reach that address — the browser stopped on a network error page (${String(page.title ?? 'no details')}). Check the address, or the proxy this machine needs.`
+/**
+ * Whether the tab is sitting on one of Chrome's own error pages, without asking
+ * the page anything.
+ * @param {any} page - sidecar page.
+ * @returns {boolean} true while the browser is showing its own failure page.
+ */
+export function isErrorPage(page) {
+  const url = String(page?.url ?? '')
+  return url.startsWith('chrome-error://') || url.startsWith('edge-error://')
+}
+
+export async function unreachable(page) {
+  if (!isErrorPage(page)) return ''
+  /* The code is the part a model can act on: ERR_NAME_NOT_RESOLVED is a typo,
+     ERR_PROXY_CONNECTION_FAILED is this machine's proxy, ERR_TIMED_OUT is slow. */
+  let detail = String(page.title ?? '')
+  try {
+    const said = await evaluate(page, `(() => {
+      const text = String(document.body ? document.body.innerText : '')
+      const code = (String(text).match(/ERR_[A-Z0-9_]+/) || [''])[0]
+      return code === '' ? String(document.title || '') : code
+    })()`)
+    if (typeof said === 'string' && said.trim() !== '') detail = said.trim()
+  } catch {
+    /* The error page itself refused to be read; the address still says enough. */
+  }
+  return `the network could not reach that address — the browser stopped on its own error page (${detail === '' ? 'no details' : detail}), which is not the site. Nothing on it is page content. Use sidecar_nav with another address, or fix the connection this machine needs.`
 }
 
 /** Key names this driver can press, spelled as a model would. */
@@ -210,23 +235,34 @@ ${what} covers it${probe.name === '' ? '' : `: ${probe.name}`} — the click lan
  * accepted on the person's behalf.
  * @param {any} page - sidecar page.
  * @param {number} ref - ref the agent meant to use.
- * @returns {Promise<{note: string, cleared: boolean}>} what happened.
+ * @returns {Promise<{note: string, cleared: boolean, name: string}>} what happened.
  */
 async function clearCover(page, ref) {
   const probe = await coverProbe(page, ref)
-  if (probe === null) return { note: '', cleared: true }
+  if (probe === null) return { note: '', cleared: true, name: '' }
   const note = coverNote(probe)
   const away = probe.dismiss
-  if (away === null) return { note, cleared: false }
+  if (away === null) return { note, cleared: false, name: '' }
   await page.mouse('mouseMoved', { x: away.x, y: away.y })
   await page.mouse('mousePressed', { x: away.x, y: away.y, clickCount: 1 })
   await page.mouse('mouseReleased', { x: away.x, y: away.y, clickCount: 1 })
   await wait(150)
   const again = await coverProbe(page, ref)
   if (again !== null) return { note: `${note}
-- clicking ${away.name} on it did not clear it`, cleared: false } // ui-copy-ignore
+- clicking ${away.name} on it did not clear it`, cleared: false, name: away.name } // ui-copy-ignore
   return { note: `${note}
-- clicked ${away.name} on it first, then the control`, cleared: true } // ui-copy-ignore
+- clicked ${away.name} on it first, then the control`, cleared: true, name: away.name } // ui-copy-ignore
+}
+
+/**
+ * The same clearing, said in one clause so a numbered step stays one line.
+ * @param {any} page - sidecar page.
+ * @param {number} ref - ref the step was about to use.
+ * @returns {Promise<string>} a prefix like `after Accept on a banner, ` or empty.
+ */
+export async function coverLead(page, ref) {
+  const gate = await clearCover(page, ref)
+  return gate.name === '' ? '' : `after ${gate.name} on a banner, `
 }
 
 /** @param {number} ms - how long. */
@@ -318,40 +354,41 @@ async function findWords(page, words) {
 
 async function runStep(page, step) {
   if (step.ref !== undefined) {
-    const spot = await locate(page, Number(step.ref))
-    if (spot.gone === true) return `ref ${String(step.ref)}: ${REF_GONE}`
-    if (step.tap !== undefined) {
+    if (step.tap !== undefined || step.text !== undefined) {
+      const lead = await coverLead(page, Number(step.ref))
+      const spot = await locate(page, Number(step.ref))
+      if (spot.gone === true) return `ref ${String(step.ref)}: ${REF_GONE}`
       const point = { x: Number(spot.x), y: Number(spot.y) }
       await page.mouse('mouseMoved', point)
       await page.mouse('mousePressed', { ...point, clickCount: 1 })
       await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-      return `clicked ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
-    }
-    if (step.text !== undefined) {
-      const point = { x: Number(spot.x), y: Number(spot.y) }
-      await page.mouse('mouseMoved', point)
-      await page.mouse('mousePressed', { ...point, clickCount: 1 })
-      await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+      if (step.tap !== undefined) return `${lead}clicked ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
       await wait(80)
       if (step.clear === true) await clearFocus(page)
       await page.insertText(String(step.text))
       if (step.submit === true) await pressKey(page, 'Enter')
-      return `typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
+      return `${lead}typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
     }
   }
   if (step.tap !== undefined && !/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(step.tap))) {
     const hit = await findWords(page, String(step.tap))
     if (hit === null) return `no control says ${JSON.stringify(String(step.tap))}`
-    const point = { x: hit.x, y: hit.y }
+    const lead = await coverLead(page, hit.ref)
+    const spot = await locate(page, hit.ref)
+    if (spot.gone === true) return `ref ${String(hit.ref)}: ${REF_GONE}`
+    const point = { x: Number(spot.x), y: Number(spot.y) }
     await page.mouse('mouseMoved', point)
     await page.mouse('mousePressed', { ...point, clickCount: 1 })
     await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-    return `clicked "${hit.name.slice(0, 60)}"`
+    return `${lead}clicked "${hit.name.slice(0, 60)}"`
   }
   if (step.field !== undefined) {
     const hit = await findWords(page, String(step.field))
     if (hit === null) return `no control says ${JSON.stringify(String(step.field))}`
-    const point = { x: hit.x, y: hit.y }
+    const lead = await coverLead(page, hit.ref)
+    const spot = await locate(page, hit.ref)
+    if (spot.gone === true) return `ref ${String(hit.ref)}: ${REF_GONE}`
+    const point = { x: Number(spot.x), y: Number(spot.y) }
     await page.mouse('mouseMoved', point)
     await page.mouse('mousePressed', { ...point, clickCount: 1 })
     await page.mouse('mouseReleased', { ...point, clickCount: 1 })
@@ -359,7 +396,7 @@ async function runStep(page, step) {
     if (step.clear === true) await clearFocus(page)
     await page.insertText(String(step.text ?? ''))
     if (step.submit === true) await pressKey(page, 'Enter')
-    return `typed into "${hit.name.slice(0, 60)}"`
+    return `${lead}typed into "${hit.name.slice(0, 60)}"`
   }
   if (step.tap !== undefined) {
     const [x, y] = String(step.tap).split(',').map(Number)
@@ -530,9 +567,22 @@ export async function extractRows(page, args) {
 }
 
 export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
+  /* Reading, clicking and typing on Chrome's own error page is not driving the
+     site: the text there is Chrome talking, the buttons reload. Those calls are
+     refused with the error code instead. The tools that report the browser
+     itself — the tab list, the console, failed requests, the address — still
+     run, because they are how a stuck person finds out what happened. */
+  const withRawPage = async (work) => {
+    if (!sidecar.alive) return { text: SIDECAR_OFF }
+    const page = await sidecar.ensure()
+    const text = await work(page)
+    return { text: text + personNote(sidecar) }
+  }
   const withPage = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
     const page = await sidecar.ensure()
+    const dead = await unreachable(page)
+    if (dead !== '') return { text: dead + personNote(sidecar) }
     const text = await work(page)
     return { text: text + personNote(sidecar) }
   }
@@ -561,7 +611,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const who = String(exec?.agent?.id ?? '')
         if (who !== '') host.want?.(who) // ui-copy-ignore
         await settle(page, 8000)
-        const dead = unreachable(page)
+        const dead = await unreachable(page)
         if (dead !== '') return { text: dead }
         return { text: await look(page, { mode: 'text' }) }
       },
@@ -773,21 +823,21 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 60_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         if (typeof args?.url === 'string' && args.url !== '') await page.navigate(args.url)
         else if (args?.back === true) await page.history(-1)
         else if (args?.forward === true) await page.history(1)
         else if (args?.reload === true) await page.reload()
         else return 'Give a url, or ask to go back, forward or reload.'
         await settle(page, 8000)
-        const dead = unreachable(page)
+        const dead = await unreachable(page)
         if (dead !== '') return dead
         return acted(page, args, () => look(page, { mode: 'text' }), 'navigate') // ui-copy-ignore
       }),
     },
     {
       name: 'sidecar_do', // ui-copy-ignore
-      description: 'Run several steps in one call and report one compact result: the whole of "click search, type a query, press Enter, wait for results" is one call instead of five. Steps run in order and stop at the first that cannot proceed. Each step: {ref, tap | text, submit}, {tap: "x,y"}, {tap: "Sign in"}, {field: "Email", text}, {text}, {key}, {scroll}, {wait_text}, {wait_gone}, {wait_url}, {wait_idle}, {eval}, {open}, {sleep_ms}. Waits know when the page has settled.',
+      description: 'Run several steps in one call and report one compact result: the whole of "click search, type a query, press Enter, wait for results" is one call instead of five. Steps run in order and stop at the first that cannot proceed. Each step: {ref, tap | text, submit}, {tap: "x,y"}, {tap: "Sign in"}, {field: "Email", text}, {text}, {key}, {scroll}, {wait_text}, {wait_gone}, {wait_url}, {wait_idle}, {eval}, {open}, {sleep_ms}. Waits know when the page has settled. A step that names a control clears a cookie banner in its way first.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
@@ -835,6 +885,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const said = await runStep(page, step ?? {})
           report.push(`${index + 1}. ${said}`)
           if (/^ref \d+: That control is gone/.test(said)) return `${report.join('\n')}\nStopped: the page changed. Call sidecar_view and use the new numbers.`
+          /* A step can navigate straight onto Chrome's error page — a mistyped
+             address, or a site that does not answer. The rest of the batch
+             would then type into "This site can't be reached", so it stops
+             here and says what really happened. */
+          if (isErrorPage(page)) return `${report.join('\n')}\nStopped after step ${index + 1}: ${await unreachable(page)}`
           if (step?.sleep_ms === undefined && step?.wait_text === undefined && step?.wait_gone === undefined && step?.wait_url === undefined && step?.wait_idle === undefined) {
             await settle(page, Number(step?.timeout ?? 5000))
           }
@@ -1070,7 +1125,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 30_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} what happened. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         let start = { x: Number(args?.x ?? NaN), y: Number(args?.y ?? NaN) }
         if (args?.from !== undefined) {
           const spot = await locate(page, Number(args.from))
@@ -1110,7 +1165,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 20_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the state now. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         const checkRoute = await contextFor(page, Number(args?.ref))
         const checkParams = {
           expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${checkRoute?.local ?? Number(args?.ref)}); if (!hit) return null; const el = hit.el; return { checked: Boolean(el.checked), name: String(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.name || '').trim().slice(0, 60) } })()`,
@@ -1185,7 +1240,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 15_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} what the dialog said. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         const dialog = page.dialog
         if (dialog === null || dialog === undefined) return 'no dialog is open'
         const said = `${String(dialog.type ?? '')}: ${String(dialog.message ?? '')}`
@@ -1210,7 +1265,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 15_000,
       isConcurrencySafe: () => true,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the lines. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         const limit = Math.max(1, Math.min(200, Number(args?.limit ?? 30)))
         const lines = page.console.slice(-limit).map((entry) => `${entry.type}: ${entry.text}`)
         return lines.length === 0 ? 'no console output' : lines.join('\n')
@@ -1228,7 +1283,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 15_000,
       isConcurrencySafe: () => true,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the failures. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         const limit = Math.max(1, Math.min(100, Number(args?.limit ?? 20)))
         const rows = page.failed.slice(-limit).map((row) => `${row.type}: ${row.error}`)
         return rows.length === 0 ? 'no request failed' : rows.join('\n')
@@ -1252,7 +1307,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /* Reading the jar is safe; writing one is not, and the tool can do both. */
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} what the jar holds now. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         if (args?.clear === true) {
           await page.clearCookies()
           return 'every cookie is gone'
@@ -1292,7 +1347,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 15_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} clipboard text. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         if (typeof args?.set === 'string') {
           await page.clipboardWrite(args.set)
           return `clipboard set, ${String(args.set.length)} characters`
@@ -1342,7 +1397,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 20_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the tabs or what happened. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRawPage(async (page) => {
         const action = String(args?.action ?? 'list')
         if (action === 'list') {
           const rows = await sidecar.tabs()
@@ -1370,7 +1425,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 40_000,
       isConcurrencySafe: () => false,
       /** @returns {Promise<{text: string}>} where the PDF is. */
-      execute: async () => withPage(async (page) => {
+      execute: async () => withRawPage(async (page) => {
         const data = await page.pdf()
         const dir = join(homedir(), SHOT_DIR)
         await mkdir(dir, { recursive: true })

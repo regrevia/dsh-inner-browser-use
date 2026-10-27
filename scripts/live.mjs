@@ -98,20 +98,49 @@ try {
     line('live-list', count >= 8 && rows.includes('· '), `${Date.now() - started} ms · ${count} rows · ${rows.length} chars · ${rows.split('\n')[1]?.slice(0, 60)}`)
   }
 
+  // A dead host: the browser stops on its own error page, which is not the site.
+  // Reading it back must say the network failed, not quote "This site can't be
+  // reached" as if it were page content — and the browser must recover after.
+  const deadAt = Date.now()
+  const dead = await within(sidecar.ensure({ url: 'https://never-resolves-this.invalid/' }), 30_000)
+  if (dead === undefined || dead?.timedOut === true) {
+    line('live-dead-host', false, 'the invalid host never even failed')
+  } else {
+    await sleep(1200)
+    const deadRead = String((await within(view.execute({ max_chars: 700 }), 20_000))?.text ?? '')
+    const named = /the network could not reach that address/.test(deadRead)
+    const quoted = /ERR_[A-Z0-9_]+|can.t be reached|无法访问/.test(deadRead) && !named
+    // A read is the obvious case; a click and a batch are the ones that would
+    // otherwise press "Reload" on Chrome's page and call it progress.
+    const deadClick = String((await within(tool('sidecar_click').execute({ text: '重新加载' }), 20_000))?.text ?? '')
+    const deadBatch = String((await within(tool('sidecar_do').execute({ steps: [{ tap: 'Reload' }], read: 'none' }), 20_000))?.text ?? '')
+    const allNamed = [deadRead, deadClick, deadBatch].every((said) => /the network could not reach that address/.test(said))
+    line('live-dead-host', named && !quoted && allNamed, `${Date.now() - deadAt} ms · ${String(page.url).slice(0, 40)} · read/click/batch all refused · ${deadRead.split('\n')[0].slice(0, 70)}`)
+    // The recovery is the other half of the promise: a real address still works.
+    await within(nav.execute({ url: 'https://example.com/' }), 30_000)
+    const back = await loaded(15_000)
+    line('live-dead-host-recovers', back && (await title()) === 'Example Domain', `${back ? 'back on a real page' : 'stuck'} · ${String(page.url).slice(0, 50)}`)
+  }
+
   // Typing into a real search box and pressing Enter, the way a person uses it.
-  const home = await within(sidecar.ensure({ url: 'https://www.wikipedia.org/' }), 30_000)
+  // By the box's own words rather than a control number: a search box is a
+  // combobox on one engine and an input on another, and the words are the part
+  // a person reads. wikipedia.org was dropped as the host here — its home page
+  // answers while its search redirect times out on this network, which failed
+  // this check three runs running and said nothing about the tools.
+  const home = await within(sidecar.ensure({ url: 'https://www.bing.com/' }), 30_000)
   if (home === undefined || home?.timedOut === true) {
-    line('live-search', false, 'wikipedia.org did not answer in 30 s')
+    line('live-search', false, 'bing.com did not answer in 30 s')
   } else {
     await loaded()
-    const typed = tool('sidecar_type')
-    const shown = String((await within(view.execute({ max_chars: 1200 }), 20_000))?.text ?? '')
-    const searchRef = Number((shown.match(/^(\d+) \[input\] [^\n]*[Ss]earch/m) ?? [])[1] ?? 0)
+    const batch = tool('sidecar_do')
     const typedStart = Date.now()
-    const wrote = String((await within(typed.execute({ ref: searchRef, text: 'browser automation', submit: true }), 30_000))?.text ?? '')
+    const wrote = String((await within(batch.execute({ steps: [{ field: '搜索词', text: 'browser automation', submit: true }], read: 'text', max_chars: 500 }), 45_000))?.text ?? '')
     await loaded(15_000)
     await sleep(500)
-    line('live-search', searchRef > 0 && /Special:Search|browser automation/i.test(`${page.url} ${await title()}`), `${Date.now() - typedStart} ms · ref ${searchRef} · ${String(page.url).slice(0, 60)} · ${wrote.split('\n')[0].slice(0, 30)}`)
+    const landedOn = String(page.url)
+    const results = /\/search\?/.test(landedOn) && /browser automation/i.test(await title())
+    line('live-search', results, `${Date.now() - typedStart} ms · ${landedOn.slice(0, 60)} · ${wrote.split('\n')[0].slice(0, 40)}`)
   }
 } catch (error) {
   line('live-crashed', false, String(error?.message ?? error).slice(0, 120))

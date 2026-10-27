@@ -95,8 +95,8 @@ In the app: **Plugins → Install from folder**, and pick the clone. To install 
 tarball instead, build it from that directory and install the file:
 
 ```bash
-npm pack                                  # writes dsh-inner-browser-use-0.14.0.tgz
-dsh plugin install ./dsh-inner-browser-use-0.14.0.tgz
+npm pack                                  # writes dsh-inner-browser-use-0.15.0.tgz
+dsh plugin install ./dsh-inner-browser-use-0.15.0.tgz
 ```
 
 The plugin appears under **Plugins** as *Background browser*. It needs Google Chrome or
@@ -119,6 +119,9 @@ opens before a call: a chat that never asked for a page keeps its column as it w
   profile folder, and `sidecar_downloads` names it, its size and when it arrived.
 - **The network is visible.** `sidecar_network` lists what the page asked for, newest first,
   so a page that fills itself in from an address can be understood without a screenshot.
+- **An overlay does not eat the action.** A cookie banner over the button is cleared the way a
+  person would clear it, then the click lands — in the same call, and in every step of a
+  `sidecar_do` batch. Anything offering to delete, pay or sign out is reported instead.
 
 ## What it does not do
 

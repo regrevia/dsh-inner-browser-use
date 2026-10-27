@@ -383,6 +383,16 @@ try {
   const typedThrough = String((await typeTool0.execute({ ref: note.ref, text: 'held' })).text)
   line('type-through-overlay', typedThrough.includes('clicked Accept on it first') && (await js(page, 'document.querySelector("#note").value')) === 'held', typedThrough.replace(/\n/g, ' / ').slice(0, 130))
 
+  await page.navigate(`${base}/cover`)
+  const doTool0 = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  const batch = String((await doTool0.execute({ steps: [{ tap: 'Under the banner' }], read: 'none' })).text)
+  const batchThrough = (await js(page, 'document.title')) === 'under clicked'
+  line('do-through-overlay', batchThrough && batch.includes('after Accept on a banner, clicked "Under the banner"'), `${batchThrough ? 'click went through' : 'click stayed under'} | ${batch.replace(/\n/g, ' / ').slice(0, 120)}`)
+
+  await page.navigate(`${base}/cover`)
+  const batchField = String((await doTool0.execute({ steps: [{ field: 'Note', text: 'kept' }], read: 'none' })).text)
+  line('do-field-overlay', String(await js(page, 'document.querySelector("#note").value')) === 'kept' && batchField.includes('after Accept on a banner, typed into "Note"'), batchField.replace(/\n/g, ' / ').slice(0, 120))
+
   await page.navigate(`${base}/guard`)
   const guardRead = await readPage(page, { mode: 'text', maxChars: 2000 })
   const underGuard = control(guardRead, 'Under the banner')
