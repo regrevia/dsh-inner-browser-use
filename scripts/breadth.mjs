@@ -6,6 +6,7 @@
  * Run: node scripts/breadth.mjs
  */
 import { createServer } from 'node:http'
+import { writeFileSync } from 'node:fs'
 
 import { readPage, locate, REF_GONE } from '../read.js'
 import { Sidecar } from '../sidecar.js'
@@ -39,6 +40,12 @@ const PAGES = {
     <h1>Pop</h1>
     <button id='pop' onclick="window.open('/done?popped=1','_blank')">Open tab</button></body></html>`,
   '/done': `<!doctype html><html><body><h1>Done</h1><p>the form arrived</p></body></html>`,
+  '/upload': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Upload</h1><input type="file" aria-label="Pick file">
+    <p id='out'>nothing</p>
+    <script>document.querySelector('input').addEventListener('change', (event) => {
+      document.getElementById('out').textContent = event.target.files[0].name
+    })</script></body></html>`,
   '/xhr': `<!doctype html><html><body><h1>Network</h1><p id='out'>waiting</p>
     <script>fetch('/api/ping').then((r) => r.json()).then((data) => { document.getElementById('out').textContent = data.said })</script>
     </body></html>`,
@@ -231,6 +238,31 @@ try {
     ping = page.networkList().find((row) => row.url.endsWith('/api/ping'))
   }
   line('network-list', ping !== undefined && ping.status === 200 && ping.method === 'GET', JSON.stringify(ping ?? null))
+
+  await page.navigate(`${base}/upload`)
+  const uploadForm = await readPage(page, { mode: 'forms', maxChars: 800 })
+  const pick = control(uploadForm, 'Pick file')
+  if (pick === undefined) line('upload-file', false, 'file input not numbered')
+  else {
+    const chosen = '/tmp/breadth-upload.txt'
+    writeFileSync(chosen, 'picked')
+    const handle = await page.cdp.send('Runtime.evaluate', {
+      expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${pick.ref}); return hit ? hit.el : null })()`,
+    })
+    const objectId = handle.result?.objectId
+    const node = await page.cdp.send('DOM.describeNode', { objectId })
+    await page.cdp.send('DOM.setFileInputFiles', { files: [chosen], backendNodeId: node.node.backendNodeId })
+    let said = ''
+    for (let i = 0; i < 20 && said !== 'breadth-upload.txt'; i += 1) {
+      await sleep(200)
+      const out = await page.cdp.send('Runtime.evaluate', { expression: `document.getElementById('out').textContent`, returnByValue: true })
+      said = String(out.result?.value ?? '')
+    }
+    line('upload-file', said === 'breadth-upload.txt', said)
+  }
+
+  const pdf = await page.pdf()
+  line('pdf-print', pdf.startsWith('JVBERi') && pdf.length > 1000, `${pdf.length} base64 chars`)
 
   const gone = await locate(page, 99999)
   line('gone-ref', gone.gone === true && typeof REF_GONE === 'string')
