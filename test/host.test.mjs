@@ -126,6 +126,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_eval',
     'sidecar_extract',
     'sidecar_failed',
+    'sidecar_grab',
     'sidecar_hover',
     'sidecar_key',
     'sidecar_nav',
@@ -455,4 +456,15 @@ test('a drawing surface can be pictured on its own', async () => {
   assert.match(expr, /getBoundingClientRect/)
   assert.match(expr, /scrollIntoView/)
   assert.match(expr, /width: b\.width/)
+})
+
+test('the picture itself can be taken off the page', async () => {
+  const { pictures } = await import('../read.js?v=1')
+  const expr = pictures(4, 2)
+  assert.match(expr, /readAsDataURL/)
+  assert.match(expr, /credentials: 'include'/)
+  assert.match(expr, /reg.find\(4\)/)
+  /* A drawing surface has no file behind it: its pixels come from itself. */
+  assert.match(expr, /toDataURL/)
+  assert.match(expr, /slice\(0, 2\)/)
 })

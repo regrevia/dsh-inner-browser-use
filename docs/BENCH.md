@@ -305,3 +305,15 @@ Exact equality still wins over the squeezed form, so `Sign in` never lands on
 The visible-box rule: a candidate is usable when it, or its nearest visible
 ancestor, has a real box — so a 0-opacity input still counts if it covers
 something the person can see.
+
+## Phase 15 — the answer is the picture, 0.25.0
+
+`/pic` is one 140x90 PNG and nothing else.
+
+| what | result |
+| --- | --- |
+| `sidecar_grab` | 6 ms, `picture-check.png`, 140x90 |
+| before | three round trips: list the images, ask for the full address, fetch it |
+
+A picture page has no text at all, so a read of it costs one line and no tokens;
+the picture comes back as a file path the person can open.

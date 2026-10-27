@@ -213,3 +213,9 @@ Both halves now resolve a name to a place: visible field, hidden field behind a
 visible box, words split over nodes, words outside the wrapper. Next: a page
 whose visible box is a `<canvas>` or an `<iframe>` — nothing in the tree to
 name, so the fallback has to be a picture plus a click, not a name lookup.
+
+## Phase 16 — a file, not a path, 0.25.0
+
+`sidecar_grab` returns a path. Next: say one line about the picture (size, and
+whether it is mostly one colour) so a model that cannot open files still learns
+"the chart is blank" without a full read.

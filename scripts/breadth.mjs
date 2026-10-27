@@ -7,11 +7,51 @@
  */
 import { createServer } from 'node:http'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { deflateSync } from 'node:zlib'
 
 import { readPage, renderPage, locate, contextFor, REF_GONE } from '../read.js'
 import { diffRead, sidecarTools } from '../tools.js'
 import { Sidecar } from '../sidecar.js'
 
+const chunk = (kind, body) => {
+  const size = Buffer.alloc(4)
+  size.writeUInt32BE(body.length)
+  const head = Buffer.from(kind, 'latin1')
+  const crc = Buffer.alloc(4)
+  let c = ~0
+  for (const byte of Buffer.concat([head, body])) {
+    c ^= byte
+    for (let i = 0; i < 8; i += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+  }
+  crc.writeUInt32BE((~c) >>> 0)
+  return Buffer.concat([size, head, body, crc])
+}
+const PNG_140 = (() => {
+  const wide = 140
+  const high = 90
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(wide, 0)
+  header.writeUInt32BE(high, 4)
+  header[8] = 8
+  header[9] = 2
+  const rows = Buffer.alloc((wide * 3 + 1) * high)
+  for (let y = 0; y < high; y += 1) {
+    const at = y * (wide * 3 + 1)
+    rows[at] = 0
+    for (let x = 0; x < wide; x += 1) {
+      const px = at + 1 + x * 3
+      rows[px] = 40 + x
+      rows[px + 1] = 90
+      rows[px + 2] = 200 - y
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+})()
 const PAGES = {
   '/shadow': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Shadow</h1><x-card></x-card>
@@ -37,6 +77,9 @@ const PAGES = {
     <div class="box"><div class="lbl">Signature</div><canvas id="sig" aria-label="Signature" width="300" height="120" style="width:300px;height:120px;background:#eef" onclick="document.title='sig '+event.offsetX+','+event.offsetY"></canvas></div>
     <div class="box"><div class="lbl">Birthday</div><div class="dp" style="position:relative;height:34px;border:1px solid #bbb;border-radius:6px"><input id="bd" type="text" style="position:absolute;inset:0;width:100%;height:100%;border:0;opacity:0"></div></div>
     <button type="submit">Send</button></form></body></html>`,
+  /* One picture and nothing else: a chart or a generated image is the answer. */
+  '/pic': `<!doctype html><html><body style="margin:0;padding:24px">
+    <img id="shot" src="/pic.png" width="140" height="90" alt="Chart"></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
     <button onclick="document.title='beta clicked'">Beta sent</button>
@@ -126,6 +169,11 @@ const server = createServer((req, res) => {
   if (req.url.split('?')[0] === '/api/ping') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ said: 'pong' }))
+    return
+  }
+  if (req.url.split('?')[0] === '/pic.png') {
+    res.writeHead(200, { 'content-type': 'image/png' })
+    res.end(PNG_140)
     return
   }
   if (req.url.split('?')[0] === '/file') {
@@ -272,6 +320,16 @@ try {
     const shotHigh = png.readUInt32BE(20)
     line('canvas-shot', Math.abs(shotWide - 316) <= 4 && Math.abs(shotHigh - 136) <= 4, `${shotWide}x${shotHigh} ${String(file).slice(-24)}`)
   }
+
+  await page.navigate(`${base}/pic`)
+  const grabTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_grab')
+  const grabbedAt = Date.now()
+  const grabbed = String((await grabTool.execute({ name: 'picture-check' })).text).trim()
+  const grabbedFile = grabbed.split(' ')[0]
+  const grabbedPng = readFileSync(grabbedFile)
+  const grabWide = grabbedPng.readUInt32BE(16)
+  const grabHigh = grabbedPng.readUInt32BE(20)
+  line('grab-picture', grabWide === 140 && grabHigh === 90 && grabbed.includes('140x90'), `${Date.now() - grabbedAt} ms | ${grabbedFile.split('/').pop()} ${grabWide}x${grabHigh}`)
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')

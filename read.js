@@ -305,6 +305,72 @@ export function bounds(ref) {
 }
 
 /**
+ * The pictures on the page, as files a person can open.
+ * A generated image or a chart is often the whole answer, and there is no
+ * wording in the tree that stands for it: take the picture itself.
+ * @param {number} [ref] - only pictures at or inside this control.
+ * @param {number} [count] - how many, largest first. Default 1.
+ * @returns {string} an expression that answers with `{pictures: [...]}`.
+ */
+export function pictures(ref, count) {
+  const scope = Number(ref)
+  const limit = Math.max(1, Math.min(4, Number(count) || 1))
+  return `(async () => {
+  const reg = window.${REGISTRY}
+  const where = ${Number.isFinite(scope) ? `(reg ? (reg.find(${scope}) || {}).el : null)` : 'null'}
+  const picked = []
+  const seen = new Set()
+  const add = (el, kind) => {
+    if (el === null || el === undefined || seen.has(el)) return
+    seen.add(el)
+    const b = el.getBoundingClientRect()
+    const w = kind === 'canvas' ? el.width : el.naturalWidth || b.width
+    const h = kind === 'canvas' ? el.height : el.naturalHeight || b.height
+    if (w < 48 || h < 48) return
+    if (b.width < 8 || b.height < 8) return
+    const s = getComputedStyle(el)
+    if (s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) < 0.05) return
+    picked.push({ el, kind, w, h, area: w * h })
+  }
+  const roots = where ? [where, ...where.querySelectorAll('*')] : [document, ...document.querySelectorAll('*')]
+  for (const node of roots) {
+    if (node === document || node === where) continue
+    const tag = node.tagName
+    if (tag === 'IMG') add(node, 'img')
+    else if (tag === 'CANVAS') add(node, 'canvas')
+  }
+  if (where && where.tagName === 'IMG') add(where, 'img')
+  if (where && where.tagName === 'CANVAS') add(where, 'canvas')
+  picked.sort((a, b) => b.area - a.area)
+  const out = []
+  for (const item of picked.slice(0, ${limit})) {
+    let data = ''
+    let type = 'image/png'
+    try {
+      if (item.kind === 'canvas') {
+        data = item.el.toDataURL('image/png')
+      } else {
+        const url = item.el.currentSrc || item.el.src || ''
+        const answer = await fetch(url, { credentials: 'include' })
+        const blob = await answer.blob()
+        type = blob.type || type
+        data = await new Promise((done, fail) => {
+          const reader = new FileReader()
+          reader.onload = () => done(String(reader.result))
+          reader.onerror = () => fail(new Error('unreadable'))
+          reader.readAsDataURL(blob)
+        })
+      }
+    } catch {
+      data = ''
+    }
+    out.push({ kind: item.kind, width: item.w, height: item.h, type, data })
+  }
+  return JSON.stringify({ pictures: out })
+})()`
+}
+
+/**
  * What sits on top of a control at click time, when it is not the control.
  * A cookie banner or a modal over the thing the agent meant to click is the
  * commonest quiet failure on real pages: the click lands, nothing happens.

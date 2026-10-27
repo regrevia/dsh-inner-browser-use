@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, bounds, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -1307,6 +1307,52 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const file = join(dir, name.endsWith('.png') ? name : `${name}.png`)
         await writeFile(file, Buffer.from(data, 'base64'))
         return file
+      }),
+    },
+    {
+      name: 'sidecar_grab', // ui-copy-ignore
+      description: 'Save the picture on the page as a file: an image, a chart, a drawing surface. Picks the largest one, or the one inside a given control.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          ref: { type: 'integer', description: 'Only the picture at or inside this control.' },
+          name: { type: 'string', description: 'File name without extension.' },
+          count: { type: 'integer', description: 'How many, largest first. Default 1, at most 4.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 40_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<string>} the saved paths, one per line. */
+      execute: async (args) => withRead(async (page) => {
+        const said = await evaluate(page, pictures(args?.ref, args?.count))
+        let found
+        try {
+          found = JSON.parse(typeof said === 'string' ? said : JSON.stringify(said))
+        } catch {
+          found = { pictures: [] }
+        }
+        const rows = []
+        const dir = join(homedir(), SHOT_DIR)
+        await mkdir(dir, { recursive: true })
+        const base = String(args?.name ?? '').replace(/[^\w.-]/g, '') || `sidecar-picture-${Date.now()}`
+        const list = Array.isArray(found?.pictures) ? found.pictures : []
+        for (let index = 0; index < list.length; index += 1) {
+          const item = list[index]
+          const body = String(item?.data ?? '')
+          const mark = body.indexOf(',')
+          if (mark < 0) continue
+          const type = String(item?.type ?? 'image/png')
+          const ext = type.includes('jpeg') ? 'jpg' : type.includes('webp') ? 'webp' : type.includes('svg') ? 'svg' : 'png'
+          const file = join(dir, `${base}${list.length > 1 ? `-${index + 1}` : ''}.${ext}`)
+          await writeFile(file, Buffer.from(body.slice(mark + 1), 'base64'))
+          rows.push(`${file} ${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`)
+        }
+        if (rows.length === 0) {
+          return list.length === 0 ? 'There is no picture on the page.' : 'That picture could not be saved.'
+        }
+        return rows.join('\n')
       }),
     },
     {
