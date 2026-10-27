@@ -109,6 +109,14 @@ Chromium on the machine; see [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 The first call starts the browser and puts its mirror in this chat's right column. Nothing
 opens before a call: a chat that never asked for a page keeps its column as it was.
 
+## Frames and downloads
+
+- **Frames are read, including cross-site ones.** Controls inside an iframe are numbered like
+  the page's own, whether Chrome shares the page's process or runs the frame apart; a click in
+  either lands where the frame actually sits.
+- **A download lands on disk.** A click that saves a file writes it into the browser's own
+  profile folder, and `sidecar_downloads` names it, its size and when it arrived.
+
 ## What it does not do
 
 - **It does not touch your Chrome.** The browser runs from a separate profile with no
@@ -116,10 +124,6 @@ opens before a call: a chat that never asked for a page keeps its column as it w
 - **The viewport is fixed.** 1440×900, desktop layout, no resizing and no mobile emulation.
 - **One page at a time.** A link that opens a tab is followed — the mirror lands on the new
   page and the popup closes — so there is never a second page to choose between.
-- **No downloads.** A file offered by a page is not saved to disk.
-- **Frames are read, including cross-site ones.** Controls inside an iframe are numbered like
-  the page's own, whether Chrome shares the page's process or runs the frame apart; a click in
-  either lands where the frame actually sits.
 
 ## Compatibility
 

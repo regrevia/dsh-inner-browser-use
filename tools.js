@@ -800,6 +800,21 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
 
     {
+      name: 'sidecar_downloads', // ui-copy-ignore
+      description: 'List what this browser has downloaded, newest first, with the file name, its size and when it arrived.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 10_000,
+      isConcurrencySafe: () => true,
+      /** @returns {Promise<{text: string}>} the files. */
+      execute: async () => {
+        const files = sidecar.downloads()
+        if (files.length === 0) return { text: 'no downloads yet' }
+        return { text: files.map((file) => `${String(file.name)} · ${String(file.bytes)} B · ${String(file.at)}`).join('\n') }
+      },
+    },
+
+    {
       name: 'sidecar_drag', // ui-copy-ignore
       description: 'Drag from one place to another with real mouse steps: from a ref or a point, to a point or offset. Use it for sliders, dashboards and drag-and-drop lists.',
       parameters: {

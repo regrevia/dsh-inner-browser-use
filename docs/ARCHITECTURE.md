@@ -131,7 +131,7 @@ browser without pulling the column away from the person reading it.
 
 ## Tool surface
 
-`sidecarTools()` in `tools.js` builds the 23 definitions and `index.js` registers them on the
+`sidecarTools()` in `tools.js` builds the 24 definitions and `index.js` registers them on the
 plugin's tool scope. All of them return one text block. A page read numbers the controls and
 keeps those numbers across later reads, so `sidecar_click` by ref means the element the model
 last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
@@ -149,6 +149,14 @@ launch, so a restart of the app does not sign the person out.
 
 A system-prompt section (`browser-in-this-chat`) tells the model to reach for these tools
 without asking first when someone wants something done on a site.
+
+## Downloads
+
+Chrome is pointed at `<profile>/downloads` when the page starts, so a click
+that saves a file writes it there instead of nowhere. The folder belongs to
+the profile: it is the same one on the next launch, and nothing outside the
+profile is touched. `sidecar_downloads` lists what is on disk, newest first;
+a `.crdownload` still in flight is not listed.
 
 ## Frames and popups
 

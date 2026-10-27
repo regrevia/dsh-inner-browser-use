@@ -39,6 +39,8 @@ const PAGES = {
     <h1>Pop</h1>
     <button id='pop' onclick="window.open('/done?popped=1','_blank')">Open tab</button></body></html>`,
   '/done': `<!doctype html><html><body><h1>Done</h1><p>the form arrived</p></body></html>`,
+  '/download': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Download</h1><a id='get' href="/file" download="report.txt">Get file</a></body></html>`,
   '/cross': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Cross</h1>
     <iframe src="http://localhost:__PORT__/partner" style="width:520px;height:240px;border:1px solid #999"></iframe>
@@ -50,6 +52,11 @@ const PAGES = {
 }
 
 const server = createServer((req, res) => {
+  if (req.url.split('?')[0] === '/file') {
+    res.writeHead(200, { 'content-type': 'text/plain', 'content-disposition': 'attachment; filename="report.txt"' })
+    res.end('the file arrived')
+    return
+  }
   const html = PAGES[req.url.split('?')[0]]
   if (html === undefined) {
     res.writeHead(404, { 'content-type': 'text/html' })
@@ -192,6 +199,22 @@ try {
     const said = session === undefined ? undefined : (await page.cdp.send('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, session).catch(() => null))?.result?.value
     line('frame-cross-click', said === 'partner clicked', String(said))
   } else line('frame-cross-click', false, 'button not numbered')
+
+  await page.navigate(`${base}/download`)
+  const getIt = control(await readPage(page, { mode: 'text', maxChars: 600 }), 'Get file')
+  if (getIt === undefined) line('download-click', false, 'link not numbered')
+  else {
+    const beforeAt = String(page.downloads()[0]?.at ?? '')
+    await click(page, getIt.ref)
+    let files = []
+    for (let i = 0; i < 30; i += 1) {
+      await sleep(200)
+      files = page.downloads()
+      if (String(files[0]?.at ?? '') > beforeAt) break
+    }
+    const newest = files[0]
+    line('download-click', String(newest?.at ?? '') > beforeAt && String(newest?.name ?? '').startsWith('report') && newest.bytes === 16, JSON.stringify(files.slice(0, 2)))
+  }
 
   const gone = await locate(page, 99999)
   line('gone-ref', gone.gone === true && typeof REF_GONE === 'string')

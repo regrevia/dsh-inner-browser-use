@@ -345,6 +345,34 @@ export class SidecarPage {
   }
 
   /**
+   * Files this browser has downloaded, newest first.
+   * @returns {{name: string, bytes: number, at: string}[]} what is on disk.
+   */
+  downloads() {
+    const folder = this.downloadsFolder ?? downloadsDir(profileDir(this.profile))
+    let names = []
+    try {
+      names = readdirSync(folder)
+    } catch (error) {
+      return []
+    }
+    const found = []
+    for (const name of names) {
+      if (name.endsWith('.crdownload')) continue
+      const path = join(folder, name)
+      try {
+        const info = statSync(path)
+        if (!info.isFile()) continue
+        found.push({ name, bytes: info.size, at: new Date(info.mtimeMs).toISOString() })
+      } catch (error) {
+        continue
+      }
+    }
+    found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+    return found.slice(0, 20)
+  }
+
+  /**
    * Where the owner element of a frame sits on the page, for a frame whose own
    * process cannot answer. The page's DOM knows the iframe element.
    * @param {string} frameId - a frame from the frame list.
@@ -370,6 +398,12 @@ export class SidecarPage {
   /** Keep one listener that fans frames out to every viewer. */
   async start() {
     await this.cdp.send('Network.enable').catch(() => {})
+    /* A click that downloads should leave a file, not nothing: point downloads
+       at the profile so the driver can report where they went. */
+    const folder = downloadsDir(profileDir(this.profile))
+    mkdirSync(folder, { recursive: true })
+    this.downloadsFolder = folder
+    await this.cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: folder }).catch(() => {})
     /* Popups and out-of-process frames are separate targets. Attaching without
        waiting keeps them usable, and lets the mirror follow a new tab. */
     await this.cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }).catch(() => {})
@@ -776,6 +810,11 @@ function sessionJar(dir) {
   return join(dir, 'session-cookies.json') // ui-copy-ignore
 }
 
+/** Where a profile keeps what the page downloads. */
+function downloadsDir(dir) {
+  return join(dir, 'downloads')
+}
+
 export class Sidecar {
   /** @param {{logger?: any}} options - logging. */
   constructor(options = {}) {
@@ -790,6 +829,15 @@ export class Sidecar {
     this.starting = null
     this.idle = null
     this.lastError = ''
+  }
+
+  /**
+   * Files downloaded so far. Asking a stopped browser is not an error.
+   * @returns {{name: string, bytes: number, at: string}[]} what is on disk.
+   */
+  downloads() {
+    if (this.page === null) return []
+    return this.page.downloads()
   }
 
   get alive() {
