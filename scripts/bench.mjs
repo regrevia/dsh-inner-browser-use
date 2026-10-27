@@ -77,6 +77,25 @@ async function main() {
     fps: Math.round((frames / elapsed) * 1000 * 10) / 10,
     frameKB: frames === 0 ? 0 : Math.round((sidecar.page.bytes - before.bytes) / frames / 1024),
   })
+  /* How long after a change the frame is ready for the column: capture, JPEG,
+     and the CDP hop. This is the part of latency that is ours to lose. */
+  await sidecar.page.navigate('data:text/html,<body style="font:40px system-ui"><h1>still</h1></body>')
+  await wait(400)
+  const delays = []
+  let pendingAt = 0
+  const sink = () => { if (pendingAt > 0) { delays.push(Date.now() - pendingAt); pendingAt = 0 } }
+  sidecar.page.frames.add(sink)
+  for (let i = 0; i < 12; i += 1) {
+    pendingAt = Date.now()
+    await sidecar.page.cdp.send('Runtime.evaluate', { expression: `document.body.style.background = 'hsl(${String(i * 30)} 60% 80%)'` })
+    const deadline = Date.now() + 1500
+    while (pendingAt > 0 && Date.now() < deadline) await wait(10)
+    await wait(60)
+  }
+  sidecar.page.frames.delete(sink)
+  delays.sort((left, right) => left - right)
+  emit('mirror-delay', { samples: delays.length, medianMs: delays[Math.floor(delays.length / 2)] ?? -1, maxMs: delays.at(-1) ?? -1 })
+
   for (const name of ['dense', 'text', 'light']) {
     await sidecar.page.navigate(servers[name].url)
     await wait(300)
