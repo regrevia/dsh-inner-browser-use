@@ -214,3 +214,21 @@ switch is not what costs — the process is.
 
 Reading a check page costs nothing: the sentence is built from the title already
 in the read, and a normal page gets `''` for one comparison.
+
+## Phase 8 — saying it when nobody is drawing, 0.18.0
+
+The mirror is drawn by the tab in the chatting column, and that tab attaches
+while the page is loading. Waiting for it costs nothing when it arrives, and a
+bounded wait is the difference between a silent `viewers 0` and a sentence:
+
+| what | cost |
+| --- | --- |
+| `sidecar_open` with a tab watching | 0 ms |
+| `sidecar_open` with nothing watching | ≤ 1.2 s, and the line says so |
+| `sidecar_open` when the chat has no column to draw into | 0 ms (no wait) |
+| building the sentence on a normal state read | 0 ms, one comparison |
+
+Measured with `/tmp/probe-unseen.mjs` (tool layer, example.com, profile
+`probe-tool`): 1344 ms with nothing watching and no column asked for, 3236 ms in
+the first version of the same wait that did not skip the case where no column was
+ever requested — the whole difference was the wasted 1.2 s.

@@ -763,7 +763,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (dead !== '') return { text: dead }
         /* The column may still be drawing nothing: say so here, where the
            person is looking for a picture, rather than only in sidecar_state. */
-        const unseen = viewerNote(await watchForViewer(sidecar, page, 1200))
+        const unseen = who === '' ? '' : viewerNote(await watchForViewer(sidecar, page, 1200))
         return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + await look(page, { mode: 'text' }) }
       },
     },

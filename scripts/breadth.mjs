@@ -450,6 +450,10 @@ try {
   const stateSaid = await stateTool.execute({})
   const counted = Number(String(stateSaid.text).match(/refs followed (\d+)/)?.[1] ?? -1)
   line('follow-counted', counted >= 1, `${String(counted)} | ${String(stateSaid.text).replace(/\n/g, ' / ').slice(0, 160)}`)
+  /* Nothing here draws the column, so the state has to say that out loud and
+     name the one thing that fixes it. A silent "viewers 0" reads as a bug. */
+  const unseenSaid = String(stateSaid.text).includes('refresh it once')
+  line('mirror-honest', unseenSaid, unseenSaid ? 'says nothing is drawing it, and how to fix it' : String(stateSaid.text).replace(/\n/g, ' / ').slice(0, 160))
 
   /* The person takes the mirror by hand: actions wait for them and say so,
      reads still work (looking helps), and sidecar_resume hands the page back. */

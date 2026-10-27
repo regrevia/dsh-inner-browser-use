@@ -161,3 +161,16 @@ Next in this direction: a site that only accepts a window is still discovered by
 the model, not by the plugin. The plugin could try the page in a window by itself
 when the read shows a challenge, but that puts a window on the person's screen
 without being asked — the current rule is that a person's screen is theirs.
+
+## Phase 9 — the mirror has to exist before it can be seen, 0.18.0
+
+Everything the plugin does is worth nothing if the person cannot see it, and the
+failure is silent: the browser runs, reads work, and the column is empty because
+the tab that draws it was never loaded. 0.18.0 makes that state say itself out
+loud, with the one action that fixes it, and only pays the wait when a column was
+actually requested.
+
+Next in this direction: the drawing half could re-attach by itself. A tab that
+reloads re-subscribes on its own, but a tab that never loaded the half cannot be
+told to — that is a load-order problem, so the fix belongs in how the panel half
+is delivered, not in the wait.

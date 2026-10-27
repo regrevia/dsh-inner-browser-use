@@ -207,6 +207,34 @@ async function main() {
   const shotAt = Date.now()
   const shot = await sidecar.page.screenshot()
   emit('shot', { ms: Date.now() - shotAt, kb: Math.round(String(shot).length / 1024 / 0.75) })
+  /* A hand on the mirror: the refusal is one in-process check (no browser
+     roundtrip), a read still goes through, and resume costs what a click costs. */
+  const holdState = { last: undefined }
+  const holdTools = sidecarTools(sidecar, holdState)
+  await sidecar.page.navigate(servers.dense.url)
+  await wait(200)
+  const holdReadAt = Date.now()
+  await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 600 })
+  const holdReadMs = Date.now() - holdReadAt
+  const holdTarget = holdState.refs.find((control) => control.kind === 'button')
+  sidecar.humanUse({ kind: 'click', x: 40, y: 60 })
+  const holdAt = Date.now()
+  const held = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
+  const holdMs = Date.now() - holdAt
+  const readDuringHoldAt = Date.now()
+  await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 200 })
+  const readDuringHoldMs = Date.now() - readDuringHoldAt
+  await holdTools.find((tool) => tool.name === 'sidecar_resume').execute({})
+  const resumedAt = Date.now()
+  const resumed = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
+  emit('hold', {
+    refusalMs: holdMs,
+    refused: held.includes('nothing was sent'),
+    readMs: holdReadMs,
+    readDuringHoldMs,
+    resumeClickMs: Date.now() - resumedAt,
+    resumed: resumed.startsWith('ok '),
+  })
   if (live) {
     await sidecar.page.navigate('https://example.com/')
     await wait(300)

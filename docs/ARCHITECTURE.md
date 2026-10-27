@@ -131,7 +131,7 @@ browser without pulling the column away from the person reading it.
 
 ## Tool surface
 
-`sidecarTools()` in `tools.js` builds the 27 definitions and `index.js` registers them on the
+`sidecarTools()` in `tools.js` builds the 28 definitions and `index.js` registers them on the
 plugin's tool scope. All of them return one text block. A page read numbers the controls and
 keeps those numbers across later reads, so `sidecar_click` by ref means the element the model
 last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
