@@ -140,6 +140,13 @@ try {
     await click(page, email.ref)
     await page.insertText('a@b.c')
     line('form-type', (await js(page, 'document.querySelector("input[name=email]").value')) === 'a@b.c')
+    const formTools = sidecarTools(sidecar, { last: undefined })
+    const typeTool = formTools.find((tool) => tool.name === 'sidecar_type')
+    const keyTool = formTools.find((tool) => tool.name === 'sidecar_key')
+    await typeTool.execute({ ref: email.ref, text: 'q', clear: true })
+    await keyTool.execute({ key: 'Backspace' })
+    line('backspace', (await js(page, 'document.querySelector("input[name=email]").value')) === '')
+    await typeTool.execute({ ref: email.ref, text: 'a@b.c', clear: true })
   }
   const size = control(form, 'Size')
   if (size !== undefined) {

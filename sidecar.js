@@ -736,12 +736,13 @@ export class SidecarPage {
    */
   async key(type, key) {
     this.touched = Date.now()
+    const virtual = key.keyCode ?? key.windowsVirtualKeyCode ?? 0
     await this.input('Input.dispatchKeyEvent', {
       type: key.text === undefined || key.text === '' ? type : (type === 'keyDown' ? 'keyDown' : type),
       key: key.key, // ui-copy-ignore
       code: key.code ?? '', // ui-copy-ignore
-      windowsVirtualKeyCode: key.keyCode ?? 0,
-      nativeVirtualKeyCode: key.keyCode ?? 0,
+      windowsVirtualKeyCode: virtual,
+      nativeVirtualKeyCode: key.nativeVirtualKeyCode ?? virtual,
       text: key.text, // ui-copy-ignore
       unmodifiedText: key.text,
       modifiers: key.modifiers ?? 0,
