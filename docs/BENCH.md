@@ -276,3 +276,17 @@ saying `Seats`. One `sidecar_select` with `field: "Seats"`, `value: "Two"`:
 
 The naming rules (`labelSpot` and `selectSpot`) now live in one shared in-page
 block, so the two steps cannot drift apart.
+
+## Phase 12 — words split across nodes, 0.22.0
+
+`/words` now carries `<button><span>Sign</span><span>in</span></button>`, which
+the page reports as `Signin`.
+
+| what | result |
+| --- | --- |
+| `{text: "Sign in"}` before | not found; caller had to fall back to a number |
+| `{text: "Sign in"}` now | clicked, title changes, `ok click "Sign in"` |
+| extra work | none: the same single control list, one comparison changed |
+
+Exact equality still wins over the squeezed form, so `Sign in` never lands on
+`Sign up` when both exist.

@@ -37,7 +37,8 @@ const PAGES = {
     <button type="submit">Send</button></form></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
-    <button onclick="document.title='beta clicked'">Beta sent</button></body></html>`,
+    <button onclick="document.title='beta clicked'">Beta sent</button>
+    <button onclick="document.title='split clicked'"><span>Sign</span><span>in</span></button></body></html>`,
   '/login': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <form onsubmit="event.preventDefault(); document.title = 'in as ' + document.querySelector('input[name=user]').value">
     <label>Username <input name="user"></label>
@@ -261,6 +262,8 @@ try {
   const wordsSaid = await wordsTool.execute({ text: 'Beta sent' })
   await sleep(250)
   line('click-by-words', (await js(page, 'document.title')) === 'beta clicked' && String(wordsSaid.text).startsWith('ok click'), String(wordsSaid.text).slice(0, 80))
+  const splitSaid = String((await wordsTool.execute({ text: 'Sign in' })).text)
+  line('click-split-words', (await js(page, 'document.title')) === 'split clicked' && splitSaid.startsWith('ok click'), splitSaid.replace(/\n/g, ' / ').slice(0, 90))
 
   await page.navigate(`${base}/dialog`)
   const ask = control(await readPage(page, { mode: 'text', maxChars: 600 }), 'Ask')

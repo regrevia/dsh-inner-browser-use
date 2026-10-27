@@ -680,13 +680,16 @@ const NAME_PRELUDE = `
     add(el.getAttribute('name'))
     return out
   }
+  const squeeze = (s) => String(s).toLowerCase().replace(/\s+/g, '')
   const scored = (el, want) => {
     let score = 0
     let name = ''
+    const flat = squeeze(want)
     for (const nm of names(el)) {
       const low = nm.toLowerCase()
-      if (low === want) score = Math.max(score, 3)
+      if (low === want || squeeze(low) === flat) score = Math.max(score, 3)
       else if (want.length >= 2 && low.includes(want)) score = Math.max(score, 2)
+      else if (flat.length >= 2 && squeeze(low).includes(flat)) score = Math.max(score, 2)
       else if (low.length >= 3 && want.includes(low)) score = Math.max(score, 1)
       if (score > 0 && name === '') name = nm
     }

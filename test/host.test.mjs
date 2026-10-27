@@ -430,3 +430,12 @@ test('a dropdown can be chosen by the words that name it', async () => {
   assert.ok(select.parameters.properties.field !== undefined)
   assert.deepEqual(select.parameters.required, ['value'])
 })
+
+test('words split across inline nodes still name the same control', () => {
+  /* readPage reports "Signin" for <span>Sign</span><span>in</span>; the
+     caller writes "Sign in". The comparison must ignore the difference. */
+  const squeeze = (text) => String(text).toLowerCase().replace(/\s+/g, '')
+  assert.equal(squeeze('Signin'), squeeze('Sign in'))
+  assert.equal(squeeze('  Beta   sent '), squeeze('beta sent'))
+  assert.notEqual(squeeze('Sign in'), squeeze('Sign up'))
+})

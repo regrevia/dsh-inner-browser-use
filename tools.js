@@ -419,9 +419,15 @@ async function until(page, expression, timeout) {
 async function findWords(page, words) {
   const read = await readPage(page, { mode: 'text', maxChars: 1200, max: 200 })
   const shown = read.controls.filter((control) => control.view !== false)
-  const wanted = words.toLowerCase()
-  const hit = shown.find((control) => control.name.toLowerCase() === wanted) ?? shown.find((control) => control.name.toLowerCase().includes(wanted))
-  if (hit === undefined) return null
+  /* The words may sit in separate inline nodes: <span>Sign</span><span>in</span>
+     reads as "Signin" to the page, so compare with the spaces taken out too. */
+  const squeeze = (text) => String(text).toLowerCase().replace(/\s+/g, '')
+  const wanted = squeeze(words)
+  const found = shown.find((control) => squeeze(control.name) === wanted) ?? shown.find((control) => squeeze(control.name).includes(wanted))
+  if (found === undefined) return null
+  /* When only the squeezed form matched, say the words the caller used: the
+     page spread them over nodes and "Signin" is not what anyone wrote. */
+  const hit = squeeze(found.name) === wanted && found.name.toLowerCase() !== words.toLowerCase() ? { ...found, name: words } : found
   const spot = await locate(page, hit.ref)
   if (spot.gone === true) return null
   return { ...hit, x: Number(spot.x), y: Number(spot.y) }

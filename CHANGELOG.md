@@ -1,3 +1,10 @@
+## 0.22.0
+
+- **词被拆成几个节点的按钮，也能按词点到。** `<button><span>Sign</span><span>in</span></button>` 这种写法（React 组件库、i18n 把词切开都常见）在页面上读出来是 `Signin`——没有空格。以前 `{text: "Sign in"}` 找不到，只能改用编号或坐标。现在比较时把空白去掉再比，`Sign in` / `Signin` / `sign  in` 都指同一个控件。
+- **结果里写回调用方自己的写法。** 只在「去空白后才相等」时，输出用调用方给的那句（`ok click "Sign in"`），不用页面的 `Signin`——人写的是前者，页面上的拼接是副作用。
+- 同样的比较也进了页内那半身（`labelSpot` / `selectSpot` 的打分），所以 div 里写 `Work email`、字段叫 `workemail` 这种也能对上。
+- 测试：47 条单测（新增去空白比较的等价/不等价用例）；广度 48 条全真（新增 `click-split-words`：`/words` 加拆分节点按钮，按 `Sign in` 点中）。
+
 ## 0.21.0
 
 - **下拉框也能按名字选。** `sidecar_select` 以前只要编号；现在 `{field: "Seats", value: "Two"}` 就行——它在页面里找那个「叫这几个字」的下拉，选好选项，回一句 `chose Two in Seats`。选项对不上时把前 12 个选项念出来，不用再读一遍页面。

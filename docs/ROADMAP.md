@@ -199,3 +199,10 @@ real input sits hidden beside it.
 Left in this direction: the date/time case where the box the user sees is a div
 and the real input is hidden beside it, and `sidecar_click` on a control whose
 words are split across sibling nodes (`<span>Sign</span><span>in</span>`).
+
+## Phase 13 — the page's spelling is not the caller's, 0.22.0
+
+Whitespace is normalised in both halves now (tool side and in-page side). Next
+in this line: the date/time box where the visible box is a div and the real
+input is hidden beside it, which needs the resolver to accept a hidden target
+and click the thing in front of it.
