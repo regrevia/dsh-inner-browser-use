@@ -10,8 +10,23 @@
  */
 import { createServer } from 'node:http'
 import { Sidecar } from '../sidecar.js?v=1'
-import { readPage, renderPage } from '../read.js?v=1'
+import { readPage, renderPage, covering } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
+import { sidecarTools } from '../tools.js?v=1'
+
+/**
+ * One plain control, and the same page under an overlay: `covered` is a cookie
+ * banner whose own button says Accept, `guarded` is a modal that says delete.
+ * @param {string} kind - plain, covered or guarded.
+ */
+function domePage(kind) {
+  const banner = kind === 'covered'
+    ? '<div id="banner" style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">We use cookies to remember you. <button onclick="document.getElementById(\'banner\').remove()">Accept</button></div></div>'
+    : kind === 'guarded'
+      ? '<div id="banner" style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">Delete this account? <button onclick="document.getElementById(\'banner\').remove()">Delete forever</button></div></div>'
+      : ''
+  return `<!doctype html><html><body style="font:16px system-ui;padding:24px"><h1>Cover</h1><button id="t" onclick="document.title='hit'">Target</button>${banner}</body></html>`
+}
 
 /** A page worth measuring: one of controls, one of words, one nearly empty. */
 function page(name) {
@@ -117,6 +132,43 @@ async function main() {
     const after = await readPage(sidecar.page, { mode: 'text' })
     const diff = diffRead(before, after, { maxChars: 2000 })
     emit('read-changed', { page: name, chars: diff.length, approxTokens: Math.round(diff.length / 3.4), wholeChars: renderPage(after, { maxChars: 4600 }).length })
+  }
+  /* What the overlay probe costs: nothing on an uncovered control, one extra
+     page-side look plus the banner's own click when something is in the way. */
+  const probeTimes = []
+  for (let i = 0; i < 5; i += 1) {
+    const at = Date.now()
+    await sidecar.page.cdp.send('Runtime.evaluate', { expression: covering(1), returnByValue: true })
+    probeTimes.push(Date.now() - at)
+    await wait(60)
+  }
+  probeTimes.sort((left, right) => left - right)
+  emit('cover-probe', { samples: probeTimes.length, medianMs: probeTimes[2], maxMs: probeTimes[4] })
+
+  const clickTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
+  for (const label of ['plain', 'covered', 'guarded']) {
+    const html = domePage(label)
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(html)
+    })
+    await new Promise((ready) => server.listen(0, '127.0.0.1', ready))
+    const url = `http://127.0.0.1:${String(server.address().port)}/`
+    const times = []
+    let cleared = false
+    for (let i = 0; i < 3; i += 1) {
+      await sidecar.page.navigate(url)
+      await wait(250)
+      const read = await readPage(sidecar.page, { mode: 'text', maxChars: 2000 })
+      const target = read.controls.find((control) => control.name === 'Target')
+      const at = Date.now()
+      const said = String((await clickTool.execute({ ref: target.ref })).text)
+      times.push(Date.now() - at)
+      cleared = said.includes('then the control')
+    }
+    times.sort((left, right) => left - right)
+    emit('cover-click', { page: label, medianMs: times[1], runs: times.length, cleared })
+    server.close()
   }
   await sidecar.page.navigate(servers.dense.url)
   await wait(200)

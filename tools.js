@@ -166,27 +166,67 @@ export function personNote(sidecar) {
 }
 
 /**
- * Say when something else is sitting over the control, because a click that
- * lands under a banner looks exactly like a click that did nothing.
+ * Ask the page what is sitting over a control, and which control would take
+ * that away.
  * @param {any} page - sidecar page.
  * @param {number} ref - ref that was about to be used.
- * @returns {Promise<string>} a note, or an empty string.
+ * @returns {Promise<null|{tag: string, name: string, dismiss: null|{x: number, y: number, name: string}}>} the thing on top.
  */
-async function coverNote(page, ref) {
-  if (!(Number(ref) > 0) || Number(ref) >= 900_000) return ''
+async function coverProbe(page, ref) {
+  if (!(Number(ref) > 0) || Number(ref) >= 900_000) return null
   const said = await page.cdp.send('Runtime.evaluate', { expression: covering(Number(ref)), returnByValue: true }).catch(() => null)
   const value = String(said?.result?.value ?? '')
-  if (value === '') return ''
+  if (value === '') return null
   let top = null
   try {
     top = JSON.parse(value)
   } catch (error) {
-    return ''
+    return null
   }
-  if (top === null || typeof top !== 'object') return ''
-  const name = String(top.text ?? '')
-  const what = top.tag === 'div' || top.tag === 'section' ? 'an overlay' : `a ${String(top.tag)}`
-  return `\n${what} covers it${name === '' ? '' : `: ${name}`} — the click landed beneath it`
+  if (top === null || typeof top !== 'object') return null
+  const dismiss = top.dismiss !== null && typeof top.dismiss === 'object' && Number.isFinite(Number(top.dismiss.x))
+    ? { x: Number(top.dismiss.x), y: Number(top.dismiss.y), name: String(top.dismiss.name ?? '') }
+    : null
+  return { tag: String(top.tag ?? ''), name: String(top.text ?? ''), dismiss } // ui-copy-ignore
+}
+
+/**
+ * Say when something else is sitting over the control, because a click that
+ * lands under a banner looks exactly like a click that did nothing.
+ * @param {ReturnType<typeof coverProbe>} probe - what the page said is on top.
+ * @returns {string} a sentence, or an empty string.
+ */
+function coverNote(probe) {
+  if (probe === null || probe === undefined) return ''
+  const what = probe.tag === 'div' || probe.tag === 'section' ? 'an overlay' : `a ${probe.tag}`
+  return `
+${what} covers it${probe.name === '' ? '' : `: ${probe.name}`} — the click landed beneath it`
+}
+
+/**
+ * Clear a cookie banner or modal the way the person would, so the click the
+ * agent meant still happens. Only a small safe set of words counts as a way
+ * out — an overlay offering to pay, delete or sign out is reported, never
+ * accepted on the person's behalf.
+ * @param {any} page - sidecar page.
+ * @param {number} ref - ref the agent meant to use.
+ * @returns {Promise<{note: string, cleared: boolean}>} what happened.
+ */
+async function clearCover(page, ref) {
+  const probe = await coverProbe(page, ref)
+  if (probe === null) return { note: '', cleared: true }
+  const note = coverNote(probe)
+  const away = probe.dismiss
+  if (away === null) return { note, cleared: false }
+  await page.mouse('mouseMoved', { x: away.x, y: away.y })
+  await page.mouse('mousePressed', { x: away.x, y: away.y, clickCount: 1 })
+  await page.mouse('mouseReleased', { x: away.x, y: away.y, clickCount: 1 })
+  await wait(150)
+  const again = await coverProbe(page, ref)
+  if (again !== null) return { note: `${note}
+- clicking ${away.name} on it did not clear it`, cleared: false } // ui-copy-ignore
+  return { note: `${note}
+- clicked ${away.name} on it first, then the control`, cleared: true } // ui-copy-ignore
 }
 
 /** @param {number} ms - how long. */
@@ -585,7 +625,15 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         }
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from sidecar_view, or both x and y.'
         const button = args?.right === true ? 'right' : 'left'
-        const cover = args?.ref === undefined ? '' : await coverNote(page, Number(args.ref))
+        let cover = ''
+        if (args?.ref !== undefined && button === 'left') {
+          const gate = await clearCover(page, Number(args.ref))
+          cover = gate.note
+          if (gate.cleared && cover !== '') {
+            const again = await locate(page, Number(args.ref))
+            if (again.gone !== true) point = { x: Number(again.x), y: Number(again.y) }
+          }
+        }
         await page.mouse('mouseMoved', point)
         await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
@@ -616,13 +664,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withPage(async (page) => {
         let cover = ''
         if (args?.ref !== undefined) {
+          const gate = await clearCover(page, Number(args.ref))
+          cover = gate.note
           const spot = await locate(page, Number(args.ref))
-          if (spot.gone === true) return REF_GONE
+          if (spot.gone === true) return REF_GONE + cover
           const point = { x: Number(spot.x), y: Number(spot.y) }
           await page.mouse('mouseMoved', point)
           await page.mouse('mousePressed', { ...point, clickCount: 1 })
           await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-          cover = await coverNote(page, Number(args.ref))
           await wait(80)
         }
         if (args?.clear === true) await clearFocus(page)

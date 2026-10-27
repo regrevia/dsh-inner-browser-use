@@ -13,7 +13,7 @@ live picture of that browser, and your own cursor keeps working on the picture.
 | `sidecar_open` | Starts the browser (or reuses the running one) and opens an address. `headless: false` shows a real window on the desktop instead. |
 | `sidecar_view` | Returns the address, the title, every control as `1 … 120`, and the visible text. |
 | `sidecar_extract` | Returns the items a CSS selector matches, one compact line each with its link, instead of the whole page. |
-| `sidecar_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. |
+| `sidecar_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. A cookie banner or modal over the control is cleared first, then the click happens. |
 | `sidecar_type` | Types text into the focused field, or clicks a numbered control first. Chinese goes in as one string. `submit: true` presses Enter. |
 | `sidecar_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down, Home, End, PageUp, PageDown. |
 | `sidecar_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
@@ -95,8 +95,8 @@ In the app: **Plugins → Install from folder**, and pick the clone. To install 
 tarball instead, build it from that directory and install the file:
 
 ```bash
-npm pack                                  # writes dsh-inner-browser-use-0.13.4.tgz
-dsh plugin install ./dsh-inner-browser-use-0.13.4.tgz
+npm pack                                  # writes dsh-inner-browser-use-0.14.0.tgz
+dsh plugin install ./dsh-inner-browser-use-0.14.0.tgz
 ```
 
 The plugin appears under **Plugins** as *Background browser*. It needs Google Chrome or

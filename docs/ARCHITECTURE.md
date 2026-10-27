@@ -131,10 +131,19 @@ browser without pulling the column away from the person reading it.
 
 ## Tool surface
 
-`sidecarTools()` in `tools.js` builds the 25 definitions and `index.js` registers them on the
+`sidecarTools()` in `tools.js` builds the 27 definitions and `index.js` registers them on the
 plugin's tool scope. All of them return one text block. A page read numbers the controls and
 keeps those numbers across later reads, so `sidecar_click` by ref means the element the model
 last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
+
+Before a ref click or a ref focus, one page-side probe asks what is on top of that control.
+When something is, and that something carries its own safe way out (a banner with Accept /
+Close, a modal with 同意 / 关闭), the probe's answer names that button's point, the driver takes
+it, checks the control is clear, and then performs the action the model asked for. The result
+says both things. An overlay whose wording involves deleting, paying or signing out is only
+reported, never accepted on the person's behalf. The whole exchange is one `Runtime.evaluate`
+and a possible `mousePressed`/`mouseReleased` pair on an already-open CDP connection, so an
+uncovered click pays nothing.
 
 An action answers with one line — address, title, focused field — and reads the page only when
 `read: true` is passed. That is what keeps a long batch cheap (see `BENCH.md`).

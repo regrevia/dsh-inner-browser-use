@@ -90,11 +90,11 @@ still hold the cookies.
 ## Live
 
 `node scripts/live.mjs` does the same work on the open internet, with no local
-fixture: it opens `example.com` (752 ms), reads it, clicks the language link on
-`wikipedia.org` and lands on `en.wikipedia.org` (11.8 s, the page's own load
+fixture: it opens `example.com` (517 ms), reads it, clicks the language link on
+`wikipedia.org` and lands on `en.wikipedia.org` (3.6 s, the page's own load
 included), goes back (URL back to `wikipedia.org`), reads ten list items out of
 the Web scraping article in one call (2 ms, 1813 chars), and types into the
-Wikipedia search box then presses Enter (5.3 s to a results URL). Six JSON
+Wikipedia search box then presses Enter (5.2 s to a results URL). Six JSON
 lines; six `true` is the bar. A site being unreachable is reported as such and
 is not a plugin failure — the run says which site and how long it waited.
 
@@ -107,7 +107,10 @@ measurements in [BENCH.md](BENCH.md).
 `node scripts/breadth.mjs` drives a shadow-DOM component, a form (type, select,
 checkbox, submit), a native dialog, an iframe (read, type, click), a click that
 opens a tab, and a dead ref against local pages, and prints one JSON line per
-check. Twenty-seven `true` lines is the bar; a `false` line names the check that
+check. Thirty-three `true` lines is the bar; a `false` line names the check that
 broke. Two of them cover a cross-site frame, which Chrome runs in its own
-process.
+process. Three cover a control under an overlay: the click clears a cookie
+banner and lands (`under clicked`), typing into a field under the same banner
+works, and a modal that offers to delete the account is reported without
+anything being pressed.
 

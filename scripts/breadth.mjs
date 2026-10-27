@@ -71,9 +71,16 @@ const PAGES = {
     </body></html>`,
   '/cover': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Covered</h1>
-    <div style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">
-      We use cookies to remember you. <button id="yes">Accept</button></div></div>
     <button id="under" onclick="document.title='under clicked'">Under the banner</button>
+    <p><label for="note">Note</label> <input id="note" name="note"></p>
+    <div id="banner" style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">
+      We use cookies to remember you. <button id="yes" onclick="document.getElementById('banner').remove()">Accept</button></div></div>
+    </body></html>`,
+  '/guard': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Guarded</h1>
+    <button id="under" onclick="document.title='under clicked'">Under the banner</button>
+    <div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">
+      Delete this account? <button id="gone" onclick="document.title='deleted'">Delete forever</button></div></div>
     </body></html>`,
   '/partner': `<!doctype html><html><body style="font:16px system-ui;padding:12px">
     <p>a partner frame Chrome keeps apart</p><input placeholder="Partner field">
@@ -366,7 +373,22 @@ try {
   const under = control(coverRead, 'Under the banner')
   const clickTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
   const covered = String((await clickTool.execute({ ref: under.ref })).text)
-  line('covered-click', covered.includes('covers it') && covered.includes('We use cookies'), covered.trim().split('\n').pop().slice(0, 90))
+  const through = (await js(page, 'document.title')) === 'under clicked'
+  line('covered-click', covered.includes('covers it') && covered.includes('We use cookies') && covered.includes('clicked Accept on it first') && through, `${through ? 'click went through' : 'click stayed under'} | ${covered.replace(/\n/g, ' / ').slice(0, 130)}`)
+
+  await page.navigate(`${base}/cover`)
+  const fieldRead = await readPage(page, { mode: 'forms', maxChars: 2000 })
+  const note = control(fieldRead, 'Note')
+  const typeTool0 = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_type')
+  const typedThrough = String((await typeTool0.execute({ ref: note.ref, text: 'held' })).text)
+  line('type-through-overlay', typedThrough.includes('clicked Accept on it first') && (await js(page, 'document.querySelector("#note").value')) === 'held', typedThrough.replace(/\n/g, ' / ').slice(0, 130))
+
+  await page.navigate(`${base}/guard`)
+  const guardRead = await readPage(page, { mode: 'text', maxChars: 2000 })
+  const underGuard = control(guardRead, 'Under the banner')
+  const guarded = String((await clickTool.execute({ ref: underGuard.ref })).text)
+  const untouched = (await js(page, 'document.title')) === '' && String(await js(page, 'document.getElementById("modal") === null')) === 'false'
+  line('guarded-overlay', guarded.includes('covers it') && guarded.includes('Delete this account') && guarded.includes('clicked') === false && untouched, guarded.replace(/\n/g, ' / ').slice(0, 120))
 
   await page.navigate(`${base}/words`)
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }

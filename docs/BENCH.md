@@ -41,7 +41,7 @@ the default budget (4600 chars of page text).
 | refs across reads | new numbers every read | **stable** (same refs, ticker-only text changes) |
 | click round trip | 1 ms | 1 ms |
 | key round trip | 13 ms | 0–2 ms |
-| launch → first frame | 506 ms | 129–492 ms (cold/warm profile) |
+| launch → first frame | 506 ms | 129–539 ms (cold/warm profile) |
 | steady mirror | 60 fps, 72 KB/frame | 60 fps, 76 KB/frame |
 | screenshot | 82 ms / 133 KB | 79–86 ms / 115 KB |
 
@@ -103,30 +103,32 @@ against 1291 chars for the same page read as text — and at a 500-char read
 budget the text read stops around row 12 while the list still returns 30.
 
 Live run (`npm run live`), 6 checks, all true on the open internet: open
-example.com in 752 ms, read it for 785 chars, click the language link on
-wikipedia.org and land on en.wikipedia.org in 11.8 s, go back to
+example.com in 517 ms, read it for 785 chars, click the language link on
+wikipedia.org and land on en.wikipedia.org in 3.6 s, go back to
 www.wikipedia.org, extract ten list rows from the Web scraping article in 2 ms
 (1813 chars), type into the Wikipedia search box and reach a results URL in
-5.3 s. These are wall-clock end to end including the site's own load; the
+5.2 s. These are wall-clock end to end including the site's own load; the
 local numbers below are where the driver's own cost lives. Hacker News was
 unreachable from this machine (12 s connect timeout, confirmed with curl), so
 the list check uses Wikipedia.
 
-Breadth run (`npm run breadth`), 31 checks, all true: open shadow DOM read and
+Breadth run (`npm run breadth`), 33 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
 iframe read, iframe typing, iframe click, cross-site frame read and click,
 popup followed, download saved, network responses listed, a file uploaded
 into a file input, the page printed to a PDF, a changed-only read, names from `for=` and `aria-labelledby`, a click found by its words, a login filled by field names in one call,
-stale ref refused, a crash picked back up on the same page, a list read as 30 rows, and a click under a full-screen cookie banner still answered with what covered it.
+stale ref refused, a crash picked back up on the same page, a list read as 30 rows, a click under a full-screen cookie banner clears the banner and lands on the
+control, typing into a field under that banner works the same way, and an
+overlay that offers to delete the account is reported but never accepted.
 
 ## Phase 4 — what a change costs
 
 | What | Number |
 | --- | --- |
-| change in the page → frame ready for the column | 9 ms median, 17 ms max (12 samples) |
+| change in the page → frame ready for the column | 7 ms median, 7 ms max (12 samples) |
 | `changed_only` after a field changes, dense page | 58 chars ≈ **17 tokens** (whole page: 444) |
 | read: text page, `changed_only` | 42 chars ≈ 12 tokens (whole page: 1517) |
-| renderer crashed → readable page again | **1.4 s** (detect, fresh tab, same address) |
+| renderer crashed → readable page again | **1.39 s** (detect, fresh tab, same address) |
 
 The mirror's delay is measured from the moment the page is told to change to
 the frame object the column would draw — capture, JPEG, and the CDP hop. It is
@@ -136,3 +138,17 @@ browser's compositing and the SSE hop, both smaller.
 A cross-site frame (Chrome runs it in its own process) costs one more round
 trip than a same-process one: its controls arrive in the same read, and the
 frame's corner is one `DOM.getFrameOwner` plus one call on the owner element.
+
+## Phase 5 — what an overlay costs
+
+| What | Number |
+| --- | --- |
+| the "what is on top of this control" probe | **1 ms median, 2 ms max** (5 samples) — the same `Runtime.evaluate` hop, no round trip added |
+| `sidecar_click` on an uncovered control | 460 ms median (3 runs, page-load settle included) |
+| `sidecar_click` on the same control under a cookie banner | 630 ms median (3 runs) — the banner's own Accept click, a 150 ms beat, a re-probe, then the intended click |
+| the same under a modal that offers to delete the account | 456 ms — reported, nothing pressed |
+
+The probe costs nothing when nothing is in the way, which is the common case;
+the covered case pays about 170 ms to clear the banner and land the click in
+the same call, instead of making the model spend a whole extra turn (a read, a
+click, another read) telling it to close the banner first.

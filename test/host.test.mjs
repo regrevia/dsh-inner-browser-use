@@ -283,3 +283,13 @@ test('the covering check asks the page what is on top', async () => {
   assert.match(said, /elementFromPoint/)
   assert.match(said, /find\(12\)/)
 })
+
+test('the covering check also finds the way out of the overlay', async () => {
+  const { covering } = await import('../read.js')
+  const said = covering(12)
+  assert.match(said, /dismiss/)
+  // The words that count as a way out are a closed list, so an overlay that
+  // offers to delete or pay can never be accepted on the person's behalf.
+  assert.match(said, /\^\(accept\|/)
+  assert.match(said, /risky/)
+})

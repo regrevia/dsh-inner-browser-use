@@ -1,3 +1,10 @@
+## 0.14.0
+
+- **横幅挡着就自己关掉，再点你要点的那个。** 0.13.3 只把「an overlay covers it: We use cookies to remember you. Accept」说出来，等模型自己再发一次点击去关横幅——多一次读、多一个回合。现在同一个页面内的探针顺手找横幅自己的出口：弹层本身或它的容器够大（宽 ≥ 视口 60%、高 ≥ 50%），里面的按钮文字落在「接受 / 同意 / 允许 / 关闭 / 确定 / 知道了 / accept / agree / allow / close / dismiss / got it / i agree」这一小撮里，就点它、再确认挡着的东西没了、然后按原坐标点你要的控件，结果里两行都写清楚：`an overlay covers it: We use cookies… — the click landed beneath it` / `clicked Accept on it first, then the control`。`sidecar_click` 与 `sidecar_type`（给 `ref` 点聚焦那一步）都走这条路，一次调用把事办完。
+- **只关「无害的那一类」，剩下的照样如实报告。** 出口文字是闭集，而且弹层正文里出现 delete / remove / purchase / pay / buy / sign out / 删除 / 支付 / 购买 / 注销 / 退出登录 / 转账 就完全不碰——「Delete this account? Delete forever」这种遮罩仍然只报不说，绝不在人的名义下按下去。广度脚本里 `guarded-overlay` 就是盯这条：必须报出遮罩、必须没点、标题必须没变。
+- 探针仍然只在给 `ref` 时跑，仍是同一次 `Runtime.evaluate`，正常点击的延迟没有变化；出口按钮必须完整落在视口内、面积至少 2×2，找不到就退回原来的「只报告」。压测把这条也量了（`docs/BENCH.md` 的 Phase 5）：探针本身中位 1 ms，没东西挡路时点一下 460 ms，被横幅挡住时 630 ms（点掉横幅、等 150 ms、再确认、再点），「删除账号」那种遮罩 456 ms 且什么都不按。
+- 测试：32 条单测（新增一条：出口词是闭集、带 delete/pay 风险词时不关）；广度脚本 33 条全真，`covered-click` 现在要求点击真的穿透（`under clicked`）且结果里两条都出现，新增 `type-through-overlay`（横幅下的输入框输入成功、值为 `held`）与 `guarded-overlay`。`npm run live` 仍 6/6，且数字比 0.13.4 那次更好：打开 example.com 517 ms（原 752）、按文字点到维基英文版 3.6 s（原 11.8 s）、维基搜索 5.2 s（原 5.3 s）。
+
 ## 0.13.4
 
 - **工具在真实网站上跑通了，不只是本地夹具。** 新增 `scripts/live.mjs`（`npm run live`）：不开本地服务器，直接走公网——打开 example.com（752 ms）、读它、在 wikipedia.org 上按文字点语言链接落到 en.wikipedia.org（11.8 s，含页面自己加载的时间）、返回后 URL 回到 wikipedia.org、一次调用从「Web scraping」条目里读出十条列表（2 ms、1813 字符）、在维基搜索框里输入并回车（5.3 s 到结果页）。6 条全真。数字主要被网站和网络占掉，正因为如此才和 [BENCH.md](docs/BENCH.md) 里的本地延迟放在一起看。

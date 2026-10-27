@@ -283,7 +283,7 @@ export function resolve(ref) {
  * A cookie banner or a modal over the thing the agent meant to click is the
  * commonest quiet failure on real pages: the click lands, nothing happens.
  * @param {number} ref - ref from a read.
- * @returns {string} an expression that answers `{tag, text}` or an empty string.
+ * @returns {string} an expression that answers `{tag, text, dismiss}` or an empty string.
  */
 export function covering(ref) {
   return `(() => {
@@ -299,7 +299,36 @@ export function covering(ref) {
   const top = document.elementFromPoint(x, y)
   if (top === null || top === el || el.contains(top) || top.contains(el)) return ''
   const raw = String(top.innerText ?? top.value ?? top.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 80)
-  return JSON.stringify({ tag: String(top.tagName).toLowerCase(), text: raw })
+  /* The thing in the way usually carries its own way out, and taking it is the
+     step the agent would take next anyway. Find that control while the overlay
+     is already being measured, so clearing it costs no extra round trip. The
+     words are a narrow safe list on purpose: an overlay that offers to delete,
+     pay or confirm is reported, never dismissed on the person's behalf. */
+  let scope = top
+  for (let node = top.parentElement; node !== null && node !== document.body; node = node.parentElement) {
+    const r = node.getBoundingClientRect()
+    if (r.width >= innerWidth * 0.6 && r.height >= innerHeight * 0.5) scope = node
+  }
+  const box = scope.getBoundingClientRect()
+  const wide = box.width >= innerWidth * 0.6 && box.height >= innerHeight * 0.5
+  const claimed = String(scope.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 400)
+  const risky = /(delete|remove|purchase|payment|pay now|buy now|sign out|log out|transfer|删除|支付|购买|付款|注销|退出登录|转账)/i.test(claimed)
+  const words = /^(accept|accept all|agree|allow|allow all|ok|okay|got it|close|dismiss|i agree|接受|同意|允许|允许全部|关闭|确定|知道了|好的)$/i
+  let dismiss = null
+  if (wide && !risky) {
+    const cands = scope.querySelectorAll('button,[role=button],a,input[type=button],input[type=submit]')
+    for (const node of [scope, ...cands]) {
+      if (node === el || el.contains(node) || node.contains(el)) continue
+      const name = String(node.innerText ?? node.value ?? node.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 40)
+      if (name === '' || !words.test(name)) continue
+      const r = node.getBoundingClientRect()
+      if (r.width < 2 || r.height < 2) continue
+      if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) continue
+      dismiss = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), name }
+      break
+    }
+  }
+  return JSON.stringify({ tag: String(top.tagName).toLowerCase(), text: raw, dismiss })
 })()`
 }
 

@@ -87,7 +87,10 @@ stealing the column from other chats.
 - Human takeover: typing in the pane pauses the agent's next action and says so;
   a resume action exists.
 - Guarded actions (upload, download, close tab, buy-ish submits) can require a
-  confirm flag.
+  confirm flag. Shipped in 0.14.0 for the narrow case that matters most: an
+  overlay in the way is cleared only when its own way out is a safe word
+  (accept / agree / close / 同意 / 关闭 …) and the overlay says nothing about
+  deleting, paying or signing out; otherwise it is reported, never taken.
 - Crash recovery: attach to a still-running Chrome, rebuild the page, keep the
   profile; a killed host never leaves a zombie Chrome.
 - Every failure names what happened, what state the page is in, and the next
