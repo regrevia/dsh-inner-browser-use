@@ -238,3 +238,22 @@ test('stopping a browser that never started is a no-op', async () => {
   assert.equal(response.status, 200)
   assert.equal((await response.json()).ok, true)
 })
+
+test('clearing a field presses the select-all this machine really has', async () => {
+  const { clearFocus } = await import('../tools.js')
+  /** @type {any[]} */
+  const keys = []
+  const page = { key: async (type, key) => { keys.push({ type, ...key }) }, cdp: { send: async () => ({ result: { value: false } }) } }
+  await clearFocus(page)
+  assert.equal(keys[0].key, 'a', 'select-all comes first')
+  assert.equal(keys[0].modifiers, process.platform === 'darwin' ? 4 : 2, 'Command on macOS, Control elsewhere')
+  assert.deepEqual(keys.map((k) => k.key), ['a', 'a', 'Backspace', 'Backspace'], 'select-all, then one delete')
+})
+
+test('a page that swallowed select-all still loses its text', async () => {
+  const { clearFocus } = await import('../tools.js')
+  let asked = ''
+  const page = { key: async () => {}, cdp: { send: async (_method, params) => { asked = params.expression; return { result: { value: true } } } } }
+  await clearFocus(page)
+  assert.match(asked, /field\.select\(\)/, 'the remaining text is selected in the page')
+})

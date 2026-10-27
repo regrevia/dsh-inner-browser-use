@@ -147,6 +147,9 @@ try {
     await keyTool.execute({ key: 'Backspace' })
     line('backspace', (await js(page, 'document.querySelector("input[name=email]").value')) === '')
     await typeTool.execute({ ref: email.ref, text: 'a@b.c', clear: true })
+    const doFill = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+    const said = await doFill.execute({ steps: [{ field: 'Email', text: 'a@b.c', clear: true }], read: 'none' })
+    line('do-clear', (await js(page, 'document.querySelector("input[name=email]").value')) === 'a@b.c', String(said.text).slice(0, 60))
   }
   const size = control(form, 'Size')
   if (size !== undefined) {

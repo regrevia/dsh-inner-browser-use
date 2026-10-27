@@ -119,6 +119,34 @@ export async function pressKey(page, name, modifiers = 0) {
   await page.key('keyUp', base)
 }
 
+/**
+ * Empty the field that has focus, whatever this machine calls select-all:
+ * Command on macOS, Control elsewhere. A page can swallow the shortcut, so any
+ * remaining text is selected in the page instead, ready for the next insert.
+ * @param {any} page - sidecar page.
+ * @returns {Promise<void>} the field is empty, or its text is selected.
+ */
+export async function clearFocus(page) {
+  const command = process.platform === 'darwin' ? 4 : 2 // ui-copy-ignore
+  const chord = { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: command }
+  await page.key('keyDown', chord)
+  await page.key('keyUp', chord)
+  await pressKey(page, 'Backspace')
+  const leftover = await page.cdp.send('Runtime.evaluate', {
+    expression: `(() => {
+      const field = document.activeElement
+      if (field === null) return false
+      const text = typeof field.value === 'string' ? field.value : (field.isContentEditable === true ? field.textContent : '')
+      if (String(text ?? '') === '') return false
+      if (typeof field.select === 'function') field.select()
+      else if (field.isContentEditable === true) document.execCommand('selectAll')
+      return true
+    })()`,
+    returnByValue: true,
+  }).catch(() => null)
+  if (leftover?.result?.value === true) return
+}
+
 /** @param {number} ms - how long. */
 function wait(ms) {
   return new Promise((settle) => setTimeout(settle, ms))
@@ -223,6 +251,7 @@ async function runStep(page, step) {
       await page.mouse('mousePressed', { ...point, clickCount: 1 })
       await page.mouse('mouseReleased', { ...point, clickCount: 1 })
       await wait(80)
+      if (step.clear === true) await clearFocus(page)
       await page.insertText(String(step.text))
       if (step.submit === true) await pressKey(page, 'Enter')
       return `typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
@@ -245,6 +274,7 @@ async function runStep(page, step) {
     await page.mouse('mousePressed', { ...point, clickCount: 1 })
     await page.mouse('mouseReleased', { ...point, clickCount: 1 })
     await wait(80)
+    if (step.clear === true) await clearFocus(page)
     await page.insertText(String(step.text ?? ''))
     if (step.submit === true) await pressKey(page, 'Enter')
     return `typed into "${hit.name.slice(0, 60)}"`
@@ -258,6 +288,7 @@ async function runStep(page, step) {
     return `clicked ${String(x)},${String(y)}`
   }
   if (step.text !== undefined) {
+    if (step.clear === true) await clearFocus(page)
     await page.insertText(String(step.text))
     if (step.submit === true) await pressKey(page, 'Enter')
     return `typed ${String(step.text).slice(0, 60)}`
@@ -495,11 +526,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           await page.mouse('mouseReleased', { ...point, clickCount: 1 })
           await wait(80)
         }
-        if (args?.clear === true) {
-          await page.key('keyDown', { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 })
-          await page.key('keyUp', { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 })
-          await pressKey(page, 'Backspace')
-        }
+        if (args?.clear === true) await clearFocus(page)
         await page.insertText(String(args?.text ?? ''))
         if (args?.submit === true) await pressKey(page, 'Enter')
         await settle(page)
@@ -627,6 +654,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
                 text: { type: 'string', description: 'Type this text (into ref, into field, or wherever focus is).' },
                 field: { type: 'string', description: 'Words on the field to fill before typing.' },
                 submit: { type: 'boolean', description: 'Press Enter after typing.' },
+                clear: { type: 'boolean', description: 'Empty the field before typing.' },
                 key: { type: 'string', description: 'Key name.' },
                 scroll: { type: 'integer', description: 'Wheel delta.' },
                 wait_text: { type: 'string', description: 'Wait for this text to appear.' },
