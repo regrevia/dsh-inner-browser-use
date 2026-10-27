@@ -12,6 +12,7 @@ import { deflateSync } from 'node:zlib'
 import { readPage, renderPage, locate, contextFor, REF_GONE } from '../read.js'
 import { diffRead, sidecarTools } from '../tools.js'
 import { Sidecar } from '../sidecar.js'
+import { lastRound } from '../review.js?v=1'
 
 const chunk = (kind, body) => {
   const size = Buffer.alloc(4)
@@ -402,6 +403,17 @@ try {
   await page.navigate(`${base}/words`)
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
   line('no-picture-noise', !wordsRead.includes('sidecar_grab saves it'), wordsRead.split('\n').length + ' lines')
+
+  /* The change travels with the request, because the reviewer cannot open the repo. */
+  {
+    const refs = { refs: [], at: 0 }
+    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_review') // ui-copy-ignore
+    await page.navigate(`${base}/chat`)
+    const told = await review.execute({ repo: 'https://github.com/example/repo', diff: '--- a/read.js\n+++ b/read.js\n+const cap = 60', timeout_ms: 12_000 })
+    const body = String(told?.text ?? '')
+    const sent = lastRound()?.question ?? ''
+    line('review-carries-diff', body.includes('review round:') && sent.includes('+const cap = 60'), `${sent.includes('+const cap = 60') ? 'the diff travelled with the request' : sent.slice(0, 120)} | ${body.replace(/\s+/g, ' ').slice(0, 120)}`)
+  }
 
   /* A wall is not a review: it is named, not passed off as prose. */
   {

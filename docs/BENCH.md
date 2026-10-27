@@ -394,3 +394,16 @@ review.
 | shows the message, no reply | "answered in prose" | "has the message but has not answered yet" | none (text compare) |
 | real page, signed out (Doubao) | a review-shaped paragraph of menu chips | the sign-in is named, 2.6 s | — |
 
+## Phase 22 — the change travels with the request, 0.32.0
+
+The reviewer inside the column cannot open a repository. Asking it to review
+"the newest commit" of a repository it cannot see is asking for a guess.
+
+| request | what the reviewer gets | cost |
+| --- | --- | --- |
+| repo + commit | an address and a hash it cannot open | 1 message |
+| repo + commit + diff | the change itself, capped at 5000 characters | +diff characters in that one message |
+
+Measured: `review-carries-diff` green in 2.6 s; the recorded round carries
+`+const cap = 60` verbatim.
+

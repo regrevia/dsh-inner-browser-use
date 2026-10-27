@@ -37,6 +37,14 @@ export function brief(what = {}) {
   if (commit !== '') lines.push(`Look at commit ${commit} (the newest one) and the files it touches.`)
   else lines.push('Look at the newest commit and the files it touches.')
   if (focus !== '') lines.push(`Focus on: ${focus}`)
+  /* The reviewer cannot open the repository, so the change travels with the
+     request. Capped: a whole diff would bury the question it is attached to. */
+  const diff = String(what.diff ?? '').trim()
+  if (diff !== '') {
+    const cap = 5000
+    lines.push('The change under review, inline (a diff):')
+    lines.push(diff.length <= cap ? diff : `${diff.slice(0, cap)}\n… (trimmed)`)
+  }
   lines.push('Answer with a short list: what is wrong, and the smallest change that fixes it. Name the file for each point.')
   return lines.join('\n')
 }

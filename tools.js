@@ -1119,6 +1119,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           repo: { type: 'string', description: 'Address of the repository to review.' },
           commit: { type: 'string', description: 'The commit the review is about. Omit for the newest one.' },
           focus: { type: 'string', description: 'One thing to look at especially.' },
+          diff: { type: 'string', description: 'The change to review, as a diff. Include it when the reviewer cannot open the repository itself.' },
           ref: { type: 'integer', description: 'The box to type in, from sidecar_view. Omit to use the page\u2019s own chat box.' },
           timeout_ms: { type: 'integer', description: 'How long to wait for the review. Default 120000.' },
         },
@@ -1133,7 +1134,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const repo = String(args?.repo ?? '').trim()
         if (repo === '') return 'Which repository should the reviewer look at?'
         const commit = String(args?.commit ?? '').trim()
-        const asked = askBrief({ repo, commit, focus: String(args?.focus ?? '') })
+        const asked = askBrief({ repo, commit, focus: String(args?.focus ?? ''), diff: String(args?.diff ?? '') })
         const started = Date.now()
         const told = await askInPage(page, { text: asked, ref: args?.ref, timeout_ms: args?.timeout_ms ?? 120_000 })
         const tookMs = Date.now() - started

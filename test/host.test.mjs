@@ -523,6 +523,12 @@ test('a review round says what it asked, and keeps the list it got back', async 
   assert.match(asked, /commit abc123def456/)
   assert.match(asked, /Focus on: token cost/)
   assert.match(asked, /Answer with a short list/)
+  assert.doesNotMatch(asked, /The change under review/)
+
+  const carried = brief({ repo: 'https://github.com/o/r', focus: 'x'.repeat(400), diff: '--- a/read.js\n+++ b/read.js\n+const cap = 60' })
+  assert.match(carried, /The change under review, inline \(a diff\):/)
+  assert.match(carried, /\+const cap = 60/)
+  assert.match(brief({ diff: 'y'.repeat(6000) }), /\(trimmed\)/)
 
   const answer = 'Here is what I would change.\n- read.js: cut the picture line at 60 characters (cheap)\n2. tools.js: reuse the last read even when the mode changes\nnot a point'
   assert.deepEqual(points(answer), ['read.js: cut the picture line at 60 characters (cheap)', 'tools.js: reuse the last read even when the mode changes'])
