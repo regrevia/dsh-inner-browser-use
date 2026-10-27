@@ -393,11 +393,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'sidecar_click', // ui-copy-ignore
-      description: 'Click a numbered control, or a point, in the sidecar browser. The click is real mouse input and the mirror shows where it landed. Numbers come from sidecar_view and stay valid until the page navigates.',
+      description: 'Click a numbered control, a point, or the first control whose words contain `text` — the last needs no read first. The click is real mouse input and the mirror shows where it landed.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           ref: { type: 'integer', description: 'Number from sidecar_view.' },
+          text: { type: 'string', description: 'Words on the control, when its number is not known.' },
           x: { type: 'integer', description: 'Viewport x, when clicking a point.' },
           y: { type: 'integer', description: 'Viewport y, when clicking a point.' },
           double: { type: 'boolean', description: 'Double-click.' },
@@ -412,10 +413,22 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
         let point = { x: Number(args?.x ?? NaN), y: Number(args?.y ?? NaN) }
+        let label = args?.ref === undefined ? `${point.x},${point.y}` : String(args.ref)
         if (args?.ref !== undefined) {
           const spot = await locate(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE
           point = { x: Number(spot.x), y: Number(spot.y) }
+        } else if (String(args?.text ?? '') !== '') {
+          const words = String(args.text)
+          const read = await readPage(page, { mode: 'text', maxChars: 1200, max: 200 })
+          const shown = read.controls.filter((control) => control.view !== false)
+          const wanted = words.toLowerCase()
+          const hit = shown.find((control) => control.name.toLowerCase() === wanted) ?? shown.find((control) => control.name.toLowerCase().includes(wanted))
+          if (hit === undefined) return `No control says ${JSON.stringify(words)}. Call sidecar_view to see what is there.`
+          const spot = await locate(page, hit.ref)
+          if (spot.gone === true) return REF_GONE
+          point = { x: Number(spot.x), y: Number(spot.y) }
+          label = `"${hit.name.slice(0, 60)}"`
         }
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from sidecar_view, or both x and y.'
         const button = args?.right === true ? 'right' : 'left'
@@ -423,7 +436,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await settle(page)
-        return acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${args?.ref === undefined ? `${point.x},${point.y}` : String(args.ref)}`)
+        return acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
       }),
     },
     {

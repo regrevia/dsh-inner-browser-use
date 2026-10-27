@@ -9,7 +9,7 @@ import { createServer } from 'node:http'
 import { writeFileSync } from 'node:fs'
 
 import { readPage, renderPage, locate, contextFor, REF_GONE } from '../read.js'
-import { diffRead } from '../tools.js'
+import { diffRead, sidecarTools } from '../tools.js'
 import { Sidecar } from '../sidecar.js'
 
 const PAGES = {
@@ -28,6 +28,9 @@ const PAGES = {
     <span id="hint">Search the catalog</span><input aria-labelledby="hint">
     <label><input type="checkbox" name="agree"> I agree</label>
     <button type="submit">Send</button></form></body></html>`,
+  '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <button onclick="document.title='alpha clicked'">Alpha</button>
+    <button onclick="document.title='beta clicked'">Beta sent</button></body></html>`,
   '/dialog': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title = confirm('sure?') ? 'yes' : 'no'">Ask</button></body></html>`,
   '/frame': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
@@ -168,6 +171,12 @@ try {
     }
     line('form-submit', arrived, String(await js(page, 'location.href')))
   }
+
+  await page.navigate(`${base}/words`)
+  const wordsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
+  const wordsSaid = await wordsTool.execute({ text: 'Beta sent' })
+  await sleep(250)
+  line('click-by-words', (await js(page, 'document.title')) === 'beta clicked' && String(wordsSaid.text).startsWith('ok click'), String(wordsSaid.text).slice(0, 80))
 
   await page.navigate(`${base}/dialog`)
   const ask = control(await readPage(page, { mode: 'text', maxChars: 600 }), 'Ask')
