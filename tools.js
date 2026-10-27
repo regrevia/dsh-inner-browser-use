@@ -625,6 +625,22 @@ async function remember(page, refs, options) {
 }
 
 /**
+ * Two reads of the same page in the same shape say the same thing. Saying it
+ * again costs tokens and teaches nothing, so the second read can be one line.
+ * @param {any} before - the earlier read.
+ * @param {any} after - the read now.
+ * @returns {boolean} true when nothing a read would show has changed.
+ */
+export function sameRead(before, after) {
+  if (before === undefined || before === null || after === undefined || after === null) return false
+  if (before.url !== after.url || before.title !== after.title) return false
+  if (before.text !== after.text) return false
+  if (JSON.stringify(before.controls) !== JSON.stringify(after.controls)) return false
+  if ((before.focused?.ref ?? null) !== (after.focused?.ref ?? null)) return false
+  return true
+}
+
+/**
  * Say only what changed since the previous read.
  * @param {any} previous - the read before.
  * @param {any} next - the read now.
@@ -841,7 +857,15 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const read = await remember(page, refs, options)
         const note = isCheckPage(read) ? `\n${CHECK_NOTE}` : ''
         if (args?.changed_only === true && refs.last !== undefined) return diffRead(refs.last, read, options) + note
+        const before = refs.last
         refs.last = read
+        /* Same page, same shape, same words: the numbers above still work, and
+           repeating the page would only spend tokens. */
+        if (sameRead(before, read) && refs.lastShape === JSON.stringify(options)) {
+          const moved = Number(before.scroll?.y ?? 0) !== Number(read.scroll?.y ?? 0) ? `, scrolled to ${Math.round(Number(read.scroll?.y ?? 0))}` : ''
+          return `still at ${read.url}${moved} — nothing changed since the last read; the numbers above still work${note}`
+        }
+        refs.lastShape = JSON.stringify(options)
         return renderPage(read, options) + note
       }),
     },

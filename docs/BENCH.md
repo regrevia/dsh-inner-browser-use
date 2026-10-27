@@ -350,3 +350,13 @@ blank chart is visible before anything is saved.
 A failed image collapses to an error icon, so the declared `width`/`height` is
 what the page meant to show; the read reports that size, not the icon's.
 
+## Phase 19 — the page said again, 0.29.0
+
+| read | characters | time |
+| --- | --- | --- |
+| first read of `/dense` (40 paragraphs) | 2057 | — |
+| second read, nothing changed | 105 | 1 ms |
+
+The comparison is free: both reads already happened. Only the report shrinks.
+A changed scroll offset is still reported, so "nothing changed" is never a lie.
+

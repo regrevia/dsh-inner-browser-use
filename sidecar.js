@@ -1113,6 +1113,9 @@ export class Sidecar {
       '--password-store=basic',
       '--lang=zh-CN',
       `--window-size=${VIEW.width},${VIEW.height}`,
+      /* A site that refuses a headless build still gets a window, but never on
+         the desktop: the mirror in the column is the only thing to look at. */
+      '--window-position=-3000,-3000',
       'about:blank',
     ]
     if (this.headless) args.unshift('--headless=new')

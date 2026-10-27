@@ -86,6 +86,8 @@ const PAGES = {
   /* A chart that came back empty is the failure worth naming. */
   '/flat': `<!doctype html><html><body style="margin:0;padding:24px">
     <img id="blank" src="/flat.png" width="140" height="90" alt="Chart"></body></html>`,
+  '/dense': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Catalog</h1>${Array.from({ length: 40 }, (_, at) => `<p>Item ${at + 1}: a plain sentence about a thing worth reading, long enough to fill a line.</p>`).join('')}</body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
     <button onclick="document.title='beta clicked'">Beta sent</button>
@@ -365,6 +367,18 @@ try {
   await page.navigate(`${base}/words`)
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
   line('no-picture-noise', !wordsRead.includes('sidecar_grab saves it'), wordsRead.split('\n').length + ' lines')
+
+  /* Reading the same page twice should not cost the page twice. */
+  {
+    const refs = { refs: [], at: 0 }
+    const view = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_view') // ui-copy-ignore
+    await page.navigate(`${base}/dense`)
+    const first = await view.execute({ mode: 'text' })
+    const started = Date.now()
+    const second = await view.execute({ mode: 'text' })
+    const said = String(second?.text ?? '')
+    line('quiet-second-read', /nothing changed since the last read/.test(said) && said.length < 200, `${first.text.length} chars → ${said.length} chars in ${Date.now() - started} ms`)
+  }
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')

@@ -1,3 +1,9 @@
+## 0.29.0
+
+- **被拒 headless 时，窗口放在屏幕外。** 有些站点只认带窗口的浏览器；现在那扇窗口出现在 `-3000,-3000`，桌面上看不到，会话右栏的镜像是唯一画面。默认仍然是 headless。
+- **读同一页第二次只回一行。** 地址、标题、文字、控件都没变时，`sidecar_view` 返回 `still at <地址> — nothing changed since the last read; the numbers above still work`（只移动了滚动位置会附一句）。实测：长文页 2057 字符 → 105 字符，1 ms。
+- 实测：窗口模式启动参数含 `--window-position=-3000,-3000`；广度 60 条、单测 53 条全真。
+
 ## 0.28.0
 
 - **图没加载出来，读取会说出来。** 大图位上的 `<img>` 失败了（`naturalWidth` 为 0）以前完全静默，页面上只是空一块；现在 `sidecar_view` 多一行 `picture 320x240 "Chart" did not load — the page may need a reload, or the picture is gone`，带 curt 的下一步动作。失效图会缩成一个错误图标，所以尺寸取页面声明值，不是渲染框。

@@ -238,3 +238,11 @@ Reads are stateless: the same page costs the same tokens twice. Next: remember
 the last read of a page by address and say only what changed, with a hard reset
 when the address or the document changes.
 
+## Phase 20 — two browsers, one conversation, 0.29.0
+
+The column is a real browser, so the model inside it can be a reviewer, not just
+a tool: hand it the repository address, ask for a review, read the answer back
+through the same mirror, and take the next round from it. Nothing opens on the
+desktop while that happens: a site that refuses a headless build gets a window
+at -3000,-3000, and the column shows the only picture.
+

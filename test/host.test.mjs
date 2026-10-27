@@ -491,3 +491,13 @@ test('a picture that never arrived is named', async () => {
   const nameless = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { missing: [{ width: 320, height: 240, name: '' }] } }, { mode: 'text' })
   assert.match(nameless, /picture 320x240 did not load/)
 })
+
+test('a second read of the same page is one line', async () => {
+  const { sameRead } = await import('../tools.js?v=1')
+  const one = { url: 'https://example.test', title: 'Home', text: 'alpha', controls: [{ ref: 1, kind: 'button', name: 'Go' }], focused: null }
+  assert.equal(sameRead(one, { ...one, controls: [{ ref: 1, kind: 'button', name: 'Go' }] }), true)
+  assert.equal(sameRead(one, { ...one, text: 'beta' }), false)
+  assert.equal(sameRead(one, { ...one, url: 'https://example.test/next' }), false)
+  assert.equal(sameRead(one, { ...one, controls: [{ ref: 2, kind: 'button', name: 'Go' }] }), false)
+  assert.equal(sameRead(undefined, one), false)
+})
