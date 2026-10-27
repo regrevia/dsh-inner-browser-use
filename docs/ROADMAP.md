@@ -135,3 +135,28 @@ falls back to a fresh read).
 1. Phase 0 baseline. 2. Phase 1 + 2 together (they share the read model).
 3. Phase 3 breadth. 4. Phase 4 numbers. 5. Phase 5 hardening. 6. Phase 6 proof,
 then repeat the loop with whatever the numbers say is worst.
+
+## Phase 8 — the shape of the browser, 0.17.0
+
+Two things were wrong at the edge of the tool surface, and both were only
+reachable on real sites.
+
+The first was that the shape of the browser could not change. `sidecar_open`
+accepted `headless: false` and answered success; when a browser was already
+running nothing happened, because the flag was only read at launch. A site that
+refuses a windowless browser (chatgpt.com on this machine: a "just a moment"
+page forever, versus a login page in a windowed one) therefore had no way out
+except killing a process by hand. Since 0.17.0 a request for the other shape
+restarts the browser on the same profile, cookie jar and address — 21.6 s
+windowless → windowed, 22.1 s back, 0 ms when the shape already matches — and
+both `sidecar_open` and `sidecar_state` say which shape is in front of the
+person.
+
+The second was silence on a check page. A site asking for proof of a person is
+not broken and not an error page, so every read returned it as content. Now
+every read of it carries the way past: `headless false` on the same profile.
+
+Next in this direction: a site that only accepts a window is still discovered by
+the model, not by the plugin. The plugin could try the page in a window by itself
+when the read shows a challenge, but that puts a window on the person's screen
+without being asked — the current rule is that a person's screen is theirs.

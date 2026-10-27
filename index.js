@@ -287,7 +287,7 @@ export function apply(ctx) {
         }
         /* Hovering and moving are looking, not acting: only real input counts as
            the person taking the page. */
-        if (kind !== 'hover' && kind !== 'move') sidecar.person = { at: Date.now(), kind, x, y, seen: false } // ui-copy-ignore
+        if (kind !== 'hover' && kind !== 'move') sidecar.humanUse({ kind, x, y })
         json(200, cursor === undefined ? { ok: true } : { ok: true, cursor })
       } catch (error) {
         json(500, { ok: false, text: String(error?.message ?? error) })

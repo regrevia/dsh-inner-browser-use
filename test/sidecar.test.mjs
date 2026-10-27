@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { SidecarPage, VIEW } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW } from '../sidecar.js'
 
 /** A CDP session that records what the page asked for and never answers with
  * anything of its own: these tests are about what the page tells its viewers. */
@@ -65,4 +65,53 @@ test('a viewer that goes away stops receiving pointer messages', async () => {
   page.movePointer({ x: 3, y: 4 })
 
   assert.equal(seen.length, 1)
+})
+
+/** A browser that answers and records how it was asked for, without Chrome. */
+function fakeBrowser(record) {
+  const sidecar = new Sidecar({ profile: 'pretend' })
+  sidecar.launch = async (url) => {
+    record.push(['launch', sidecar.headless, url])
+    sidecar.cdp = { closed: false, send: async () => {}, close() {} }
+    sidecar.page = { lastUrl: url ?? '', ping: async () => ({ ok: true }) }
+    return sidecar.page
+  }
+  sidecar.shutdown = async () => {
+    record.push(['shutdown'])
+    sidecar.cdp = null
+    sidecar.page = null
+  }
+  return sidecar
+}
+
+test('asking for the other kind of browser restarts it, once', async () => {
+  const record = []
+  const sidecar = fakeBrowser(record)
+  await sidecar.ensure({ headless: true, url: 'https://a.test/' })
+  await sidecar.ensure({ headless: true })
+  await sidecar.ensure({})
+  assert.deepEqual(record, [['launch', true, 'https://a.test/']], 'the same mode never restarts the browser')
+
+  await sidecar.ensure({ headless: false })
+  assert.deepEqual(record, [
+    ['launch', true, 'https://a.test/'],
+    ['shutdown'],
+    ['launch', false, 'https://a.test/'],
+  ], 'the other mode restarts it, and comes back on the same page')
+})
+
+test('a browser nobody has touched yet is free to act on', () => {
+  const sidecar = new Sidecar({ profile: 'pretend' })
+  assert.equal(sidecar.holding(), 0, 'no hand on the mirror means nothing to wait for')
+  assert.equal(sidecar.person.seen, true)
+  sidecar.holdMs = 5000
+  sidecar.humanUse({ kind: 'click', x: 1, y: 2 })
+  assert.ok(sidecar.holding() > 0, 'a hand on the page holds the agent off')
+  sidecar.release()
+  assert.equal(sidecar.holding(), 0)
+  // A driver that lost the record mid-flight answers instead of throwing.
+  delete sidecar.person
+  assert.equal(sidecar.holding(), 0)
+  sidecar.release()
+  assert.equal(sidecar.holding(), 0)
 })

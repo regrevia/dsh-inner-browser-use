@@ -195,3 +195,22 @@ The call says what it did: `(the page redrew, so "Learn more" has a new number �
 using. On the live network the same thing happened on example.com: a link
 replaced by an identical clone, one click, 4.4 s including the iana.org page
 load, straight to `https://www.iana.org/help/example-domains`.
+
+## Phase 7 — what changing the shape of the browser costs, 0.17.0
+
+A site that refuses a windowless browser is the one case where the shape has to
+change mid-session. Changing it restarts the browser, so it costs a cold start:
+
+| what | median | notes |
+| --- | --- | --- |
+| windowless → windowed, same profile and page | 21.6 s | one process, cold start |
+| windowed → windowless, same profile and page | 22.1 s | one process, cold start |
+| asking for the shape it already has | 0 ms | nothing is restarted |
+
+Measured through the tool layer (`sidecar_open` → `sidecar_state` → `ps` spawn
+args), profile `probe-tool`, 1 run each; the same-shape row is the third call in
+the same run. A browser start on this machine is 20–22 s either way, so the
+switch is not what costs — the process is.
+
+Reading a check page costs nothing: the sentence is built from the title already
+in the read, and a normal page gets `''` for one comparison.

@@ -173,6 +173,10 @@ export class SidecarPage {
     /* The mirror is the person's too: what they do by hand is recorded here, so
        a tool result can say the page moved under the agent's feet. */
     this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
+    /* How long after the person's last real input the agent holds off. Short
+       enough that a stray click does not stall a run, long enough that the agent
+       does not type into a field the person is in the middle of filling. */
+    this.holdMs = 6000
     this.console = []
     this.failed = []
     /* What the page asked for, so a page that fills itself from addresses can
@@ -913,6 +917,32 @@ export class Sidecar {
     this.idle = null
     this.lastError = ''
     this.lastUrl = ''
+    /* What the person did in the mirror, and when. It starts empty rather than
+       missing: an adopted browser has no record of a hand on it yet, and asking
+       about one used to throw instead of answering. */
+    this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
+  }
+
+  /**
+   * The person touched the mirror by hand; every action waits for them now.
+   * Called from the input route, which only sees the person's own input.
+   */
+  humanUse({ kind = '', x = 0, y = 0 } = {}) {
+    this.person = { at: Date.now(), kind, x, y, seen: false }
+  }
+
+  /** @returns {number} ms the agent should still hold off; 0 when free to act. */
+  holding() {
+    if (this.person === undefined || this.person.at === 0) return 0
+    const left = this.holdMs - (Date.now() - this.person.at)
+    return left > 0 ? left : 0
+  }
+
+  /** Take the page back now, without waiting out the hold. */
+  release() {
+    if (this.person === undefined) this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
+    this.person.at = 0
+    this.person.seen = true
   }
 
   /**
@@ -949,7 +979,18 @@ export class Sidecar {
    */
   async ensure(options = {}) {
     if (options.profile !== undefined) this.profile = options.profile
-    if (options.headless !== undefined) this.headless = options.headless !== false
+    const wanted = options.headless === undefined ? this.headless : options.headless !== false
+    const modeChanged = wanted !== this.headless
+    this.headless = wanted
+    /* A windowless browser and a windowed one are different processes, so asking
+       for the other one has to restart it. Setting the flag alone left the request
+       with no effect at all: a site that refuses a windowless browser stayed out
+       of reach until the browser happened to close for an unrelated reason. */
+    if (this.alive && modeChanged) {
+      const wasAt = options.url ?? this.page?.lastUrl ?? this.lastUrl
+      await this.shutdown()
+      return this.ensure({ ...options, url: wasAt })
+    }
     if (this.alive) {
       const page = this.page
       /* A page that stopped answering is a page nobody can drive. Start a new

@@ -82,6 +82,9 @@ const PAGES = {
     <div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">
       Delete this account? <button id="gone" onclick="document.title='deleted'">Delete forever</button></div></div>
     </body></html>`,
+  /* A site's own check page: the browser is asked to prove a person is there.
+     Nothing about it is broken, so it must not be read as content. */
+  '/check': '<!doctype html><html><head><title>请稍候…</title></head><body><p>Checking</p></body></html>',
   /* A list that redraws itself: every element is thrown away and made again
      with the same words. Refs from a read before the redraw point at elements
      that no longer exist, which is the everyday way a ref goes stale while the
@@ -448,7 +451,29 @@ try {
   const counted = Number(String(stateSaid.text).match(/refs followed (\d+)/)?.[1] ?? -1)
   line('follow-counted', counted >= 1, `${String(counted)} | ${String(stateSaid.text).replace(/\n/g, ' / ').slice(0, 160)}`)
 
+  /* The person takes the mirror by hand: actions wait for them and say so,
+     reads still work (looking helps), and sidecar_resume hands the page back. */
+  const holdState = { last: undefined }
+  const holdTools = sidecarTools(sidecar, holdState)
+  await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })
+  const holdTarget = holdState.refs.find((c) => c.kind === 'button')
+  sidecar.humanUse({ kind: 'click', x: 12, y: 12 })
+  const heldRead = String((await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 200 })).text)
+  line('hold-allows-read', /Something else/.test(heldRead) || heldRead.includes('button'), heldRead.replace(/\n/g, ' / ').slice(0, 120))
+  const heldText = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
+  line('hold-refuses-action', heldText.includes('person is using the mirror') && heldText.includes('sidecar_resume'), heldText.replace(/\n/g, ' / ').slice(0, 150))
+  await holdTools.find((tool) => tool.name === 'sidecar_resume').execute({})
+  const afterResume = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
+  line('resume-lets-go', afterResume.startsWith('ok '), afterResume.replace(/\n/g, ' / ').slice(0, 150))
+
+  await page.navigate(`${base}/check`)
+  const checkTools = sidecarTools(sidecar, { last: undefined })
+  const checkSaid = String((await checkTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })).text)
   await page.navigate(`${base}/words`)
+  const plainSaid = String((await checkTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })).text)
+  const checkWords = 'headless false'
+  line('check-page-named', checkSaid.includes(checkWords) && !plainSaid.includes(checkWords), `check page says ${checkSaid.includes(checkWords)} | a real page says ${plainSaid.includes(checkWords)} | ${checkSaid.split('\n').pop().slice(0, 110)}`)
+
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }
   const lookTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_view')
   const viewSaid = await lookTool.execute({ mode: 'text', max_chars: 400 })
@@ -465,7 +490,10 @@ try {
   const backUrl = String(page?.url ?? '')
   line('crash-recovery', String(recovered.text).length > 20 && backUrl.includes('/words'), `${Date.now() - crashAt} ms back | ${backUrl} | ${String(sidecar.lastError).slice(0, 60)}`)
 } catch (error) {
-  line('crashed', false, String(error?.message ?? error))
+  /* A run that breaks should say where, not just what: the stack is the only
+     thing that turns a red line into a fix. */
+  const at = String(error?.stack ?? '').split('\n').slice(1, 3).map((row) => row.trim().replace(/^at /, '')).join(' ← ')
+  line('crashed', false, `${String(error?.message ?? error)}${at === '' ? '' : ` · ${at}`}`)
 } finally {
   await sidecar.shutdown()
   server.close()

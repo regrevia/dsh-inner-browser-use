@@ -132,6 +132,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_network',
     'sidecar_open',
     'sidecar_pdf',
+    'sidecar_resume',
     'sidecar_scroll',
     'sidecar_select',
     'sidecar_shot',
@@ -149,7 +150,7 @@ test('registers the sidecar tools and nothing else', () => {
     assert.deepEqual(definition.output.schema.required, ['text'])
     assert.deepEqual(definition.output.render({}, { text: 'hi' }), [{ type: 'text', text: 'hi' }])
     /* Reading where the sidecar stands is safe anywhere; driving it is not. */
-    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads', 'sidecar_network', 'sidecar_extract'].includes(name))
+    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_resume', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads', 'sidecar_network', 'sidecar_extract'].includes(name))
   }
 })
 
@@ -300,6 +301,21 @@ test('Chrome\'s own error page is never read as the site', async () => {
   assert.equal(isErrorPage({ url: 'edge-error://edgewebdata/' }), true)
   assert.equal(isErrorPage({ url: 'https://example.com/chrome-error://x' }), false)
   assert.equal(isErrorPage({}), false)
+})
+
+test('a site\'s own check page is named as one, with the way past it', async () => {
+  const { isCheckPage } = await import('../tools.js')
+  // The words a site shows while it asks the browser to prove a person is there.
+  assert.equal(isCheckPage({ url: 'https://chatgpt.com/', title: '请稍候…' }), true)
+  assert.equal(isCheckPage({ url: 'https://x.test/', title: 'Just a moment...' }), true)
+  assert.equal(isCheckPage({ url: 'https://x.test/', title: 'Checking your browser' }), true)
+  assert.equal(isCheckPage({ url: 'https://x.test/', title: 'Verifying you are human' }), true)
+  // The challenge token in the address counts even before the title arrives.
+  assert.equal(isCheckPage({ url: 'https://chatgpt.com/?__cf_chl_rt_tk=abc', title: '' }), true)
+  // A real page says nothing, and neither does nothing at all.
+  assert.equal(isCheckPage({ url: 'https://example.com/', title: 'Example Domain' }), false)
+  assert.equal(isCheckPage({ url: 'https://x.test/slow', title: 'Loading…' }), false)
+  assert.equal(isCheckPage({}), false)
 })
 
 test('the error page reports its own failure code, not the site title', async () => {

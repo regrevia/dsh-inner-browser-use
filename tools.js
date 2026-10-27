@@ -91,6 +91,24 @@ async function acted(page, args, look, label) {
  * @param {any} page - sidecar page.
  * @returns {boolean} true while the browser is showing its own failure page.
  */
+/** Titles a site shows while it asks the browser to prove a person is there. */
+const CHECK_TITLES = ['请稍候', 'just a moment', 'checking your browser', 'verifying you are human', 'attention required']
+
+const CHECK_NOTE = 'That is the site asking a browser to prove a person is there, and a windowless one never gets past it. sidecar_open with headless false opens a window on the same profile, with the same logins.'
+
+/**
+ * A check page: the site has not refused, it is asking for proof. Reading it
+ * again cannot help, and neither can a click: the answer is a window.
+ * @param {{url?: string, title?: string}} read - what the page says it is.
+ * @returns {boolean} whether this is a check page.
+ */
+export function isCheckPage(read) {
+  const where = String(read?.url ?? '')
+  if (where.includes('__cf_chl')) return true
+  const title = String(read?.title ?? '').toLowerCase()
+  return CHECK_TITLES.some((word) => title.includes(word))
+}
+
 export function isErrorPage(page) {
   const url = String(page?.url ?? '')
   return url.startsWith('chrome-error://') || url.startsWith('edge-error://')
@@ -191,6 +209,22 @@ export function personNote(sidecar) {
   const when = age < 3000 ? 'just now' : `${Math.round(age / 1000)} s ago`
   const at = person.kind === 'click' || person.kind === 'wheel' ? ` at ${Math.round(person.x)},${Math.round(person.y)}` : '' // ui-copy-ignore
   return `\nthe person also used the page: ${person.kind}${at}, ${when}`
+}
+
+/**
+ * What an action says when the person is using the mirror right now.
+ *
+ * The pane is theirs as much as the agent's: someone filling a field by hand
+ * should not have the agent click somewhere else under their fingers. Hovering
+ * is not taking the page, only real input is, and the hold is short, so a stray
+ * click costs a few seconds rather than a run.
+ * @param {any} sidecar - the browser driver.
+ * @returns {string} a refusal, or '' when the agent may act.
+ */
+export function holdText(sidecar) {
+  const left = Number(sidecar?.holding?.() ?? 0)
+  if (left <= 0) return ''
+  return `the person is using the mirror (${String(Math.ceil(left / 1000))} s more) — nothing was sent. Let them finish, then repeat this call; sidecar_resume takes the page back now.`
 }
 
 /**
@@ -606,7 +640,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     const text = await work(page)
     return { text: text + personNote(sidecar) }
   }
-  const withPage = async (work) => {
+  /** Looking is still useful while the person has the page. */
+  const withRead = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
     const page = await sidecar.ensure()
     const dead = await unreachable(page)
@@ -614,7 +649,17 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     const text = await work(page)
     return { text: text + personNote(sidecar) }
   }
-  const look = (page, options) => remember(page, refs, options).then((read) => renderPage(read, options))
+  const withPage = async (work) => {
+    if (!sidecar.alive) return { text: SIDECAR_OFF }
+    const hold = holdText(sidecar)
+    if (hold !== '') return { text: hold }
+    return withRead(work)
+  }
+  const look = async (page, options) => {
+    const read = await remember(page, refs, options)
+    const said = renderPage(read, options)
+    return isCheckPage(read) ? `${said}\n${CHECK_NOTE}` : said
+  }
 
   /**
    * Where the control behind a ref is now, following it across a re-render.
@@ -667,6 +712,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args, exec) => {
         const page = await sidecar.ensure({ url: args?.url, headless: args?.headless })
         if (args?.url === undefined) await page.readTitle()
+        /* A window on the person's screen is their business, not a surprise: say
+           it, so nobody wonders what popped up. A site that refuses a windowless
+           browser is the only reason this happens. */
+        const windowed = sidecar.headless === false ? 'The browser is showing a window this time — a site only opens for a windowed one. Same profile, same logins.\n' : ''
         /* The tab appears in the calling chat and nowhere else: the person may
            be reading a different chat, and a browser there would be a surprise. */
         const who = String(exec?.agent?.id ?? '')
@@ -674,7 +723,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         await settle(page, 8000)
         const dead = await unreachable(page)
         if (dead !== '') return { text: dead }
-        return { text: await look(page, { mode: 'text' }) }
+        return { text: windowed + await look(page, { mode: 'text' }) }
       },
     },
     {
@@ -693,12 +742,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 30_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the read. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRead(async (page) => {
         const options = { mode: String(args?.mode ?? 'text'), maxChars: Number(args?.max_chars ?? 4600) }
         const read = await remember(page, refs, options)
-        if (args?.changed_only === true && refs.last !== undefined) return diffRead(refs.last, read, options)
+        const note = isCheckPage(read) ? `\n${CHECK_NOTE}` : ''
+        if (args?.changed_only === true && refs.last !== undefined) return diffRead(refs.last, read, options) + note
         refs.last = read
-        return renderPage(read, options)
+        return renderPage(read, options) + note
       }),
     },
     {
@@ -991,7 +1041,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 30_000,
       isConcurrencySafe: () => true,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the rows. */
-      execute: async (args) => withPage((page) => extractRows(page, args)),
+      execute: async (args) => withRead((page) => extractRows(page, args)),
     },
     {
       name: 'sidecar_eval', // ui-copy-ignore
@@ -1009,7 +1059,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 30_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the value. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRead(async (page) => {
         const code = String(args?.code ?? '')
         if (code === '') return 'Give code to run.'
         const wrapped = args?.await === true ? `(async () => { ${code} })()` : code
@@ -1117,7 +1167,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 40_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the saved path. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRead(async (page) => {
         const scale = Math.max(1, Math.min(3, Number(args?.scale ?? 1)))
         let clip = undefined
         if (args?.ref !== undefined) {
@@ -1147,17 +1197,32 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const owner = String(host.owner?.() ?? '') // ui-copy-ignore
         const rows = [
           state.alive ? 'running' : 'stopped',
+          state.headless === false ? 'showing a window' : 'no window',
           `profile ${String(state.profile)}`,
           `url ${String(state.url)}`,
           `title ${String(state.title)}`,
           `viewers ${String(state.viewers)}`,
           owner === '' ? 'no owner' : `owner ${owner}`,
           `refs followed ${String(follows.count)}`,
+          holdText(sidecar) === '' ? 'person free' : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
         ]
         return { text: rows.join('\n') }
       },
     },
 
+    {
+      name: 'sidecar_resume', // ui-copy-ignore
+      description: 'Take the page back from the person at the mirror: clears the hold so the next action is sent at once, instead of waiting the few seconds out.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 10_000,
+      isConcurrencySafe: () => true,
+      /** @returns {Promise<{text: string}>} confirmation. */
+      execute: async () => {
+        sidecar.release()
+        return { text: 'ok — the page is the agent\'s again' }
+      },
+    },
     {
       name: 'sidecar_downloads', // ui-copy-ignore
       description: 'List what this browser has downloaded, newest first, with the file name, its size and when it arrived.',
@@ -1275,7 +1340,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 30_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} whether it happened. */
-      execute: async (args) => withPage(async (page) => {
+      execute: async (args) => withRead(async (page) => {
         const timeout = Math.max(500, Math.min(30_000, Number(args?.timeout ?? 8000)))
         if (typeof args?.text === 'string' && args.text !== '') {
           const seen = await until(page, `document.body !== null && document.body.innerText.includes(${JSON.stringify(String(args.text))})`, timeout)
