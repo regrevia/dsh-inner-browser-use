@@ -92,7 +92,7 @@ still hold the cookies.
 `node scripts/breadth.mjs` drives a shadow-DOM component, a form (type, select,
 checkbox, submit), a native dialog, an iframe (read, type, click), a click that
 opens a tab, and a dead ref against local pages, and prints one JSON line per
-check. Twenty-three `true` lines is the bar; a `false` line names the check that
+check. Twenty-four `true` lines is the bar; a `false` line names the check that
 broke. Two of them cover a cross-site frame, which Chrome runs in its own
 process.
 

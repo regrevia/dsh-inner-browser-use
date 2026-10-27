@@ -194,6 +194,18 @@ async function until(page, expression, timeout) {
  * @param {any} step - the step.
  * @returns {Promise<string>} a compact report.
  */
+/** The first control whose words match, scrolled into view. Text can beat a number: it costs no read. */
+async function findWords(page, words) {
+  const read = await readPage(page, { mode: 'text', maxChars: 1200, max: 200 })
+  const shown = read.controls.filter((control) => control.view !== false)
+  const wanted = words.toLowerCase()
+  const hit = shown.find((control) => control.name.toLowerCase() === wanted) ?? shown.find((control) => control.name.toLowerCase().includes(wanted))
+  if (hit === undefined) return null
+  const spot = await locate(page, hit.ref)
+  if (spot.gone === true) return null
+  return { ...hit, x: Number(spot.x), y: Number(spot.y) }
+}
+
 async function runStep(page, step) {
   if (step.ref !== undefined) {
     const spot = await locate(page, Number(step.ref))
@@ -215,6 +227,27 @@ async function runStep(page, step) {
       if (step.submit === true) await pressKey(page, 'Enter')
       return `typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
     }
+  }
+  if (step.tap !== undefined && !/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(step.tap))) {
+    const hit = await findWords(page, String(step.tap))
+    if (hit === null) return `no control says ${JSON.stringify(String(step.tap))}`
+    const point = { x: hit.x, y: hit.y }
+    await page.mouse('mouseMoved', point)
+    await page.mouse('mousePressed', { ...point, clickCount: 1 })
+    await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+    return `clicked "${hit.name.slice(0, 60)}"`
+  }
+  if (step.field !== undefined) {
+    const hit = await findWords(page, String(step.field))
+    if (hit === null) return `no control says ${JSON.stringify(String(step.field))}`
+    const point = { x: hit.x, y: hit.y }
+    await page.mouse('mouseMoved', point)
+    await page.mouse('mousePressed', { ...point, clickCount: 1 })
+    await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+    await wait(80)
+    await page.insertText(String(step.text ?? ''))
+    if (step.submit === true) await pressKey(page, 'Enter')
+    return `typed into "${hit.name.slice(0, 60)}"`
   }
   if (step.tap !== undefined) {
     const [x, y] = String(step.tap).split(',').map(Number)
@@ -419,15 +452,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           if (spot.gone === true) return REF_GONE
           point = { x: Number(spot.x), y: Number(spot.y) }
         } else if (String(args?.text ?? '') !== '') {
-          const words = String(args.text)
-          const read = await readPage(page, { mode: 'text', maxChars: 1200, max: 200 })
-          const shown = read.controls.filter((control) => control.view !== false)
-          const wanted = words.toLowerCase()
-          const hit = shown.find((control) => control.name.toLowerCase() === wanted) ?? shown.find((control) => control.name.toLowerCase().includes(wanted))
-          if (hit === undefined) return `No control says ${JSON.stringify(words)}. Call sidecar_view to see what is there.`
-          const spot = await locate(page, hit.ref)
-          if (spot.gone === true) return REF_GONE
-          point = { x: Number(spot.x), y: Number(spot.y) }
+          const hit = await findWords(page, String(args.text))
+          if (hit === null) return `No control says ${JSON.stringify(String(args.text))}. Call sidecar_view to see what is there.`
+          point = { x: hit.x, y: hit.y }
           label = `"${hit.name.slice(0, 60)}"`
         }
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from sidecar_view, or both x and y.'
@@ -585,7 +612,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'sidecar_do', // ui-copy-ignore
-      description: 'Run several steps in one call and report one compact result: the whole of "click search, type a query, press Enter, wait for results" is one call instead of five. Steps run in order and stop at the first that cannot proceed. Each step: {ref, tap | text, submit}, {tap: "x,y"}, {text}, {key}, {scroll}, {wait_text}, {wait_gone}, {wait_url}, {wait_idle}, {eval}, {open}, {sleep_ms}. Waits know when the page has settled.',
+      description: 'Run several steps in one call and report one compact result: the whole of "click search, type a query, press Enter, wait for results" is one call instead of five. Steps run in order and stop at the first that cannot proceed. Each step: {ref, tap | text, submit}, {tap: "x,y"}, {tap: "Sign in"}, {field: "Email", text}, {text}, {key}, {scroll}, {wait_text}, {wait_gone}, {wait_url}, {wait_idle}, {eval}, {open}, {sleep_ms}. Waits know when the page has settled.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
@@ -596,8 +623,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
               type: 'object', // ui-copy-ignore
               properties: {
                 ref: { type: 'integer', description: 'Control number for tap or text.' },
-                tap: { type: 'string', description: 'Click: a ref number, or "x,y".' },
-                text: { type: 'string', description: 'Type this text (into ref, or wherever focus is).' },
+                tap: { type: 'string', description: 'Click: a ref number, "x,y", or the words on the control.' },
+                text: { type: 'string', description: 'Type this text (into ref, into field, or wherever focus is).' },
+                field: { type: 'string', description: 'Words on the field to fill before typing.' },
                 submit: { type: 'boolean', description: 'Press Enter after typing.' },
                 key: { type: 'string', description: 'Key name.' },
                 scroll: { type: 'integer', description: 'Wheel delta.' },

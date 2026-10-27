@@ -31,6 +31,11 @@ const PAGES = {
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
     <button onclick="document.title='beta clicked'">Beta sent</button></body></html>`,
+  '/login': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <form onsubmit="event.preventDefault(); document.title = 'in as ' + document.querySelector('input[name=user]').value">
+    <label>Username <input name="user"></label>
+    <label>Password <input name="pass" type="password"></label>
+    <button type="submit">Log in</button></form></body></html>`,
   '/dialog': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title = confirm('sure?') ? 'yes' : 'no'">Ask</button></body></html>`,
   '/frame': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
@@ -171,6 +176,12 @@ try {
     }
     line('form-submit', arrived, String(await js(page, 'location.href')))
   }
+
+  await page.navigate(`${base}/login`)
+  const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  const doSaid = await doTool.execute({ steps: [{ field: 'Username', text: 'ada' }, { field: 'Password', text: 'pw' }, { tap: 'Log in' }], read: 'none' })
+  await sleep(250)
+  line('do-by-words', (await js(page, 'document.title')) === 'in as ada' && String(doSaid.text).includes('typed into "Username"'), String(doSaid.text).replace(/\n/g, ' / ').slice(0, 120))
 
   await page.navigate(`${base}/words`)
   const wordsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
