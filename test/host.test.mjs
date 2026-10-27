@@ -388,3 +388,11 @@ test('a field never passes for the button beside it', async () => {
   /* Nothing to look for is not a licence to click whatever is nearest. */
   assert.equal(sameThing(identityOf({ kind: 'button', name: '', href: '' }), { kind: 'button', name: '', href: '' }), false)
 })
+
+test('a browser nobody is drawing says so, and a drawn one says nothing', async () => {
+  const { viewerNote, NO_VIEWER } = await import('../tools.js')
+  assert.equal(viewerNote(0), NO_VIEWER, 'no tab drawing the mirror is a thing to say')
+  assert.match(NO_VIEWER, /refresh/, 'the line has to carry the action that fixes it')
+  assert.equal(viewerNote(1), '', 'a tab is watching, so there is nothing to explain')
+  assert.equal(viewerNote(3), '')
+})

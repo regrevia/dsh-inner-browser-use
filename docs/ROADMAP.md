@@ -84,8 +84,9 @@ stealing the column from other chats.
 
 ## Phase 5 — reliability and safety
 
-- Human takeover: typing in the pane pauses the agent's next action and says so;
-  a resume action exists.
+- Human takeover (0.17.1): real input in the pane (click / text / wheel / key)
+  holds the agent's next action for 6 s and says so; hover and move do not count;
+  reads stay open; `sidecar_resume` takes the page back at once.
 - Guarded actions (upload, download, close tab, buy-ish submits) can require a
   confirm flag. Shipped in 0.14.0 for the narrow case that matters most: an
   overlay in the way is cleared only when its own way out is a safe word

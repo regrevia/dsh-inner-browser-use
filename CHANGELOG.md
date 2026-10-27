@@ -1,3 +1,11 @@
+## 0.17.1
+
+- **人把手放到镜像上时，模型不会再在他手指底下点。** 右栏的镜像是给人看的，也是可以给人用的：登录要人自己扫、验证码要人自己填、有些字段只有人知道填什么。以前这中间有个空档——人正在输入框里打字，模型的下一次点击落下去，轻则焦点跳走，重则按到旁边的按钮上，人只看到字打进了别处。现在镜像里的真实输入（点击、输入、滚轮、按键）会把页面交给人在手上，之后的动作在 6 秒内回一句 `the person is using the mirror (N s more) — nothing was sent.`，并且明说两条出路：等人弄完再重复这次调用，或者 `sidecar_resume` 立刻收回。没派发的动作不算一次点击，所以不会在页面上留下半个操作。
+- **只是把鼠标挪过去不算接手。** 悬停和移动是纯粹的指针探测（看这个位置该显示什么光标），每次划过都会发，如果那也算「人在用」，模型会永远动不了。所以只认真正的输入：点击、文字、滚轮、按键。等待也只有 6 秒——一次误触付出的是一两秒，不是一整轮。
+- **人动手的时候，读页仍然放行。** 知道屏幕上现在是什么，恰恰是判断「该不该等」的前提；而且读不改变页面。`sidecar_view` / `sidecar_extract` / `sidecar_eval` / `sidecar_shot` / `sidecar_wait` 不受影响，`sidecar_click` / `sidecar_type` / `sidecar_key` / `sidecar_scroll` / `sidecar_hover` / `sidecar_select` / `sidecar_upload` / `sidecar_do` 受管。
+- **`sidecar_state` 说出人手在不在。** 多一行 `person free` / `person using it (N s left)`，配合已有的 `viewers` 和 `owner`：屏幕上有人、人在动手、模型在等，三件事都能从一行状态里看出来。
+- 测试：42 条单测不变；广度 42 条全真（新增 `hold-allows-read`、`hold-refuses-action`、`resume-lets-go`）。等待是进程内的一次判断，不加浏览器往返：拒绝路径 0 ms，放行路径与原来相同。
+
 ## 0.17.0
 
 - **「换个窗口的浏览器」以前是句空话。** 有些网站只在有窗口的浏览器里才肯把页面交出来（本机实测 chatgpt.com：无窗口时一直停在「请稍候…」的验证页，同样地址换成有窗口的浏览器，1 秒内就是登录页）。`sidecar_open` 的 `headless: false` 一直是「下次启动生效」——浏览器已经开着的话，改的只是一个没人再读的字段，调用照旧成功返回，页面照旧过不去。要让它生效只能自己去 `pkill` 进程，这不是模型该干的事。现在请求换个形态时，驱动会自己收掉旧进程、用同一个 profile、同一份登录、同一个地址重开：无窗口 → 有窗口 21.6 s、有窗口 → 无窗口 22.1 s（干净的冷启动时间，`docs/BENCH.md` Phase 7），而同形态的重复调用仍然 0 ms，一次都不重启。窗口形态也写进回话：`sidecar_open` 在有窗口时第一行就说 `The browser is showing a window this time ... Same profile, same logins.`，`sidecar_state` 多一行 `showing a window` / `no window`——屏幕上多出一个窗口是人的事，不该由人去猜它是谁。

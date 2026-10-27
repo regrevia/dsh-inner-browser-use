@@ -170,13 +170,6 @@ export class SidecarPage {
     /* A dialog blocks the page until someone answers it, so it is state, not an
        event: the driver can look at it before deciding. */
     this.dialog = null
-    /* The mirror is the person's too: what they do by hand is recorded here, so
-       a tool result can say the page moved under the agent's feet. */
-    this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
-    /* How long after the person's last real input the agent holds off. Short
-       enough that a stray click does not stall a run, long enough that the agent
-       does not type into a field the person is in the middle of filling. */
-    this.holdMs = 6000
     this.console = []
     this.failed = []
     /* What the page asked for, so a page that fills itself from addresses can
@@ -921,6 +914,10 @@ export class Sidecar {
        missing: an adopted browser has no record of a hand on it yet, and asking
        about one used to throw instead of answering. */
     this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
+    /* How long after the person's last real input the agent holds off. Short
+       enough that a stray click does not stall a run, long enough that the agent
+       does not type into a field the person is in the middle of filling. */
+    this.holdMs = 6000
   }
 
   /**

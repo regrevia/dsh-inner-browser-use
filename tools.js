@@ -102,6 +102,44 @@ const CHECK_NOTE = 'That is the site asking a browser to prove a person is there
  * @param {{url?: string, title?: string}} read - what the page says it is.
  * @returns {boolean} whether this is a check page.
  */
+/**
+ * What to say when nothing is drawing the mirror.
+ *
+ * The picture lives in the column of the chat that asked for it, and that tab
+ * only exists once the page has loaded the plugin's drawing half. A page that
+ * was open before the plugin was installed draws nothing, so the browser runs
+ * unseen behind the window — which is exactly when a person says "I cannot see
+ * it". Naming it, with the one thing that fixes it, beats a bare "viewers 0".
+ */
+export const NO_VIEWER = 'Nothing is drawing the mirror in the column yet — this page was loaded before the mirror was, so refresh it once. The window on screen is the same browser.'
+
+/**
+ * The sentence for how many tabs are drawing the mirror.
+ * @param {number} viewers - tabs drawing frames.
+ * @returns {string} a line to append, or '' when something is watching.
+ */
+export function viewerNote(viewers) {
+  return Number(viewers) > 0 ? '' : NO_VIEWER
+}
+
+/**
+ * How many tabs end up drawing the mirror, once the column has had a moment.
+ * The drawing half attaches while the page is still arriving, so asking once,
+ * too early, would always answer nothing.
+ * @param {any} sidecar - the browser driver.
+ * @param {any} page - sidecar page.
+ * @param {number} ms - how long to give it.
+ * @returns {Promise<number>} tabs drawing the mirror.
+ */
+async function watchForViewer(sidecar, page, ms) {
+  const until = Date.now() + ms
+  for (;;) {
+    const seen = Number(page?.frames?.size ?? sidecar?.page?.frames?.size ?? 0)
+    if (seen > 0 || Date.now() >= until) return seen
+    await wait(80)
+  }
+}
+
 export function isCheckPage(read) {
   const where = String(read?.url ?? '')
   if (where.includes('__cf_chl')) return true
@@ -723,7 +761,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         await settle(page, 8000)
         const dead = await unreachable(page)
         if (dead !== '') return { text: dead }
-        return { text: windowed + await look(page, { mode: 'text' }) }
+        /* The column may still be drawing nothing: say so here, where the
+           person is looking for a picture, rather than only in sidecar_state. */
+        const unseen = viewerNote(await watchForViewer(sidecar, page, 1200))
+        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + await look(page, { mode: 'text' }) }
       },
     },
     {
@@ -1206,6 +1247,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `refs followed ${String(follows.count)}`,
           holdText(sidecar) === '' ? 'person free' : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
         ]
+        if (state.alive === true && viewerNote(state.viewers) !== '') rows.push(NO_VIEWER)
         return { text: rows.join('\n') }
       },
     },
