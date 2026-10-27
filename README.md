@@ -117,8 +117,9 @@ opens before a call: a chat that never asked for a page keeps its column as it w
 - **One page at a time.** A link that opens a tab is followed — the mirror lands on the new
   page and the popup closes — so there is never a second page to choose between.
 - **No downloads.** A file offered by a page is not saved to disk.
-- **Frames in the same process are read.** Controls inside those iframes are numbered like the
-  page's own. A frame Chrome runs as its own process is clickable, but its contents are not read.
+- **Frames are read, including cross-site ones.** Controls inside an iframe are numbered like
+  the page's own, whether Chrome shares the page's process or runs the frame apart; a click in
+  either lands where the frame actually sits.
 
 ## Compatibility
 

@@ -279,23 +279,32 @@ const FRAME_BASE = 900_000
 /** Room for the refs of one frame between FRAME_BASE steps. */
 const FRAME_SLOT = 100_000
 
+/** A frame is addressed either by its world or by the session of its own process. */
+function asRoute(route) {
+  if (route === undefined || route === null) return {}
+  if (typeof route === 'number') return { contextId: route }
+  return route
+}
+
 /**
- * Evaluate in a page or in one frame of it.
+ * Evaluate in a page, in one frame of it, or in the process of a frame Chrome
+ * keeps apart.
  * @param {any} page - sidecar page.
  * @param {string} expression - JavaScript.
- * @param {number} [contextId] - world to run in; the main frame when absent.
+ * @param {number|{contextId?: number, sessionId?: string}} [route] - where to run it.
  * @returns {Promise<any>} the JSON-safe value.
  */
-async function evaluateIn(page, expression, contextId) {
+async function evaluateIn(page, expression, route) {
+  const where = asRoute(route)
   const params = { expression, returnByValue: true }
-  if (contextId !== undefined) params.contextId = contextId
-  const { result } = await page.cdp.send('Runtime.evaluate', params)
+  if (where.contextId !== undefined) params.contextId = where.contextId
+  const { result } = await page.cdp.send('Runtime.evaluate', params, where.sessionId)
   return result?.value
 }
 
-/** @param {any} page - sidecar page. @param {number} [contextId] - world to seed. */
-async function seedPage(page, contextId) {
-  await evaluateIn(page, seed(SELECTOR, VERSION), contextId)
+/** @param {any} page - sidecar page. @param {any} [route] - world to seed. */
+async function seedPage(page, route) {
+  await evaluateIn(page, seed(SELECTOR, VERSION), route)
 }
 
 /**
@@ -303,11 +312,11 @@ async function seedPage(page, contextId) {
  * @param {string} mode - read mode.
  * @param {number} budget - text budget.
  * @param {number} max - control cap.
- * @param {number} [contextId] - world to read.
+ * @param {any} [route] - world to read.
  * @returns {Promise<any>} the snapshot.
  */
-async function evaluateSnapshot(page, mode, budget, max, contextId) {
-  const raw = String((await evaluateIn(page, snapshot(mode, budget, max), contextId)) ?? '{}')
+async function evaluateSnapshot(page, mode, budget, max, route) {
+  const raw = String((await evaluateIn(page, snapshot(mode, budget, max), route)) ?? '{}')
   try {
     return JSON.parse(raw)
   } catch {
@@ -319,20 +328,27 @@ async function evaluateSnapshot(page, mode, budget, max, contextId) {
  * Where an iframe sits on the page. A ref inside a frame is resolved against
  * the frame's own viewport, so its point needs the frame's corner added.
  * @param {any} page - sidecar page.
- * @param {number} contextId - the frame world.
- * @param {number} slot - which child frame it is, for the fallback.
+ * @param {{slot?: number, contextId?: number, sessionId?: string}} route - the frame.
  * @returns {Promise<{x: number, y: number}>} the offset.
  */
-async function frameOffset(page, contextId, slot) {
-  const own = await evaluateIn(page, `(() => { try {
-    const frame = window.frameElement
-    if (!frame) return null
-    const b = frame.getBoundingClientRect()
-    return { x: Math.round(b.left), y: Math.round(b.top) }
-  } catch (error) { return null } })()`, contextId)
-  if (own !== null && own !== undefined && Number.isFinite(own.x)) return own
+async function frameOffset(page, route) {
+  const where = asRoute(route)
+  if (where.contextId !== undefined) {
+    const own = await evaluateIn(page, `(() => { try {
+      const frame = window.frameElement
+      if (!frame) return null
+      const b = frame.getBoundingClientRect()
+      return { x: Math.round(b.left), y: Math.round(b.top) }
+    } catch (error) { return null } })()`, where)
+    if (own !== null && own !== undefined && Number.isFinite(own.x)) return own
+  }
+  if (where.frameId !== undefined && typeof page.frameBox === 'function') {
+    const own = await page.frameBox(where.frameId).catch(() => null)
+    if (own !== null) return own
+  }
+  const index = Math.max(0, Number(where.slot ?? 1) - 1)
   const fallback = await evaluateIn(page, `(() => {
-    const frame = document.querySelectorAll('iframe')[${Number(slot)}]
+    const frame = document.querySelectorAll('iframe')[${index}]
     if (!frame) return null
     const b = frame.getBoundingClientRect()
     return { x: Math.round(b.left), y: Math.round(b.top) }
@@ -342,10 +358,24 @@ async function frameOffset(page, contextId, slot) {
 }
 
 /**
+ * Where a frame's refs live: its slot in the frame tree, and how to reach it —
+ * by world when it shares the page's process, by session when Chrome runs it
+ * apart.
+ * @param {any} page - sidecar page.
+ * @param {any} frame - one entry from the frame list.
+ * @param {number} slot - its position under the main frame.
+ * @returns {{slot: number, contextId?: number, sessionId?: string, frameId?: string}|null} the route.
+ */
+function routeOf(page, frame, slot) {
+  const sessionId = frame.contextId === undefined && typeof page.childSession === 'function' ? page.childSession(frame.frameId) : undefined
+  if (frame.contextId === undefined && sessionId === undefined) return null
+  return { slot, contextId: frame.contextId, sessionId, frameId: frame.frameId }
+}
+
+/**
  * Read the frames under the page, so a control inside an iframe is numbered
- * like any other. Same-origin frames are read directly; a frame without a
- * context of its own (a cross-origin child Chrome runs elsewhere) is skipped,
- * and its controls stay reachable by clicking the frame itself.
+ * like any other. A frame Chrome runs in its own process is read through the
+ * session of that process; the corner it sits at still comes from the page.
  * @param {any} page - sidecar page.
  * @param {string} mode - read mode.
  * @param {number} budget - characters of text to keep.
@@ -363,13 +393,13 @@ async function readFrames(page, mode, budget) {
   const controls = []
   let text = ''
   for (let slot = 0; slot < children.length && slot < 8; slot += 1) {
-    const child = children[slot]
-    if (child.contextId === undefined) continue
+    const route = routeOf(page, children[slot], slot + 1)
+    if (route === null) continue
     try {
-      await seedPage(page, child.contextId)
-      const inside = await evaluateSnapshot(page, mode, Math.min(budget, 600), 40, child.contextId)
+      await seedPage(page, route)
+      const inside = await evaluateSnapshot(page, mode, Math.min(budget, 600), 40, route)
       if (inside?.broken === true) continue
-      const offset = await frameOffset(page, child.contextId, slot)
+      const offset = await frameOffset(page, route)
       const tag = FRAME_BASE + slot * FRAME_SLOT
       for (const item of inside.controls ?? []) {
         controls.push({ ...item, ref: tag + Number(item.ref), frame: slot + 1, x: Number(item.x ?? 0) + offset.x, y: Number(item.y ?? 0) + offset.y })
@@ -391,16 +421,21 @@ function splitFrameRef(ref) {
 }
 
 /**
- * The world a ref lives in, for a tool that has to look the element up itself.
+ * Where a ref lives, for a tool that has to look the element up itself.
  * @param {any} page - sidecar page.
  * @param {number} ref - ref from a read.
- * @returns {Promise<number|undefined>} the context id, or nothing for the page.
+ * @returns {Promise<{slot: number, local: number, contextId?: number, sessionId?: string, frameId?: string}|null>} the route, or nothing for the page itself.
  */
 export async function contextFor(page, ref) {
   const split = splitFrameRef(ref)
-  if (split === null || typeof page.frameList !== 'function') return undefined
+  if (split === null) return null
+  if (typeof page.frameList !== 'function') return null
   const frames = await page.frameList().catch(() => [])
-  return frames[split.slot + 1]?.contextId
+  const frame = frames[split.slot + 1]
+  if (frame === undefined) return null
+  const route = routeOf(page, frame, split.slot + 1)
+  if (route === null) return null
+  return { ...route, local: split.local }
 }
 
 /**
@@ -441,12 +476,12 @@ export async function readPage(page, options = {}) {
  */
 export async function locate(page, ref) {
   const split = splitFrameRef(ref)
-  let contextId
+  let route = null
   if (split !== null) {
-    contextId = await contextFor(page, ref)
-    if (contextId === undefined) return { gone: true }
+    route = await contextFor(page, ref)
+    if (route === null) return { gone: true }
   }
-  const said = await evaluateIn(page, resolve(split === null ? ref : split.local), contextId).catch(() => undefined)
+  const said = await evaluateIn(page, resolve(split === null ? ref : route.local), route).catch(() => undefined)
   let spot = { gone: true }
   try {
     spot = JSON.parse(String(said ?? '{"gone":true}'))
@@ -454,7 +489,7 @@ export async function locate(page, ref) {
     spot = { gone: true }
   }
   if (split === null || spot.gone === true) return spot
-  const offset = await frameOffset(page, contextId, split.slot)
+  const offset = await frameOffset(page, route)
   return { ...spot, x: Number(spot.x ?? 0) + offset.x, y: Number(spot.y ?? 0) + offset.y }
 }
 

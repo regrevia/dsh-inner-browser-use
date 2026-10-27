@@ -164,8 +164,10 @@ controls it wants.
   frame's refs never collide with the page's.
 - A click on a framed control resolves in that frame, then adds the frame's rectangle
   to the point it found, because input is always dispatched in viewport coordinates.
-- A frame Chrome runs in another process announces no context here. It is clickable —
-  its rectangle is known — but a read skips its contents rather than inventing them.
+- A frame Chrome runs in another process is a target of its own: the plugin keeps the
+  session Chrome hands it, so a read can be sent there and its controls still get a slot.
+  Its corner is asked from the page, through the frame's owner element, because the
+  frame's own process cannot see where it sits.
 
 A click can open a tab. A page target gets no handle on its own popups, so after an
 action the plugin asks the DevTools address list for page targets other than the one it

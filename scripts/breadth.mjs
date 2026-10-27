@@ -39,6 +39,14 @@ const PAGES = {
     <h1>Pop</h1>
     <button id='pop' onclick="window.open('/done?popped=1','_blank')">Open tab</button></body></html>`,
   '/done': `<!doctype html><html><body><h1>Done</h1><p>the form arrived</p></body></html>`,
+  '/cross': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Cross</h1>
+    <iframe src="http://localhost:__PORT__/partner" style="width:520px;height:240px;border:1px solid #999"></iframe>
+    </body></html>`,
+  '/partner': `<!doctype html><html><body style="font:16px system-ui;padding:12px">
+    <p>a partner frame Chrome keeps apart</p><input placeholder="Partner field">
+    <button id='pg' onclick="window.top.postMessage('partner clicked','*');document.title='partner clicked'">Partner go</button>
+    </body></html>`,
 }
 
 const server = createServer((req, res) => {
@@ -49,7 +57,7 @@ const server = createServer((req, res) => {
     return
   }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-  res.end(html)
+  res.end(html.replaceAll('__PORT__', String(server.address().port)))
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}`
@@ -168,6 +176,22 @@ try {
       line('frame-click', (await js(page, 'document.title')) === 'frame clicked', String(await js(page, 'document.title')))
     } else line('frame-click', false, 'button not numbered')
   }
+
+  await page.navigate(`${base}/cross`)
+  await sleep(900)
+  const crossed = await readPage(page, { mode: 'full', maxChars: 2000 })
+  const partnerField = crossed.controls.find((c) => c.name.toLowerCase().includes('partner field'))
+  line('frame-cross-read', partnerField !== undefined && partnerField.ref >= 900000, partnerField ? `ref ${partnerField.ref}` : crossed.controls.map((c) => c.name).join(' | '))
+  const partnerButton = crossed.controls.find((c) => c.name.toLowerCase().includes('partner go'))
+  if (partnerButton !== undefined) {
+    await click(page, partnerButton.ref)
+    await sleep(400)
+    const frames = await page.frameList()
+    const apart = frames.find((f) => f.url.includes('localhost'))
+    const session = apart === undefined ? undefined : page.childSession(apart.frameId)
+    const said = session === undefined ? undefined : (await page.cdp.send('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, session).catch(() => null))?.result?.value
+    line('frame-cross-click', said === 'partner clicked', String(said))
+  } else line('frame-cross-click', false, 'button not numbered')
 
   const gone = await locate(page, 99999)
   line('gone-ref', gone.gone === true && typeof REF_GONE === 'string')

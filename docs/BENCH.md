@@ -98,6 +98,11 @@ answer), and a read now also asks for the frame tree.
 | key round trip | 13 ms | 2 ms |
 | screenshot | 82 ms, 133 KB | 77 ms, 113 KB |
 
-Breadth run (`npm run breadth`), 13 checks, all true: open shadow DOM read and
+Breadth run (`npm run breadth`), 15 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
-iframe read, iframe typing, iframe click, popup followed, stale ref refused.
+iframe read, iframe typing, iframe click, cross-site frame read and click,
+popup followed, stale ref refused.
+
+A cross-site frame (Chrome runs it in its own process) costs one more round
+trip than a same-process one: its controls arrive in the same read, and the
+frame's corner is one `DOM.getFrameOwner` plus one call on the owner element.

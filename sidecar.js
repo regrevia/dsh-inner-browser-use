@@ -257,6 +257,17 @@ export class SidecarPage {
    * @returns {Promise<string>} what happened, for the tool result.
    */
   /**
+   * The session Chrome gave a frame it runs in its own process, so a read can be
+   * sent there. Chrome names an iframe target after its frame.
+   * @param {string} frameId - a frame from the frame tree.
+   * @returns {string|undefined} the session, when one exists.
+   */
+  childSession(frameId) {
+    for (const [sessionId, child] of this.children) if (child.targetId === frameId) return sessionId
+    return undefined
+  }
+
+  /**
    * A tab this page opened, found through the DevTools address list. Chrome
    * gives a page no handle on its own popups, but the list is enough to know
    * one exists and where it went.
@@ -320,8 +331,40 @@ export class SidecarPage {
       for (const child of node.childFrames ?? []) walk(child)
     }
     walk(tree?.frameTree)
+    /* A frame Chrome runs in another process is not in this tree, but it is
+       attached as its own target; list it after the tree so it gets a slot. */
+    const known = new Set(out.map((item) => item.frameId))
+    for (const [sessionId, child] of this.children) {
+      if (child.type !== 'iframe' || known.has(child.targetId)) continue
+      if (sessionId === '') continue
+      out.push({ frameId: child.targetId, url: String(child.url ?? ''), contextId: undefined })
+      known.add(child.targetId)
+    }
     this.frameOrder = out.map((item) => item.frameId)
     return out
+  }
+
+  /**
+   * Where the owner element of a frame sits on the page, for a frame whose own
+   * process cannot answer. The page's DOM knows the iframe element.
+   * @param {string} frameId - a frame from the frame list.
+   * @returns {Promise<{x: number, y: number}|null>} the corner, when known.
+   */
+  async frameBox(frameId) {
+    const owner = await this.cdp.send('DOM.getFrameOwner', { frameId }).catch(() => null)
+    const backendNodeId = owner?.backendNodeId
+    if (backendNodeId === undefined) return null
+    const node = await this.cdp.send('DOM.resolveNode', { backendNodeId }).catch(() => null)
+    const objectId = node?.object?.objectId
+    if (objectId === undefined) return null
+    const said = await this.cdp.send('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function () { const b = this.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top) } }',
+      returnByValue: true,
+    }).catch(() => null)
+    const spot = said?.result?.value
+    if (spot === null || spot === undefined || !Number.isFinite(spot.x)) return null
+    return { x: Number(spot.x), y: Number(spot.y) }
   }
 
   /** Keep one listener that fans frames out to every viewer. */

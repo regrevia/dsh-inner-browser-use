@@ -128,13 +128,13 @@ function wait(ms) {
  * Evaluate an expression and return its value, JSON-safe.
  * @param {any} page - sidecar page.
  * @param {string} expression - JavaScript.
- * @param {number} [contextId] - frame world to run in.
+ * @param {{contextId?: number, sessionId?: string}|null} [route] - frame to run in.
  * @returns {Promise<any>} the value.
  */
-async function evaluate(page, expression, contextId) {
+async function evaluate(page, expression, route) {
   const params = { expression, returnByValue: true, awaitPromise: true }
-  if (contextId !== undefined) params.contextId = contextId
-  const call = page.cdp.send('Runtime.evaluate', params)
+  if (route?.contextId !== undefined) params.contextId = route.contextId
+  const call = page.cdp.send('Runtime.evaluate', params, route?.sessionId)
   const raced = await Promise.race([call, wait(2000).then(() => 'timeout')])
   if (raced === 'timeout') return undefined
   const { result, exceptionDetails } = raced
@@ -688,8 +688,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const spot = await locate(page, Number(args?.ref))
         if (spot.gone === true) return REF_GONE
         const wanted = JSON.stringify(String(args?.value ?? ''))
-        const contextId = await contextFor(page, Number(args?.ref))
-        const local = Number(args?.ref) % 100000
+        const route = await contextFor(page, Number(args?.ref))
+        const local = route?.local ?? Number(args?.ref)
         const said = await evaluate(page, `(() => {
   const reg = window.__dshRead
   const hit = reg && reg.find(${local})
@@ -702,7 +702,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   select.dispatchEvent(new Event('input', { bubbles: true }))
   select.dispatchEvent(new Event('change', { bubbles: true }))
   return 'chose ' + option.text.trim()
-})()`, contextId)
+})()`, route)
         await settle(page, 3000)
         if (args?.read === true) return `${String(said)}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
         return `${String(said)} · ${await brief(page)}`
@@ -728,16 +728,16 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const ref = Number(args?.ref)
         const files = Array.isArray(args?.files) ? args.files.map(String) : []
         if (files.length === 0) return 'Give at least one absolute path.'
-        const contextId = await contextFor(page, ref)
-        const uploadParams = { expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${ref % 100000}); return hit ? hit.el : null })()` }
-        if (contextId !== undefined) uploadParams.contextId = contextId
-        const handle = await page.cdp.send('Runtime.evaluate', uploadParams)
+        const route = await contextFor(page, ref)
+        const uploadParams = { expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${route?.local ?? ref}); return hit ? hit.el : null })()` }
+        if (route?.contextId !== undefined) uploadParams.contextId = route.contextId
+        const handle = await page.cdp.send('Runtime.evaluate', uploadParams, route?.sessionId)
         const objectId = handle.result?.objectId
         if (objectId === undefined) return REF_GONE
-        const node = await page.cdp.send('DOM.describeNode', { objectId })
+        const node = await page.cdp.send('DOM.describeNode', { objectId }, route?.sessionId)
         const backendNodeId = node?.node?.backendNodeId
         if (backendNodeId === undefined) return 'That control cannot take a file.'
-        await page.cdp.send('DOM.setFileInputFiles', { files, backendNodeId })
+        await page.cdp.send('DOM.setFileInputFiles', { files, backendNodeId }, route?.sessionId)
         await settle(page, 3000)
         return acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), `upload ${String(files.length)} file`) // ui-copy-ignore
       }),
@@ -860,13 +860,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the state now. */
       execute: async (args) => withPage(async (page) => {
-        const checkId = await contextFor(page, Number(args?.ref))
+        const checkRoute = await contextFor(page, Number(args?.ref))
         const checkParams = {
-          expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${Number(args?.ref) % 100000}); if (!hit) return null; const el = hit.el; return { checked: Boolean(el.checked), name: String(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.name || '').trim().slice(0, 60) } })()`,
+          expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${checkRoute?.local ?? Number(args?.ref)}); if (!hit) return null; const el = hit.el; return { checked: Boolean(el.checked), name: String(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.name || '').trim().slice(0, 60) } })()`,
           returnByValue: true,
         }
-        if (checkId !== undefined) checkParams.contextId = checkId
-        const probe = await page.cdp.send('Runtime.evaluate', checkParams)
+        if (checkRoute?.contextId !== undefined) checkParams.contextId = checkRoute.contextId
+        const probe = await page.cdp.send('Runtime.evaluate', checkParams, checkRoute?.sessionId)
         const now = probe.result?.value
         if (now === null || now === undefined) return REF_GONE
         const want = args?.checked === undefined ? !Boolean(now.checked) : args.checked === true
