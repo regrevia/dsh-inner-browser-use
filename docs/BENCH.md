@@ -98,12 +98,12 @@ answer), and a read now also asks for the frame tree.
 | key round trip | 13 ms | 2 ms |
 | screenshot | 82 ms, 133 KB | 77 ms, 113 KB |
 
-Breadth run (`npm run breadth`), 24 checks, all true: open shadow DOM read and
+Breadth run (`npm run breadth`), 25 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
 iframe read, iframe typing, iframe click, cross-site frame read and click,
 popup followed, download saved, network responses listed, a file uploaded
 into a file input, the page printed to a PDF, a changed-only read, names from `for=` and `aria-labelledby`, a click found by its words, a login filled by field names in one call,
-stale ref refused.
+stale ref refused, a crashed renderer picked back up on the same page.
 
 ## Phase 4 — what a change costs
 
@@ -112,6 +112,7 @@ stale ref refused.
 | change in the page → frame ready for the column | 9 ms median, 17 ms max (12 samples) |
 | `changed_only` after a field changes, dense page | 58 chars ≈ **17 tokens** (whole page: 444) |
 | read: text page, `changed_only` | 42 chars ≈ 12 tokens (whole page: 1517) |
+| renderer crashed → readable page again | **1.4 s** (detect, fresh tab, same address) |
 
 The mirror's delay is measured from the moment the page is told to change to
 the frame object the column would draw — capture, JPEG, and the CDP hop. It is

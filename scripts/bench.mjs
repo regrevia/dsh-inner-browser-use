@@ -138,6 +138,16 @@ async function main() {
     const read = await readPage(sidecar.page)
     emit('live-read', { ms: Date.now() - at, title: read.title, tokens: Math.round(renderPage(read).length / 3.4) })
   }
+  /* A crash costs one detection window plus a fresh tab, measured through the
+     tool path the model actually takes. */
+  await sidecar.page.navigate(servers.dense.url)
+  const crashPage = sidecar.page
+  await Promise.race([crashPage.cdp.send('Page.crash').catch(() => {}), wait(1500)])
+  await wait(500)
+  const backAt = Date.now()
+  const fresh = await sidecar.ensure()
+  const back = await readPage(fresh, { mode: 'text' })
+  emit('crash-recovery', { ms: Date.now() - backAt, urlMatched: String(back.title).toLowerCase().includes('dense'), title: back.title })
   await sidecar.shutdown()
   for (const row of Object.values(servers)) row.server.close()
 }

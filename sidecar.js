@@ -144,6 +144,7 @@ export class SidecarPage {
   constructor(cdp, profile, port) { // ui-copy-ignore
     this.cdp = cdp
     this.profile = profile
+    this.port = port
     this.epoch = 0
     this.frames = new Set()
     /* Pointer moves are their own, tiny message: the arrow follows the agent at
@@ -156,6 +157,8 @@ export class SidecarPage {
     this.bytes = 0
     this.pointer = { x: VIEW.width / 2, y: VIEW.height / 2 }
     this.url = ''
+    this.lastUrl = ''
+    this.crashed = false
     this.title = ''
     this.casting = false
     this.inflight = 0
@@ -554,6 +557,7 @@ export class SidecarPage {
    */
   async navigate(url) {
     this.touched = Date.now()
+    this.lastUrl = String(url)
     await this.cdp.send('Page.navigate', { url })
     for (let i = 0; i < 200; i += 1) {
       await wait(100)
@@ -561,6 +565,25 @@ export class SidecarPage {
       if (this.url !== '' && this.url !== 'about:blank') break
     }
     return { url: this.url, title: this.title }
+  }
+
+  /**
+   * A renderer that crashed stops answering. Asking for one number is the
+   * cheapest way to tell a busy page from a dead one.
+   * @returns {Promise<boolean>} whether the page answered.
+   */
+  async ping() {
+    try {
+      const answer = await Promise.race([
+        this.cdp.send('Runtime.evaluate', { expression: '1', returnByValue: true }),
+        wait(600).then(() => { throw new Error('no answer') }),
+      ])
+      return { ok: answer !== undefined && answer !== null, closed: false }
+    } catch {
+      /* A closed connection answers at once; a busy page only times out. The
+         difference matters: one is replaced now, the other gets one more try. */
+      return { ok: false, closed: this.cdp?.closed === true }
+    }
   }
 
   async reload() {
@@ -864,6 +887,7 @@ export class Sidecar {
     this.starting = null
     this.idle = null
     this.lastError = ''
+    this.lastUrl = ''
   }
 
   /**
@@ -902,11 +926,46 @@ export class Sidecar {
     if (options.profile !== undefined) this.profile = options.profile
     if (options.headless !== undefined) this.headless = options.headless !== false
     if (this.alive) {
+      const page = this.page
+      /* A page that stopped answering is a page nobody can drive. Start a new
+         one on the address it was showing, rather than failing every call. */
+      let probe = page.dialog !== null && page.dialog !== undefined ? { ok: true } : await page.ping()
+      if (!probe.ok && !probe.closed) {
+        await wait(150)
+        probe = await page.ping()
+      }
+      if (!probe.ok) {
+        page.crashed = true
+        this.note('renderer stopped answering; opening a fresh tab')
+        const wasAt = options.url ?? page.lastUrl ?? this.lastUrl
+        /* The browser itself is usually fine: only the renderer died. Opening a
+           fresh tab in it is much faster than starting Chrome again. */
+        try {
+          return await this.recover(wasAt)
+        } catch {
+          await this.shutdown()
+          return this.ensure({ ...options, url: wasAt })
+        }
+      }
       this.touch()
       if (options.url !== undefined && options.url !== '') await this.page.navigate(options.url)
       return this.page
     }
     if (this.starting !== null) return this.starting
+    /* A page whose connection closed on its own (a renderer crash closes the
+       tab's session) can be replaced in the browser that is still running. */
+    if (this.page !== null && this.page.cdp?.closed === true) {
+      const wasAt = options.url ?? this.page.lastUrl ?? this.lastUrl
+      this.page.crashed = true
+      this.note('renderer stopped answering; opening a fresh tab')
+      this.starting = this.recover(wasAt).catch((error) => {
+        this.note(String(error?.message ?? error))
+        return this.launch(wasAt)
+      }).finally(() => {
+        this.starting = null
+      })
+      return this.starting
+    }
     this.starting = this.launch(options.url).finally(() => {
       this.starting = null
     })
@@ -923,6 +982,7 @@ export class Sidecar {
     await cdp.ready
     this.cdp = cdp
     this.page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
+    if (url !== undefined && url !== '') this.lastUrl = String(url)
     await this.restoreSessionCookies()
     await this.page.cast()
     if (url !== undefined && url !== '') await this.page.navigate(url)
@@ -1017,6 +1077,28 @@ export class Sidecar {
    * @param {number} port - debugging port. // ui-copy-ignore
    * @returns {Promise<string>} the page target's socket.
    */
+  /**
+   * Replace a dead page with a fresh tab in the same browser, on the same address.
+   * @param {string} url - where the person was.
+   * @returns {Promise<SidecarPage>} the new page.
+   */
+  async recover(url) {
+    const port = this.page?.port ?? 0
+    if (port === 0) throw new Error('sidecar: no browser to recover into')
+    const address = url === '' || url === undefined ? 'about:blank' : String(url)
+    const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
+    if (!created.ok) throw new Error('sidecar: could not open a tab to recover into')
+    const target = await created.json()
+    if (typeof target.webSocketDebuggerUrl !== 'string') throw new Error('sidecar: recovered tab has no socket')
+    const cdp = new Cdp(target.webSocketDebuggerUrl)
+    await cdp.ready
+    this.cdp = cdp
+    this.page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
+    await this.page.cast()
+    this.touch()
+    return this.page
+  }
+
   async pageSocket(port) { // ui-copy-ignore
     for (let i = 0; i < 60; i += 1) {
       try {
@@ -1156,6 +1238,7 @@ export class Sidecar {
       title: this.page?.title ?? '',
       viewers: this.page?.frames.size ?? 0,
       frames: this.page?.seq ?? 0,
+      crashed: this.page?.crashed === true,
       pointer: this.page?.pointer ?? null,
       profiles,
       error: this.alive ? '' : this.lastError,

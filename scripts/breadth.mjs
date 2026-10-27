@@ -318,6 +318,20 @@ try {
 
   const gone = await locate(page, 99999)
   line('gone-ref', gone.gone === true && typeof REF_GONE === 'string')
+
+  /* A crashed renderer must not end the session: the next call starts a new one
+     on the address the person was looking at. */
+  await page.navigate(`${base}/words`)
+  const beforeCrash = sidecar.page
+  await Promise.race([beforeCrash.cdp.send('Page.crash').catch(() => {}), sleep(1200)])
+  await sleep(500)
+  const crashAt = Date.now()
+  const viewTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_view')
+  const recovered = await viewTool.execute({ max_chars: 400 })
+  page = sidecar.page
+  await sleep(200)
+  const backUrl = String(page?.url ?? '')
+  line('crash-recovery', String(recovered.text).length > 20 && backUrl.includes('/words'), `${Date.now() - crashAt} ms back | ${backUrl} | ${String(sidecar.lastError).slice(0, 60)}`)
 } catch (error) {
   line('crashed', false, String(error?.message ?? error))
 } finally {
