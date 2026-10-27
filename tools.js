@@ -1066,6 +1066,32 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
+      name: 'sidecar_network', // ui-copy-ignore
+      description: 'List the responses the page has received, newest first: method, status, type and address. Use it when a page fills itself from the network and the screen does not say why.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          filter: { type: 'string', description: 'Only rows whose address contains this text.' },
+          limit: { type: 'integer', description: 'How many rows. Default 20, at most 60.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 10_000,
+      isConcurrencySafe: () => true,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the requests. */
+      execute: async (args) => {
+        const want = String(args?.filter ?? '').toLowerCase()
+        const limit = Math.min(60, Math.max(1, Number(args?.limit ?? 20) || 20))
+        const rows = sidecar.network()
+          .filter((row) => want === '' || String(row.url).toLowerCase().includes(want))
+          .slice(0, limit)
+        if (rows.length === 0) return { text: 'no responses yet' }
+        return { text: rows.map((row) => `${String(row.status)} ${String(row.method)} ${String(row.type)} ${String(row.url)}`).join('\n') }
+      },
+    },
+
+    {
       name: 'sidecar_pdf', // ui-copy-ignore
       description: 'Print the page to a PDF and return its path. Useful when the person wants the document rather than a picture of it.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },

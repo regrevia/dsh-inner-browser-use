@@ -131,7 +131,7 @@ browser without pulling the column away from the person reading it.
 
 ## Tool surface
 
-`sidecarTools()` in `tools.js` builds the 24 definitions and `index.js` registers them on the
+`sidecarTools()` in `tools.js` builds the 25 definitions and `index.js` registers them on the
 plugin's tool scope. All of them return one text block. A page read numbers the controls and
 keeps those numbers across later reads, so `sidecar_click` by ref means the element the model
 last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
@@ -149,6 +149,14 @@ launch, so a restart of the app does not sign the person out.
 
 A system-prompt section (`browser-in-this-chat`) tells the model to reach for these tools
 without asking first when someone wants something done on a site.
+
+## Network
+
+`Network.enable` is already on for the mirror. A request is kept when it is
+sent and settled when its response arrives, so the list holds method, status,
+type and address of what the page actually got — 120 rows, oldest dropped.
+`sidecar_network` reads that list without touching the page, which is why it
+can answer while a dialog is open.
 
 ## Downloads
 

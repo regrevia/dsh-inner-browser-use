@@ -165,6 +165,10 @@ export class SidecarPage {
     this.dialog = null
     this.console = []
     this.failed = []
+    /* What the page asked for, so a page that fills itself from addresses can
+       be understood without a screenshot or a retry. */
+    this.network = []
+    this.requests = new Map()
     /* frame id -> the world its page script runs in. A control inside an iframe
        is only reachable through that world; the frame list is read when the
        read model needs it. */
@@ -241,6 +245,29 @@ export class SidecarPage {
       const text = (params.args ?? []).map((arg) => String(arg.value ?? arg.description ?? '')).join(' ').slice(0, 300)
       this.console.push({ type: String(params.type ?? 'log'), text })
       if (this.console.length > 200) this.console.splice(0, 50)
+      return
+    }
+    if (message.method === 'Network.requestWillBeSent') {
+      const params = message.params ?? {}
+      const request = params.request ?? {}
+      const id = String(params.requestId ?? '')
+      if (id === '') return
+      this.requests.set(id, {
+        method: String(request.method ?? 'GET'),
+        url: String(request.url ?? '').slice(0, 300), // ui-copy-ignore
+        type: String(params.type ?? ''),
+        status: 0,
+      })
+      if (this.requests.size > 200) this.requests.delete(this.requests.keys().next().value)
+      return
+    }
+    if (message.method === 'Network.responseReceived') {
+      const params = message.params ?? {}
+      const known = this.requests.get(String(params.requestId ?? ''))
+      if (known === undefined) return
+      known.status = Number(params.response?.status ?? 0)
+      this.network.push(known)
+      if (this.network.length > 120) this.network.splice(0, 40)
       return
     }
     if (message.method === 'Network.loadingFailed') {
@@ -342,6 +369,14 @@ export class SidecarPage {
     }
     this.frameOrder = out.map((item) => item.frameId)
     return out
+  }
+
+  /**
+   * Responses this page received, newest first.
+   * @returns {{method: string, url: string, type: string, status: number}[]} what it asked for.
+   */
+  networkList() {
+    return this.network.slice(-120).reverse()
   }
 
   /**
@@ -838,6 +873,15 @@ export class Sidecar {
   downloads() {
     if (this.page === null) return []
     return this.page.downloads()
+  }
+
+  /**
+   * Responses so far. Asking a stopped browser is an empty list, not an error.
+   * @returns {{method: string, url: string, type: string, status: number}[]} the requests.
+   */
+  network() {
+    if (this.page === null) return []
+    return this.page.networkList()
   }
 
   get alive() {

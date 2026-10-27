@@ -109,13 +109,15 @@ Chromium on the machine; see [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 The first call starts the browser and puts its mirror in this chat's right column. Nothing
 opens before a call: a chat that never asked for a page keeps its column as it was.
 
-## Frames and downloads
+## Frames, downloads, network
 
 - **Frames are read, including cross-site ones.** Controls inside an iframe are numbered like
   the page's own, whether Chrome shares the page's process or runs the frame apart; a click in
   either lands where the frame actually sits.
 - **A download lands on disk.** A click that saves a file writes it into the browser's own
   profile folder, and `sidecar_downloads` names it, its size and when it arrived.
+- **The network is visible.** `sidecar_network` lists what the page asked for, newest first,
+  so a page that fills itself in from an address can be understood without a screenshot.
 
 ## What it does not do
 

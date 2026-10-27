@@ -39,6 +39,9 @@ const PAGES = {
     <h1>Pop</h1>
     <button id='pop' onclick="window.open('/done?popped=1','_blank')">Open tab</button></body></html>`,
   '/done': `<!doctype html><html><body><h1>Done</h1><p>the form arrived</p></body></html>`,
+  '/xhr': `<!doctype html><html><body><h1>Network</h1><p id='out'>waiting</p>
+    <script>fetch('/api/ping').then((r) => r.json()).then((data) => { document.getElementById('out').textContent = data.said })</script>
+    </body></html>`,
   '/download': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Download</h1><a id='get' href="/file" download="report.txt">Get file</a></body></html>`,
   '/cross': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
@@ -52,6 +55,11 @@ const PAGES = {
 }
 
 const server = createServer((req, res) => {
+  if (req.url.split('?')[0] === '/api/ping') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ said: 'pong' }))
+    return
+  }
   if (req.url.split('?')[0] === '/file') {
     res.writeHead(200, { 'content-type': 'text/plain', 'content-disposition': 'attachment; filename="report.txt"' })
     res.end('the file arrived')
@@ -215,6 +223,14 @@ try {
     const newest = files[0]
     line('download-click', String(newest?.at ?? '') > beforeAt && String(newest?.name ?? '').startsWith('report') && newest.bytes === 16, JSON.stringify(files.slice(0, 2)))
   }
+
+  await page.navigate(`${base}/xhr`)
+  let ping
+  for (let i = 0; i < 30 && ping === undefined; i += 1) {
+    await sleep(200)
+    ping = page.networkList().find((row) => row.url.endsWith('/api/ping'))
+  }
+  line('network-list', ping !== undefined && ping.status === 200 && ping.method === 'GET', JSON.stringify(ping ?? null))
 
   const gone = await locate(page, 99999)
   line('gone-ref', gone.gone === true && typeof REF_GONE === 'string')

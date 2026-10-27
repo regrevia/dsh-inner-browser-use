@@ -128,6 +128,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_hover',
     'sidecar_key',
     'sidecar_nav',
+    'sidecar_network',
     'sidecar_open',
     'sidecar_pdf',
     'sidecar_scroll',
@@ -146,7 +147,7 @@ test('registers the sidecar tools and nothing else', () => {
     assert.deepEqual(definition.output.schema.required, ['text'])
     assert.deepEqual(definition.output.render({}, { text: 'hi' }), [{ type: 'text', text: 'hi' }])
     /* Reading where the sidecar stands is safe anywhere; driving it is not. */
-    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads'].includes(name))
+    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads', 'sidecar_network'].includes(name))
   }
 })
 
