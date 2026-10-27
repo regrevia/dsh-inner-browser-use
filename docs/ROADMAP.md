@@ -246,3 +246,10 @@ through the same mirror, and take the next round from it. Nothing opens on the
 desktop while that happens: a site that refuses a headless build gets a window
 at -3000,-3000, and the column shows the only picture.
 
+## Phase 21 — a review round that closes the loop, 0.30.0
+
+`sidecar_ask` sends and returns an answer. Next: a round trip that carries the
+repository address there and the review back, and records in the round log which
+commit the review was about, so a later round can tell whether the advice was
+already taken.
+

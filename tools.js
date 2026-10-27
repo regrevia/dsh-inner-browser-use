@@ -976,6 +976,90 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
+      name: 'sidecar_ask', // ui-copy-ignore
+      description: 'Say something to a chat that is open in the page — a model, a support window, a search box — and read its answer back in the same call. Types into the box, presses Enter, then waits until the answer stops growing. Use it to get a review or a picture prompt answered without a read between every step.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          text: { type: 'string', description: 'What to say.' },
+          ref: { type: 'integer', description: 'The box to type in, from sidecar_view. Omit to use the page\u2019s own chat box.' },
+          submit: { type: 'boolean', description: 'Press Enter to send. Default true.' },
+          timeout_ms: { type: 'integer', description: 'How long to wait for the answer. Default 60000.' },
+        },
+        required: ['text'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 180_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the answer. */
+      execute: async (args) => withPage(async (page) => {
+        const said = String(args?.text ?? '').trim()
+        if (said === '') return 'Give me something to say.'
+        const budget = Math.max(3000, Math.min(180_000, Math.trunc(Number(args?.timeout_ms ?? 60_000)) || 60_000))
+        const before = await readPage(page, { mode: 'text', maxChars: 4000 })
+        let point = null
+        if (args?.ref !== undefined) {
+          const spot = await findAgain(page, Number(args.ref))
+          if (spot.gone === true) return REF_GONE
+          point = { x: Number(spot.x), y: Number(spot.y) }
+        } else {
+          const at = await evaluate(page, `(() => {
+            let best = null
+            for (const el of document.querySelectorAll('textarea, [contenteditable=""], [contenteditable="true"], input[type="text"], input[type="search"], input:not([type])')) {
+              const b = el.getBoundingClientRect()
+              const s = getComputedStyle(el)
+              if (s.visibility === 'hidden' || s.display === 'none' || b.width < 80 || b.height < 18) continue
+              if (b.bottom < 0 || b.top > innerHeight) continue
+              if (best === null || b.width * b.height > best.area) best = { area: b.width * b.height, x: b.x + Math.min(24, b.width / 2), y: b.y + b.height / 2, name: String(el.getAttribute('placeholder') ?? el.getAttribute('aria-label') ?? '').slice(0, 40) }
+            }
+            return best === null ? null : { x: Math.round(best.x), y: Math.round(best.y), name: best.name }
+          })()`)
+          if (at === null || at === undefined) return 'No box to type in on this page. Call sidecar_view to see what is there.'
+          point = { x: Number(at.x), y: Number(at.y) }
+        }
+        await page.mouse('mouseMoved', point)
+        await page.mouse('mousePressed', { ...point, clickCount: 1 })
+        await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+        await wait(60)
+        await page.insertText(said)
+        if (args?.submit !== false) await pressKey(page, 'Enter')
+        const started = Date.now()
+        const deadline = started + budget
+        let last = before.text
+        let fresh = ''
+        let steady = 0
+        let quiet = 0
+        while (Date.now() < deadline) {
+          await wait(500)
+          const now = await readPage(page, { mode: 'text', maxChars: 4000 })
+          if (now.text !== last) {
+            last = now.text
+            fresh = now.text
+            steady = 0
+            quiet = 0
+            continue
+          }
+          if (fresh !== '') {
+            steady += 1
+            if (steady >= 3) break
+          } else {
+            quiet += 1
+            if (quiet >= 4 && Date.now() - started > 4000) break
+          }
+        }
+        const took = Date.now() - started
+        if (fresh === '') return `sent it — no answer after ${Math.round(took / 100) / 10}s; the page still says: ${before.text.slice(0, 400)}`
+        /* The answer may replace the words that were there, so cut at the last
+           character the two reads share, not at the old length. */
+        let shared = 0
+        while (shared < fresh.length && shared < before.text.length && fresh[shared] === before.text[shared]) shared += 1
+        const added = fresh.slice(shared)
+        const words = added.replace(/\s+/g, ' ').trim().slice(0, 2500)
+        return `the answer came back in ${Math.round(took / 100) / 10}s:\n${words}`
+      }),
+    },
+    {
       name: 'sidecar_key', // ui-copy-ignore
       description: 'Press one key in the sidecar browser: Enter, Tab, Escape, Backspace, Delete, ArrowUp/ArrowDown/ArrowLeft/ArrowRight, Home, End, PageUp, PageDown, Space.',
       parameters: {

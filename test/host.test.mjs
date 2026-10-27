@@ -114,6 +114,7 @@ after(async () => {
 
 test('registers the sidecar tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
+    'sidecar_ask',
     'sidecar_check',
     'sidecar_click',
     'sidecar_clipboard',
@@ -500,4 +501,13 @@ test('a second read of the same page is one line', async () => {
   assert.equal(sameRead(one, { ...one, url: 'https://example.test/next' }), false)
   assert.equal(sameRead(one, { ...one, controls: [{ ref: 2, kind: 'button', name: 'Go' }] }), false)
   assert.equal(sameRead(undefined, one), false)
+})
+
+test('there is a tool that asks a chat in the page and brings the answer back', async () => {
+  const { sidecarTools } = await import('../tools.js?v=1')
+  const ask = sidecarTools({ alive: false }, { refs: [], at: 0 }).find((tool) => tool.name === 'sidecar_ask')
+  assert.ok(ask, 'sidecar_ask is registered')
+  assert.match(ask.description, /read its answer back in the same call/)
+  assert.deepEqual(Object.keys(ask.parameters.properties), ['text', 'ref', 'submit', 'timeout_ms'])
+  assert.deepEqual(ask.parameters.required, ['text'])
 })

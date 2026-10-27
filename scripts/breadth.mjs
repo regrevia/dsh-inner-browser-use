@@ -86,6 +86,23 @@ const PAGES = {
   /* A chart that came back empty is the failure worth naming. */
   '/flat': `<!doctype html><html><body style="margin:0;padding:24px">
     <img id="blank" src="/flat.png" width="140" height="90" alt="Chart"></body></html>`,
+  /* A chat in the page: the answer arrives over a second, as a real one does. */
+  '/chat': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <div id="said">Ready</div>
+    <textarea id="box" placeholder="Message the assistant" style="width:520px;height:60px"></textarea>
+    <button id="send">Send</button>
+    <script>
+      const said = document.querySelector('#said')
+      const box = document.querySelector('#box')
+      const reply = (() => {
+        const asked = box.value.trim()
+        said.textContent = 'Thinking'
+        setTimeout(() => { said.textContent = 'Thinking. ' }, 300)
+        setTimeout(() => { said.textContent = 'Answer: ' + asked + ' — the review is that names are clear.' }, 700)
+      })
+      document.querySelector('#send').addEventListener('click', reply)
+      box.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); reply() } })
+    </script></body></html>`,
   '/dense': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Catalog</h1>${Array.from({ length: 40 }, (_, at) => `<p>Item ${at + 1}: a plain sentence about a thing worth reading, long enough to fill a line.</p>`).join('')}</body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
@@ -367,6 +384,17 @@ try {
   await page.navigate(`${base}/words`)
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
   line('no-picture-noise', !wordsRead.includes('sidecar_grab saves it'), wordsRead.split('\n').length + ' lines')
+
+  /* One call carries a question and the answer back. */
+  {
+    const refs = { refs: [], at: 0 }
+    const ask = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_ask') // ui-copy-ignore
+    await page.navigate(`${base}/chat`)
+    const started = Date.now()
+    const told = await ask.execute({ text: 'review the read output', timeout_ms: 8000 })
+    const body = String(told?.text ?? '')
+    line('ask-in-one-call', body.includes('the answer came back in') && body.includes('names are clear'), `${Date.now() - started} ms | ${body.replace(/\s+/g, ' ').slice(0, 90)}`)
+  }
 
   /* Reading the same page twice should not cost the page twice. */
   {

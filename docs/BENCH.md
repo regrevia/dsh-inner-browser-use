@@ -360,3 +360,13 @@ what the page meant to show; the read reports that size, not the icon's.
 The comparison is free: both reads already happened. Only the report shrinks.
 A changed scroll offset is still reported, so "nothing changed" is never a lie.
 
+## Phase 20 — one call carries the question and the answer, 0.30.0
+
+| step | before | `sidecar_ask` |
+| --- | --- | --- |
+| type the message | `sidecar_type` + `submit` | same, inside the call |
+| read the page | `sidecar_view` | — |
+| read it again until the answer stops growing | 2–6 more `sidecar_view` calls | — |
+| **turns for a chat reply** | 3–7 | **1** |
+| measured `sidecar_ask` on `/chat` (answer over 2 arrivals, 700 ms tail) | — | 2.5 s, one turn |
+
