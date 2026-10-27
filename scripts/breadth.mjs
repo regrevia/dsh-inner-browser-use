@@ -26,6 +26,18 @@ const PAGES = {
     <button type="submit">Send</button></form></body></html>`,
   '/dialog': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title = confirm('sure?') ? 'yes' : 'no'">Ask</button></body></html>`,
+  '/frame': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Frame</h1>
+    <iframe srcdoc="<p>inside the frame</p><input placeholder='Frame field'><button id='go'>Frame go</button>"
+      style="width:520px;height:260px;border:1px solid #999"></iframe>
+    <script>window.wire = () => {
+      const doc = document.querySelector('iframe').contentDocument
+      doc.querySelector('#go').addEventListener('click', () => { document.title = 'frame clicked' })
+    }
+    document.querySelector('iframe').addEventListener('load', window.wire)</script></body></html>`,
+  '/pop': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Pop</h1>
+    <button id='pop' onclick="window.open('/done?popped=1','_blank')">Open tab</button></body></html>`,
   '/done': `<!doctype html><html><body><h1>Done</h1><p>the form arrived</p></body></html>`,
 }
 
@@ -124,6 +136,37 @@ try {
     await page.cdp.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {})
     await sleep(400)
     line('dialog-accepted', (await js(page, 'document.title')) === 'yes')
+  }
+
+  await page.navigate(`${base}/pop`)
+  await sleep(300)
+  const popRead = await readPage(page, { mode: 'full', maxChars: 2000 })
+  const popButton = popRead.controls.find((c) => c.name.toLowerCase().includes('open tab'))
+  if (popButton === undefined) line('pop-follow', false, popRead.controls.map((c) => c.name).join(' | '))
+  else {
+    await click(page, popButton.ref)
+    await sleep(400)
+    const said = await page.adoptOpened()
+    const now = await js(page, 'location.href')
+    line('pop-follow', String(now).includes('/done') && said.includes('/done'), `${said} -> ${now}`)
+  }
+
+  await page.navigate(`${base}/frame`)
+  await sleep(400)
+  const framed = await readPage(page, { mode: 'full', maxChars: 2000 })
+  const insideField = framed.controls.find((c) => c.name.toLowerCase().includes('frame field'))
+  line('frame-read', insideField !== undefined && insideField.ref >= 900000, insideField ? `ref ${insideField.ref}` : framed.controls.map((c) => c.name).join(' | '))
+  if (insideField !== undefined) {
+    await click(page, insideField.ref)
+    await page.insertText('in frame')
+    const said = await js(page, `document.querySelector('iframe').contentDocument.querySelector('input').value`)
+    line('frame-type', said === 'in frame', String(said))
+    const frameButton = framed.controls.find((c) => c.name.toLowerCase().includes('frame go'))
+    if (frameButton !== undefined) {
+      await click(page, frameButton.ref)
+      await sleep(300)
+      line('frame-click', (await js(page, 'document.title')) === 'frame clicked', String(await js(page, 'document.title')))
+    } else line('frame-click', false, 'button not numbered')
   }
 
   const gone = await locate(page, 99999)

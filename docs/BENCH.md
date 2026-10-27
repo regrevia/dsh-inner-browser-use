@@ -81,3 +81,23 @@ A ten-step batch therefore spends ~150 tokens on confirmations instead of
   nothing visible.
 - A tall page whose only animation is below the fold produces no frames: the
   viewport is what is captured.
+
+## Phase 3 — frames and popups, 0.13.0
+
+Same bench, same page. Two changes landed: controls are capped at the read's own
+`max` after viewport-first sorting (the cap was applied to candidates, not to the
+answer), and a read now also asks for the frame tree.
+
+| What | Before | After |
+| --- | --- | --- |
+| read: dense, `full` | 3118 chars, 142 controls ≈ 917 tokens | 2128 chars, 90 controls ≈ **626 tokens** |
+| read: dense, `text` | 1510 chars, 142 controls ≈ 444 tokens | 1510 chars, 90 controls ≈ 444 tokens |
+| read: text page | 13 ms | 13 ms (one frame-tree call, ~1 ms) |
+| launch → first frame | 506 ms | 479 ms |
+| click round trip | 1 ms | 2 ms |
+| key round trip | 13 ms | 2 ms |
+| screenshot | 82 ms, 133 KB | 77 ms, 113 KB |
+
+Breadth run (`npm run breadth`), 13 checks, all true: open shadow DOM read and
+click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
+iframe read, iframe typing, iframe click, popup followed, stale ref refused.

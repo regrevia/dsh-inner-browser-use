@@ -150,6 +150,29 @@ launch, so a restart of the app does not sign the person out.
 A system-prompt section (`browser-in-this-chat`) tells the model to reach for these tools
 without asking first when someone wants something done on a site.
 
+## Frames and popups
+
+A page is not one document. Chrome keeps a table of frames and gives each one the
+JavaScript context its scripts run in; the plugin listens for those contexts as they
+are created and destroyed, so a read can be sent to the context that owns the
+controls it wants.
+
+- A read walks the frame tree main frame first and sends one snapshot per frame, so a
+  form inside an iframe is numbered with the page's own controls.
+- Refs from a frame are offset: `900000 + slot * 100000 + local`. The slot is the
+  frame's position in the tree, so the number says which context to resolve in, and a
+  frame's refs never collide with the page's.
+- A click on a framed control resolves in that frame, then adds the frame's rectangle
+  to the point it found, because input is always dispatched in viewport coordinates.
+- A frame Chrome runs in another process announces no context here. It is clickable —
+  its rectangle is known — but a read skips its contents rather than inventing them.
+
+A click can open a tab. A page target gets no handle on its own popups, so after an
+action the plugin asks the DevTools address list for page targets other than the one it
+drives. If one appears, the mirror navigates to its address and the popup is closed with
+the target HTTP endpoints. A person watching the column sees where the click went,
+and there is still one page to drive.
+
 ## Files
 
 | File | Half |

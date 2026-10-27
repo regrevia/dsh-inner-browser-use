@@ -78,6 +78,10 @@ Screenshots are the only thing written outside the profile:
 | Frame | 1440×900 JPEG, ~82 KB |
 | Stream | ~25 frames per second |
 | Pointer move to arrow | 0.8–7 ms |
+| Read, dense page | 444 tokens (1510 chars, 90 controls) |
+| Read round trip | 1–4 ms |
+| Click round trip | 2 ms |
+| Screenshot | 77 ms, 113 KB |
 
 ## Install
 
@@ -90,8 +94,8 @@ In the app: **Plugins → Install from folder**, and pick the clone. To install 
 tarball instead, build it from that directory and install the file:
 
 ```bash
-npm pack                                  # writes dsh-inner-browser-use-0.12.1.tgz
-dsh plugin install ./dsh-inner-browser-use-0.12.1.tgz
+npm pack                                  # writes dsh-inner-browser-use-0.13.0.tgz
+dsh plugin install ./dsh-inner-browser-use-0.13.0.tgz
 ```
 
 The plugin appears under **Plugins** as *Background browser*. It needs Google Chrome or
@@ -110,9 +114,11 @@ opens before a call: a chat that never asked for a page keeps its column as it w
 - **It does not touch your Chrome.** The browser runs from a separate profile with no
   connection to the window you are using.
 - **The viewport is fixed.** 1440×900, desktop layout, no resizing and no mobile emulation.
-- **No second tab.** One page per browser; a link that asks for a new window opens in that page.
-- **No downloads, uploads or script evaluation.** The eight tools above are the whole surface;
-  reading the page and driving real input cover the rest.
+- **One page at a time.** A link that opens a tab is followed — the mirror lands on the new
+  page and the popup closes — so there is never a second page to choose between.
+- **No downloads.** A file offered by a page is not saved to disk.
+- **Frames in the same process are read.** Controls inside those iframes are numbered like the
+  page's own. A frame Chrome runs as its own process is clickable, but its contents are not read.
 
 ## Compatibility
 

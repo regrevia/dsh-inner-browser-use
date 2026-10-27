@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, contextFor, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -128,10 +128,13 @@ function wait(ms) {
  * Evaluate an expression and return its value, JSON-safe.
  * @param {any} page - sidecar page.
  * @param {string} expression - JavaScript.
+ * @param {number} [contextId] - frame world to run in.
  * @returns {Promise<any>} the value.
  */
-async function evaluate(page, expression) {
-  const call = page.cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+async function evaluate(page, expression, contextId) {
+  const params = { expression, returnByValue: true, awaitPromise: true }
+  if (contextId !== undefined) params.contextId = contextId
+  const call = page.cdp.send('Runtime.evaluate', params)
   const raced = await Promise.race([call, wait(2000).then(() => 'timeout')])
   if (raced === 'timeout') return undefined
   const { result, exceptionDetails } = raced
@@ -149,6 +152,9 @@ async function evaluate(page, expression) {
  * @returns {Promise<string>} the address it settled on.
  */
 export async function settle(page, timeout = 5000) {
+  /* A click may have opened a tab. The mirror follows it, so every tool that
+     waited on a page ends up on the page the person would be looking at. */
+  const opened = typeof page.adoptOpened === 'function' ? await page.adoptOpened().catch(() => '') : ''
   const deadline = Date.now() + timeout
   let last = ''
   let steady = 0
@@ -682,9 +688,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const spot = await locate(page, Number(args?.ref))
         if (spot.gone === true) return REF_GONE
         const wanted = JSON.stringify(String(args?.value ?? ''))
+        const contextId = await contextFor(page, Number(args?.ref))
+        const local = Number(args?.ref) % 100000
         const said = await evaluate(page, `(() => {
   const reg = window.__dshRead
-  const hit = reg && reg.find(${Number(args?.ref)})
+  const hit = reg && reg.find(${local})
   if (!hit || hit.el.tagName !== 'SELECT') return 'that control is not a dropdown'
   const select = hit.el
   const wanted = ${wanted}
@@ -694,7 +702,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   select.dispatchEvent(new Event('input', { bubbles: true }))
   select.dispatchEvent(new Event('change', { bubbles: true }))
   return 'chose ' + option.text.trim()
-})()`)
+})()`, contextId)
         await settle(page, 3000)
         if (args?.read === true) return `${String(said)}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
         return `${String(said)} · ${await brief(page)}`
@@ -720,9 +728,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const ref = Number(args?.ref)
         const files = Array.isArray(args?.files) ? args.files.map(String) : []
         if (files.length === 0) return 'Give at least one absolute path.'
-        const handle = await page.cdp.send('Runtime.evaluate', {
-          expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${ref}); return hit ? hit.el : null })()`,
-        })
+        const contextId = await contextFor(page, ref)
+        const uploadParams = { expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${ref % 100000}); return hit ? hit.el : null })()` }
+        if (contextId !== undefined) uploadParams.contextId = contextId
+        const handle = await page.cdp.send('Runtime.evaluate', uploadParams)
         const objectId = handle.result?.objectId
         if (objectId === undefined) return REF_GONE
         const node = await page.cdp.send('DOM.describeNode', { objectId })
@@ -851,10 +860,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the state now. */
       execute: async (args) => withPage(async (page) => {
-        const probe = await page.cdp.send('Runtime.evaluate', {
-          expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${Number(args?.ref)}); if (!hit) return null; const el = hit.el; return { checked: Boolean(el.checked), name: String(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.name || '').trim().slice(0, 60) } })()`,
+        const checkId = await contextFor(page, Number(args?.ref))
+        const checkParams = {
+          expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${Number(args?.ref) % 100000}); if (!hit) return null; const el = hit.el; return { checked: Boolean(el.checked), name: String(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.name || '').trim().slice(0, 60) } })()`,
           returnByValue: true,
-        })
+        }
+        if (checkId !== undefined) checkParams.contextId = checkId
+        const probe = await page.cdp.send('Runtime.evaluate', checkParams)
         const now = probe.result?.value
         if (now === null || now === undefined) return REF_GONE
         const want = args?.checked === undefined ? !Boolean(now.checked) : args.checked === true

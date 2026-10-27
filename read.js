@@ -201,6 +201,9 @@ function snapshot(mode, budget, max) {
     if (!el || !el.isConnected) reg.refs.delete(ref)
   }
   controls.sort((a, b) => Number(b.view) - Number(a.view))
+  /* Only the first screenful and a bit is worth a line each: an offscreen
+     control is a scroll away, and a hundred dead rows cost the reader tokens. */
+  const picked = controls.slice(0, max)
   const parts = []
   let used = 0
   let full = 0
@@ -243,7 +246,7 @@ function snapshot(mode, budget, max) {
       if (!el || el === document.body) return null
       return { ref: reg.id(el), kind: role(el), name: name(el) }
     })(),
-    controls,
+    controls: picked,
   })
 })()`
 }
@@ -270,20 +273,134 @@ export function resolve(ref) {
 })()`
 }
 
-/** @param {any} page - sidecar page. @returns {Promise<any>} the page registry state. */
-async function seedPage(page) {
-  await page.cdp.send('Runtime.evaluate', { expression: seed(SELECTOR, VERSION), returnByValue: true })
+/** Where refs of controls inside iframes start. Main-frame refs stay small. */
+const FRAME_BASE = 900_000
+
+/** Room for the refs of one frame between FRAME_BASE steps. */
+const FRAME_SLOT = 100_000
+
+/**
+ * Evaluate in a page or in one frame of it.
+ * @param {any} page - sidecar page.
+ * @param {string} expression - JavaScript.
+ * @param {number} [contextId] - world to run in; the main frame when absent.
+ * @returns {Promise<any>} the JSON-safe value.
+ */
+async function evaluateIn(page, expression, contextId) {
+  const params = { expression, returnByValue: true }
+  if (contextId !== undefined) params.contextId = contextId
+  const { result } = await page.cdp.send('Runtime.evaluate', params)
+  return result?.value
 }
 
-/** @param {any} page - sidecar page. @param {string} mode - read mode. @param {number} budget - text budget. @param {number} max - control cap. */
-async function evaluateSnapshot(page, mode, budget, max) {
-  const { result } = await page.cdp.send('Runtime.evaluate', { expression: snapshot(mode, budget, max), returnByValue: true })
-  const raw = String(result?.value ?? '{}')
+/** @param {any} page - sidecar page. @param {number} [contextId] - world to seed. */
+async function seedPage(page, contextId) {
+  await evaluateIn(page, seed(SELECTOR, VERSION), contextId)
+}
+
+/**
+ * @param {any} page - sidecar page.
+ * @param {string} mode - read mode.
+ * @param {number} budget - text budget.
+ * @param {number} max - control cap.
+ * @param {number} [contextId] - world to read.
+ * @returns {Promise<any>} the snapshot.
+ */
+async function evaluateSnapshot(page, mode, budget, max, contextId) {
+  const raw = String((await evaluateIn(page, snapshot(mode, budget, max), contextId)) ?? '{}')
   try {
     return JSON.parse(raw)
   } catch {
     return { broken: true }
   }
+}
+
+/**
+ * Where an iframe sits on the page. A ref inside a frame is resolved against
+ * the frame's own viewport, so its point needs the frame's corner added.
+ * @param {any} page - sidecar page.
+ * @param {number} contextId - the frame world.
+ * @param {number} slot - which child frame it is, for the fallback.
+ * @returns {Promise<{x: number, y: number}>} the offset.
+ */
+async function frameOffset(page, contextId, slot) {
+  const own = await evaluateIn(page, `(() => { try {
+    const frame = window.frameElement
+    if (!frame) return null
+    const b = frame.getBoundingClientRect()
+    return { x: Math.round(b.left), y: Math.round(b.top) }
+  } catch (error) { return null } })()`, contextId)
+  if (own !== null && own !== undefined && Number.isFinite(own.x)) return own
+  const fallback = await evaluateIn(page, `(() => {
+    const frame = document.querySelectorAll('iframe')[${Number(slot)}]
+    if (!frame) return null
+    const b = frame.getBoundingClientRect()
+    return { x: Math.round(b.left), y: Math.round(b.top) }
+  })()`)
+  if (fallback !== null && fallback !== undefined && Number.isFinite(fallback.x)) return fallback
+  return { x: 0, y: 0 }
+}
+
+/**
+ * Read the frames under the page, so a control inside an iframe is numbered
+ * like any other. Same-origin frames are read directly; a frame without a
+ * context of its own (a cross-origin child Chrome runs elsewhere) is skipped,
+ * and its controls stay reachable by clicking the frame itself.
+ * @param {any} page - sidecar page.
+ * @param {string} mode - read mode.
+ * @param {number} budget - characters of text to keep.
+ * @returns {Promise<{text: string, controls: any[]}>} what the frames add.
+ */
+async function readFrames(page, mode, budget) {
+  if (typeof page.frameList !== 'function') return { text: '', controls: [] }
+  let frames = []
+  try {
+    frames = await page.frameList()
+  } catch (error) {
+    return { text: '', controls: [] }
+  }
+  const children = frames.slice(1)
+  const controls = []
+  let text = ''
+  for (let slot = 0; slot < children.length && slot < 8; slot += 1) {
+    const child = children[slot]
+    if (child.contextId === undefined) continue
+    try {
+      await seedPage(page, child.contextId)
+      const inside = await evaluateSnapshot(page, mode, Math.min(budget, 600), 40, child.contextId)
+      if (inside?.broken === true) continue
+      const offset = await frameOffset(page, child.contextId, slot)
+      const tag = FRAME_BASE + slot * FRAME_SLOT
+      for (const item of inside.controls ?? []) {
+        controls.push({ ...item, ref: tag + Number(item.ref), frame: slot + 1, x: Number(item.x ?? 0) + offset.x, y: Number(item.y ?? 0) + offset.y })
+      }
+      if (text.length < 400 && typeof inside.text === 'string' && inside.text !== '') text += `${text === '' ? '' : '\n'}${inside.text.slice(0, 400)}`
+    } catch (error) {
+      continue
+    }
+  }
+  return { text, controls }
+}
+
+/** Decode a ref into the frame it lives in and the number that frame knows. */
+function splitFrameRef(ref) {
+  const number = Number(ref)
+  if (!Number.isFinite(number) || number < FRAME_BASE) return null
+  const slot = Math.floor((number - FRAME_BASE) / FRAME_SLOT)
+  return { slot, local: number - FRAME_BASE - slot * FRAME_SLOT }
+}
+
+/**
+ * The world a ref lives in, for a tool that has to look the element up itself.
+ * @param {any} page - sidecar page.
+ * @param {number} ref - ref from a read.
+ * @returns {Promise<number|undefined>} the context id, or nothing for the page.
+ */
+export async function contextFor(page, ref) {
+  const split = splitFrameRef(ref)
+  if (split === null || typeof page.frameList !== 'function') return undefined
+  const frames = await page.frameList().catch(() => [])
+  return frames[split.slot + 1]?.contextId
 }
 
 /**
@@ -302,6 +419,9 @@ export async function readPage(page, options = {}) {
     await seedPage(page)
     read = await evaluateSnapshot(page, mode, maxChars, max)
   }
+  const framed = await readFrames(page, mode, Math.min(maxChars, 1200))
+  if (framed.controls.length > 0) read = { ...read, controls: [...(read.controls ?? []), ...framed.controls] }
+  if (framed.text !== '') read = { ...read, text: `${String(read.text ?? '')}${String(read.text ?? '') === '' ? '' : '\n'}${framed.text}` }
   return {
     url: String(read?.url ?? page.url),
     title: String(read?.title ?? page.title),
@@ -320,12 +440,22 @@ export async function readPage(page, options = {}) {
  * @returns {Promise<{gone: boolean, x?: number, y?: number, name?: string, kind?: string, off?: boolean, hidden?: boolean, disabled?: boolean}>} where it is now.
  */
 export async function locate(page, ref) {
-  const { result } = await page.cdp.send('Runtime.evaluate', { expression: resolve(ref), returnByValue: true })
-  try {
-    return JSON.parse(String(result?.value ?? '{"gone":true}'))
-  } catch {
-    return { gone: true }
+  const split = splitFrameRef(ref)
+  let contextId
+  if (split !== null) {
+    contextId = await contextFor(page, ref)
+    if (contextId === undefined) return { gone: true }
   }
+  const said = await evaluateIn(page, resolve(split === null ? ref : split.local), contextId).catch(() => undefined)
+  let spot = { gone: true }
+  try {
+    spot = JSON.parse(String(said ?? '{"gone":true}'))
+  } catch (error) {
+    spot = { gone: true }
+  }
+  if (split === null || spot.gone === true) return spot
+  const offset = await frameOffset(page, contextId, split.slot)
+  return { ...spot, x: Number(spot.x ?? 0) + offset.x, y: Number(spot.y ?? 0) + offset.y }
 }
 
 /** Roles that read better without a sigil. */

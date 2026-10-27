@@ -104,14 +104,17 @@ class Cdp {
   /**
    * @param {string} method - CDP method.
    * @param {Record<string, unknown>} params - its parameters.
+   * @param {string} [sessionId] - a child target to run it in, for a popup or a frame Chrome runs elsewhere.
    * @returns {Promise<any>} its result.
    */
-  send(method, params = {}) {
+  send(method, params = {}, sessionId) {
     if (this.closed) return Promise.reject(new Error('sidecar: CDP session is closed'))
     const id = this.next++
+    const message = { id, method, params }
+    if (sessionId !== undefined) message.sessionId = sessionId
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, method })
-      this.socket.send(JSON.stringify({ id, method, params }))
+      this.socket.send(JSON.stringify(message))
     })
   }
 
@@ -138,7 +141,7 @@ class Cdp {
  */
 export class SidecarPage {
   /** @param {Cdp} cdp - the page session. @param {string} profile - profile name. */
-  constructor(cdp, profile) {
+  constructor(cdp, profile, port) { // ui-copy-ignore
     this.cdp = cdp
     this.profile = profile
     this.epoch = 0
@@ -162,6 +165,16 @@ export class SidecarPage {
     this.dialog = null
     this.console = []
     this.failed = []
+    /* frame id -> the world its page script runs in. A control inside an iframe
+       is only reachable through that world; the frame list is read when the
+       read model needs it. */
+    this.contexts = new Map()
+    this.frameOrder = []
+    /* A click can open a tab. Chrome tells us the new target; the mirror then
+       follows it, because a person looking at the column expects that too. */
+    this.children = new Map()
+    this.opened = null
+    this.port = Number(port ?? 0) // ui-copy-ignore
   }
 
   /**
@@ -170,6 +183,45 @@ export class SidecarPage {
    * @param {any} message - one CDP message.
    */
   watch(message) {
+    if (message.method === 'Runtime.executionContextCreated') {
+      const context = message.params?.context ?? {}
+      const aux = context.auxData ?? {}
+      if (aux.isDefault === true && typeof aux.frameId === 'string') this.contexts.set(aux.frameId, Number(context.id))
+      return
+    }
+    if (message.method === 'Runtime.executionContextDestroyed') {
+      const gone = Number(message.params?.executionContextId)
+      for (const [frameId, contextId] of this.contexts) if (contextId === gone) this.contexts.delete(frameId)
+      return
+    }
+    if (message.method === 'Runtime.executionContextsCleared') {
+      this.contexts.clear()
+      return
+    }
+    if (message.method === 'Target.attachedToTarget') {
+      const params = message.params ?? {}
+      const sessionId = String(params.sessionId ?? '')
+      const info = params.targetInfo ?? {}
+      if (sessionId === '') return
+      this.children.set(sessionId, { targetId: String(info.targetId ?? ''), type: String(info.type ?? ''), url: String(info.url ?? '') })
+      /* A target that waits for the debugger must be let go at once, or the
+         tab a person just asked for never loads. */
+      void this.cdp.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {})
+      if (String(info.type ?? '') === 'page') {
+        this.opened = { targetId: String(info.targetId ?? ''), url: String(info.url ?? '') }
+      }
+      return
+    }
+    if (message.method === 'Target.detachedFromTarget') {
+      this.children.delete(String(message.params?.sessionId ?? ''))
+      return
+    }
+    if (message.method === 'Target.targetInfoChanged') {
+      const info = message.params?.targetInfo ?? {}
+      const targetId = String(info.targetId ?? '')
+      for (const child of this.children.values()) if (child.targetId === targetId) child.url = String(info.url ?? '')
+      return
+    }
     if (message.method === 'Page.javascriptDialogOpening') {
       this.dialog = message.params ?? {}
       return
@@ -199,9 +251,85 @@ export class SidecarPage {
     }
   }
 
+  /**
+   * Follow a tab the page just opened: the mirror shows the new page and the
+   * popup is closed, so there is still one page to drive.
+   * @returns {Promise<string>} what happened, for the tool result.
+   */
+  /**
+   * A tab this page opened, found through the DevTools address list. Chrome
+   * gives a page no handle on its own popups, but the list is enough to know
+   * one exists and where it went.
+   * @returns {Promise<{targetId: string, url: string}|null>} the popup.
+   */
+  async findPopup() {
+    if (this.port <= 0) return null // ui-copy-ignore
+    const main = await this.cdp.send('Target.getTargetInfo').then((info) => String(info?.targetInfo?.targetId ?? '')).catch(() => '')
+    const list = await fetch(`http://127.0.0.1:${this.port}/json/list`, { signal: AbortSignal.timeout(1200) }) // ui-copy-ignore
+      .then((response) => (response.ok ? response.json() : []))
+      .catch(() => [])
+    const pages = (Array.isArray(list) ? list : []).filter((item) => item.type === 'page' && String(item.id ?? '') !== main)
+    const popup = pages.find((item) => /^https?:|^file:/.test(String(item.url ?? '')))
+    if (popup !== undefined) return { targetId: String(popup.id), url: String(popup.url) }
+    const blank = pages[0]
+    return blank === undefined ? null : { targetId: String(blank.id), url: String(blank.url ?? '') }
+  }
+
+  /**
+   * Follow a tab the page just opened: the mirror shows where the person would
+   * have ended up, and the popup is closed so there is still one page to drive.
+   * @returns {Promise<string>} what happened, for the tool result.
+   */
+  async adoptOpened() {
+    let target = this.opened === null || this.opened === undefined ? null : { targetId: this.opened.targetId, url: this.opened.url }
+    this.opened = null
+    if (target === null) {
+      /* The target list is written before the popup finished loading, so give a
+         click that opens one a moment to say where it is going. */
+      for (let attempt = 0; attempt < 3 && target === null; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 150))
+        const found = await this.findPopup()
+        if (found !== null && found.url !== '') target = found
+        else if (found !== null && attempt === 2) target = found
+      }
+    }
+    if (target === null) return ''
+    const url = String(target.url ?? '')
+    await this.cdp.send('Target.closeTarget', { targetId: target.targetId }).catch(() => {})
+    if (this.port > 0) await fetch(`http://127.0.0.1:${this.port}/json/close/${target.targetId}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
+    if (!/^https?:|^file:/.test(url)) return ''
+    await this.cdp.send('Page.navigate', { url }).catch(() => {})
+    return `opened ${url}`
+  }
+
+  /**
+   * The frames of the page, main frame first, each with the context its scripts
+   * run in. Read on demand: a page with no iframes pays one call.
+   * @returns {Promise<Array<{frameId: string, url: string, contextId?: number}>>} the frames.
+   */
+  async frameList() {
+    const tree = await this.cdp.send('Page.getFrameTree').catch(() => null)
+    const out = []
+    const walk = (node) => {
+      if (node === null || node === undefined || typeof node !== 'object') return
+      const frameId = String(node.frame?.id ?? '')
+      if (frameId !== '') {
+        const contextId = this.contexts.get(frameId)
+        out.push({ frameId, url: String(node.frame?.url ?? ''), contextId: contextId === undefined ? undefined : Number(contextId) })
+      }
+      for (const child of node.childFrames ?? []) walk(child)
+    }
+    walk(tree?.frameTree)
+    this.frameOrder = out.map((item) => item.frameId)
+    return out
+  }
+
   /** Keep one listener that fans frames out to every viewer. */
   async start() {
     await this.cdp.send('Network.enable').catch(() => {})
+    /* Popups and out-of-process frames are separate targets. Attaching without
+       waiting keeps them usable, and lets the mirror follow a new tab. */
+    await this.cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }).catch(() => {})
     this.cdp.on((message) => {
       this.watch(message)
       if (message.method !== 'Page.screencastFrame') return
@@ -659,7 +787,7 @@ export class Sidecar {
     const cdp = new Cdp(ws)
     await cdp.ready
     this.cdp = cdp
-    this.page = await new SidecarPage(cdp, this.profile).start()
+    this.page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
     await this.restoreSessionCookies()
     await this.page.cast()
     if (url !== undefined && url !== '') await this.page.navigate(url)
@@ -708,6 +836,10 @@ export class Sidecar {
       '--disable-blink-features=AutomationControlled',
       '--disable-features=Translate,MediaRouter,OptimizationHints',
       '--disable-sync',
+      /* The driver clicks for a person, and a page that opens a tab on a click
+         is doing what the page means to do. Blocking it would strand the
+         mirror on the old page. */
+      '--disable-popup-blocking',
       /* A crash-restore bubble would sit on the person's screen and is not how
          this browser is meant to come back; the profile itself is the state. */
       '--hide-crash-restore-bubble',
