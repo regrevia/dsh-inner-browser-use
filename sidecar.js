@@ -170,6 +170,9 @@ export class SidecarPage {
     /* A dialog blocks the page until someone answers it, so it is state, not an
        event: the driver can look at it before deciding. */
     this.dialog = null
+    /* The mirror is the person's too: what they do by hand is recorded here, so
+       a tool result can say the page moved under the agent's feet. */
+    this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
     this.console = []
     this.failed = []
     /* What the page asked for, so a page that fills itself from addresses can

@@ -346,6 +346,11 @@ try {
   line('tabs', rows.length >= 2 && otherRow >= 0 && onLight && String(closed.text).includes('/dense'), `${rows.length} rows | ${switched.text} | ${closed.text} | ${String(listed.text).replace(/\n/g, ' / ').slice(0, 160)}`)
 
   await page.navigate(`${base}/words`)
+  sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }
+  const lookTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_view')
+  const viewSaid = await lookTool.execute({ mode: 'text', max_chars: 400 })
+  line('person-note', String(viewSaid.text).includes('the person also used the page: click at 40,60'), String(viewSaid.text).trim().split(/\n/).pop().slice(0, 90))
+
   const beforeCrash = sidecar.page
   await Promise.race([beforeCrash.cdp.send('Page.crash').catch(() => {}), sleep(1200)])
   await sleep(500)

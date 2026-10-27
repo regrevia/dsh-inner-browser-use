@@ -257,3 +257,15 @@ test('a page that swallowed select-all still loses its text', async () => {
   await clearFocus(page)
   assert.match(asked, /field\.select\(\)/, 'the remaining text is selected in the page')
 })
+
+test('a person who acted first is reported to the agent once', async () => {
+  const { personNote } = await import('../tools.js')
+  const sidecar = { person: { at: Date.now() - 4000, kind: 'click', x: 412.4, y: 180.6, seen: false } }
+  assert.match(personNote(sidecar), /the person also used the page: click at 412,181, 4 s ago/)
+  assert.equal(personNote(sidecar), '', 'said once, not on every later call')
+})
+
+test('looking around in the mirror is not taking over', async () => {
+  const { personNote } = await import('../tools.js')
+  assert.equal(personNote({ person: { at: 0, kind: '', x: 0, y: 0, seen: true } }), '')
+})

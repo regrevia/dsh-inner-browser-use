@@ -147,6 +147,24 @@ export async function clearFocus(page) {
   if (leftover?.result?.value === true) return
 }
 
+/**
+ * Say the person touched the mirror themselves since the last tool call, once.
+ * The agent shares the page with them, so it should read what they left rather
+ * than assume the page is where its own last step put it.
+ * @param {any} sidecar - the browser driver.
+ * @returns {string} a sentence to append, or an empty string.
+ */
+export function personNote(sidecar) {
+  const person = sidecar?.person
+  if (person === undefined || person === null || person.at === 0 || person.seen === true) return '' // ui-copy-ignore
+  person.seen = true
+  const age = Date.now() - person.at
+  if (age > 120_000) return ''
+  const when = age < 3000 ? 'just now' : `${Math.round(age / 1000)} s ago`
+  const at = person.kind === 'click' || person.kind === 'wheel' ? ` at ${Math.round(person.x)},${Math.round(person.y)}` : '' // ui-copy-ignore
+  return `\nthe person also used the page: ${person.kind}${at}, ${when}`
+}
+
 /** @param {number} ms - how long. */
 function wait(ms) {
   return new Promise((settle) => setTimeout(settle, ms))
@@ -399,7 +417,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   const withPage = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
     const page = await sidecar.ensure()
-    return { text: await work(page) }
+    const text = await work(page)
+    return { text: text + personNote(sidecar) }
   }
   const look = (page, options) => remember(page, refs, options).then((read) => renderPage(read, options))
   return [
