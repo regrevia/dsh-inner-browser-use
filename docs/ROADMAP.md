@@ -232,3 +232,9 @@ A picture is only an answer if it loaded. Next: report a large picture element
 whose source failed (`naturalWidth === 0`) as a broken picture rather than
 staying silent, since that is the commonest way a generated image "disappears".
 
+## Phase 19 — the same picture again, 0.28.0
+
+Reads are stateless: the same page costs the same tokens twice. Next: remember
+the last read of a page by address and say only what changed, with a hard reset
+when the address or the document changes.
+

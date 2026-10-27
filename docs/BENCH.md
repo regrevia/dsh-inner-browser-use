@@ -341,3 +341,12 @@ travels in the same line as the path.
 The sampling is 32x32 inside the page, in the same call that reads the page, so a
 blank chart is visible before anything is saved.
 
+## Phase 18 — the picture that never arrived, 0.28.0
+
+| page | read line | time |
+| --- | --- | --- |
+| `/broken` (320x240 `<img>` pointing at a 404, no words) | `picture 320x240 "Chart" did not load — the page may need a reload, or the picture is gone` | 123 ms (cold page) |
+
+A failed image collapses to an error icon, so the declared `width`/`height` is
+what the page meant to show; the read reports that size, not the icon's.
+

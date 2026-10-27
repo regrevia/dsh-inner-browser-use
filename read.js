@@ -254,16 +254,30 @@ function snapshot(mode, budget, max) {
   const picture = (() => {
     if (full >= 40) return null
     let best = null
+    const missing = []
     for (const el of document.querySelectorAll('img,canvas')) {
       const b = box(el)
-      if (b.width < 64 || b.height < 64 || b.width * b.height < 8000) continue
+      /* A picture that failed to arrive shrinks to an error icon, so its own
+         declared size is what the page meant to show. */
+      const askW = Number(el.getAttribute?.('width')) || 0
+      const askH = Number(el.getAttribute?.('height')) || 0
+      const wide = Math.max(b.width, askW)
+      const high = Math.max(b.height, askH)
+      if (wide < 64 || high < 64 || wide * high < 8000) continue
       const s = getComputedStyle(el)
       if (s.visibility === 'hidden' || s.display === 'none') continue
+      /* A picture slot that never got its picture is the commonest way a
+         generated image goes missing, and it is silent by default. */
+      if (el.tagName === 'IMG' && el.complete && el.naturalWidth === 0) {
+        missing.push({ width: Math.round(wide), height: Math.round(high) })
+        missing[missing.length - 1].name = String(el.getAttribute('alt') ?? '').replace(/\s+/g, ' ').trim().slice(0, 60)
+        continue
+      }
       const w = el.tagName === 'CANVAS' ? el.width : el.naturalWidth || Math.round(b.width)
       const h = el.tagName === 'CANVAS' ? el.height : el.naturalHeight || Math.round(b.height)
       if (best === null || w * h > best.w * best.h) best = { el, w, h, kind: String(el.tagName).toLowerCase() }
     }
-    if (best === null) return null
+    if (best === null) return missing.length === 0 ? null : { missing }
     /* What the read hands back about one picture: not a screen of fields. */
     const said = { name: String(best.el.getAttribute?.('alt') ?? best.el.getAttribute?.('aria-label') ?? '').replace(/\s+/g, ' ').trim().slice(0, 60) }
     said.kind = best.kind
@@ -759,7 +773,13 @@ export function renderPage(read, options = {}) {
     lines.push(body)
     if (read.textChars > body.length) lines.push(`… ${read.textChars - body.length} more characters`)
   }
-  if (read.picture) {
+  if (read.picture && Array.isArray(read.picture.missing)) {
+    /* Something was meant to be here and is not: say that instead of nothing. */
+    for (const gone of read.picture.missing.slice(0, 2)) {
+      const size = `${Math.round(Number(gone.width) || 0)}x${Math.round(Number(gone.height) || 0)}`
+      lines.push(`picture ${size}${gone.name === '' ? '' : ` "${gone.name}"`} did not load — the page may need a reload, or the picture is gone`)
+    }
+  } else if (read.picture) {
     const pic = read.picture
     const look = Number(pic.flat) >= 0.9 ? 'mostly one colour' : Number(pic.colors) <= 3 ? 'a few colours' : 'a picture with detail'
     const size = `${Math.round(Number(pic.width) || 0)}x${Math.round(Number(pic.height) || 0)}`

@@ -80,6 +80,9 @@ const PAGES = {
   /* One picture and nothing else: a chart or a generated image is the answer. */
   '/pic': `<!doctype html><html><body style="margin:0;padding:24px">
     <img id="shot" src="/pic.png" width="140" height="90" alt="Chart"></body></html>`,
+  /* A picture slot whose picture never arrived: silent unless a read says so. */
+  '/broken': `<!doctype html><html><body style="margin:0;padding:24px">
+    <img id="gone" src="/nothing.png" width="320" height="240" alt="Chart"></body></html>`,
   /* A chart that came back empty is the failure worth naming. */
   '/flat': `<!doctype html><html><body style="margin:0;padding:24px">
     <img id="blank" src="/flat.png" width="140" height="90" alt="Chart"></body></html>`,
@@ -177,6 +180,11 @@ const server = createServer((req, res) => {
   if (req.url.split('?')[0] === '/pic.png') {
     res.writeHead(200, { 'content-type': 'image/png' })
     res.end(PNG_140)
+    return
+  }
+  if (req.url.split('?')[0] === '/nothing.png') {
+    res.writeHead(404, { 'content-type': 'text/plain' })
+    res.end('no such picture')
     return
   }
   if (req.url.split('?')[0] === '/flat.png') {
@@ -347,6 +355,12 @@ try {
   line('grab-flat', flatSaid.includes('mostly one colour'), `${Date.now() - flatAt} ms | ${flatSaid.slice(flatSaid.indexOf('140x90'))}`)
   const flatRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
   line('blank-in-read', flatRead.includes('mostly one colour'), String(flatRead.split('\n').filter((row) => row.startsWith('picture'))[0] ?? 'no line').slice(0, 80))
+  await page.navigate(`${base}/broken`)
+  const brokenAt = Date.now()
+  /* A missing picture needs one turn of the event loop to know it failed. */
+  await sleep(120)
+  const brokenRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
+  line('missing-in-read', brokenRead.includes('320x240 "Chart" did not load'), `${Date.now() - brokenAt} ms | ${String(brokenRead.split('\n').filter((row) => row.startsWith('picture'))[0] ?? 'no line').slice(0, 100)} — ${Date.now() - brokenAt} ms`)
 
   await page.navigate(`${base}/words`)
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })

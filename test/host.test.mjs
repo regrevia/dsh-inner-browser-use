@@ -483,3 +483,11 @@ test('a read says when the answer is a picture', async () => {
   const blank = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { kind: 'img', width: 800, height: 600, name: '', colors: 1, flat: 1 } }, { mode: 'text' })
   assert.match(blank, /mostly one colour/)
 })
+
+test('a picture that never arrived is named', async () => {
+  const { renderPage } = await import('../read.js?v=1')
+  const said = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { missing: [{ width: 320, height: 240, name: 'Chart' }] } }, { mode: 'text' })
+  assert.match(said, /picture 320x240 "Chart" did not load/)
+  const nameless = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { missing: [{ width: 320, height: 240, name: '' }] } }, { mode: 'text' })
+  assert.match(nameless, /picture 320x240 did not load/)
+})

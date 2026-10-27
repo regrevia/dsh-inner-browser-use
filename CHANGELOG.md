@@ -1,3 +1,9 @@
+## 0.28.0
+
+- **图没加载出来，读取会说出来。** 大图位上的 `<img>` 失败了（`naturalWidth` 为 0）以前完全静默，页面上只是空一块；现在 `sidecar_view` 多一行 `picture 320x240 "Chart" did not load — the page may need a reload, or the picture is gone`，带 curt 的下一步动作。失效图会缩成一个错误图标，所以尺寸取页面声明值，不是渲染框。
+- 实测：`/broken`（320×240、指向 404 的图）→ 一行 123 ms 内返回；正常图与有字页面不受影响。
+- 测试：52 条单测；广度 59 条全真。
+
 ## 0.27.0
 
 - **一次读取就说清"答案是张图"。** 页面几乎没字、只有一张大图时，`sidecar_view` 现在直接多一行：`picture 140x90 a picture with detail "Chart" — sidecar_grab saves it as a file`；纯色图则是 `mostly one colour`，空白图表在读取这一步就暴露，不用先存文件再看。行内采样 32×32，随同一次读取返回，不多一次往返。
