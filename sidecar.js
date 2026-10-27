@@ -101,6 +101,10 @@ class Cdp {
     })
   }
 
+  close() {
+    this.socket.close()
+  }
+
   /**
    * @param {string} method - CDP method.
    * @param {Record<string, unknown>} params - its parameters.
@@ -314,6 +318,23 @@ export class SidecarPage {
     if (popup !== undefined) return { targetId: String(popup.id), url: String(popup.url) }
     const blank = pages[0]
     return blank === undefined ? null : { targetId: String(blank.id), url: String(blank.url ?? '') }
+  }
+
+  /**
+   * The browser's pages, in the order the browser lists them. More than one
+   * exists when a site opens a window the driver did not follow.
+   * @returns {Promise<Array<{targetId: string, title: string, url: string, current: boolean}>>} the tabs.
+   */
+  async tabs() {
+    const port = this.port // ui-copy-ignore
+    if (port <= 0) return [] // ui-copy-ignore
+    const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1200) }) // ui-copy-ignore
+      .then((response) => (response.ok ? response.json() : []))
+      .catch(() => [])
+    const current = await this.cdp.send('Target.getTargetInfo').then((info) => String(info?.targetInfo?.targetId ?? '')).catch(() => '')
+    return (Array.isArray(list) ? list : [])
+      .filter((item) => item.type === 'page' && item.webSocketDebuggerUrl !== undefined)
+      .map((item) => ({ targetId: String(item.id), title: String(item.title ?? ''), url: String(item.url ?? ''), webSocketUrl: String(item.webSocketDebuggerUrl), current: String(item.id) === current }))
   }
 
   /**
@@ -1082,6 +1103,60 @@ export class Sidecar {
    * @param {string} url - where the person was.
    * @returns {Promise<SidecarPage>} the new page.
    */
+  /**
+   * The browser's pages, in the order the browser lists them.
+   * @returns {Promise<Array<{targetId: string, title: string, url: string, current: boolean}>>} the tabs.
+   */
+  async tabs() {
+    return this.page === null ? [] : this.page.tabs()
+  }
+
+  /**
+   * Move the mirror to another tab, leaving the old one open where it was.
+   * @param {number} index - a row from `tabs()`.
+   * @returns {Promise<SidecarPage>} the page now being driven.
+   */
+  async useTab(index) {
+    const list = await this.tabs()
+    const tab = list[Number(index)]
+    if (tab === undefined) throw new Error(`sidecar: no tab ${String(index)}`)
+    if (tab.current) return this.page
+    const was = this.page
+    const cdp = new Cdp(tab.webSocketUrl)
+    await cdp.ready
+    const page = await new SidecarPage(cdp, this.profile, was.port).start() // ui-copy-ignore
+    this.cdp = cdp
+    this.page = page
+    this.lastUrl = tab.url
+    await page.cast()
+    was.cdp.send('Page.stopScreencast').catch(() => {})
+    was.cdp.close()
+    this.touch()
+    return page
+  }
+
+  /**
+   * Close a tab; the mirror moves to a neighbour when the closed one was shown.
+   * @param {number} index - a row from `tabs()`.
+   */
+  async closeTab(index) {
+    const list = await this.tabs()
+    const tab = list[Number(index)]
+    if (tab === undefined) throw new Error(`sidecar: no tab ${String(index)}`)
+    let port = this.page?.port ?? 0 // ui-copy-ignore
+    let alone = true
+    if (tab.current) {
+      const other = list.findIndex((item) => !item.current)
+      alone = other < 0
+      if (!alone) await this.useTab(other)
+    }
+    if (port > 0) await fetch(`http://127.0.0.1:${port}/json/close/${tab.targetId}`, { signal: AbortSignal.timeout(1000) }).catch(() => {}) // ui-copy-ignore
+    if (alone) {
+      await this.shutdown()
+      await this.ensure()
+    }
+  }
+
   async recover(url) {
     const port = this.page?.port ?? 0 // ui-copy-ignore
     if (port === 0) throw new Error('sidecar: no browser to recover into') // ui-copy-ignore

@@ -321,6 +321,20 @@ try {
 
   /* A crashed renderer must not end the session: the next call starts a new one
      on the address the person was looking at. */
+  await page.navigate(`${base}/dense`)
+  const tabPort = sidecar.page.port
+  await fetch(`http://127.0.0.1:${tabPort}/json/new?${encodeURIComponent(`${base}/light`)}`, { method: 'PUT' }).catch(() => null)
+  await sleep(400)
+  const tabsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_tabs')
+  const listed = await tabsTool.execute({ action: 'list' })
+  const rows = String(listed.text).split('\n')
+  const otherRow = rows.findIndex((row) => row.includes('/light'))
+  const switched = otherRow < 0 ? { text: 'unlisted' } : await tabsTool.execute({ action: 'switch', index: otherRow })
+  const onLight = String(sidecar.page?.url ?? '').includes('/light')
+  const closed = otherRow < 0 ? { text: '' } : await tabsTool.execute({ action: 'close', index: 0 })
+  page = sidecar.page
+  line('tabs', rows.length >= 2 && otherRow >= 0 && onLight && String(closed.text).includes('/dense'), `${rows.length} rows | ${switched.text} | ${closed.text} | ${String(listed.text).replace(/\n/g, ' / ').slice(0, 160)}`)
+
   await page.navigate(`${base}/words`)
   const beforeCrash = sidecar.page
   await Promise.race([beforeCrash.cdp.send('Page.crash').catch(() => {}), sleep(1200)])

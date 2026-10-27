@@ -135,6 +135,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_select',
     'sidecar_shot',
     'sidecar_state',
+    'sidecar_tabs',
     'sidecar_type',
     'sidecar_upload',
     'sidecar_view',

@@ -1133,6 +1133,41 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
 
     {
+      name: 'sidecar_tabs', // ui-copy-ignore
+      description: 'List the pages open in the browser, switch the mirror to another one, or close one. Use it when a site opens a link in a tab of its own.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          action: { type: 'string', enum: ['list', 'switch', 'close'], description: 'Default list.' },
+          index: { type: 'integer', description: 'A row from the list, counting from 0. Needed for switch and close.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 20_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the tabs or what happened. */
+      execute: async (args) => withPage(async (page) => {
+        const action = String(args?.action ?? 'list')
+        if (action === 'list') {
+          const rows = await sidecar.tabs()
+          if (rows.length === 0) return 'no tabs'
+          return rows.map((row, i) => `${i}${row.current ? ' *' : ''} ${row.title || row.url} · ${row.url}`).join('\n')
+        }
+        const index = Number(args?.index ?? 0)
+        if (action === 'switch') {
+          const next = await sidecar.useTab(index)
+          return `tab ${index} · ${String(next?.url ?? '')}`
+        }
+        if (action === 'close') {
+          await sidecar.closeTab(index)
+          return `closed tab ${index} · ${String(sidecar.page?.url ?? '')}`
+        }
+        throw new Error(`sidecar: unknown action ${action}`)
+      }),
+    },
+
+    {
       name: 'sidecar_pdf', // ui-copy-ignore
       description: 'Print the page to a PDF and return its path. Useful when the person wants the document rather than a picture of it.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
