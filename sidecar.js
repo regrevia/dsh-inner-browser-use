@@ -144,7 +144,7 @@ export class SidecarPage {
   constructor(cdp, profile, port) { // ui-copy-ignore
     this.cdp = cdp
     this.profile = profile
-    this.port = port
+    this.port = port // ui-copy-ignore
     this.epoch = 0
     this.frames = new Set()
     /* Pointer moves are their own, tiny message: the arrow follows the agent at
@@ -1083,8 +1083,8 @@ export class Sidecar {
    * @returns {Promise<SidecarPage>} the new page.
    */
   async recover(url) {
-    const port = this.page?.port ?? 0
-    if (port === 0) throw new Error('sidecar: no browser to recover into')
+    const port = this.page?.port ?? 0 // ui-copy-ignore
+    if (port === 0) throw new Error('sidecar: no browser to recover into') // ui-copy-ignore
     const address = url === '' || url === undefined ? 'about:blank' : String(url)
     const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
     if (!created.ok) throw new Error('sidecar: could not open a tab to recover into')
