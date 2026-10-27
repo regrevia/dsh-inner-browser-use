@@ -162,3 +162,36 @@ The probe costs nothing when nothing is in the way, which is the common case;
 the covered case pays about 170 ms to clear the banner and land the click in
 the same call, instead of making the model spend a whole extra turn (a read, a
 click, another read) telling it to close the banner first.
+
+## Phase 6 — what a stale number costs, 0.16.0
+
+A ref is a number for an element. A page that redraws a list, a table, a card
+grid — React, Vue, Svelte, or plain `innerHTML` — throws every element away and
+makes new ones, so the numbers from the last read stop pointing anywhere. The
+control is still on screen, saying the same words, usually in the same place.
+
+Before this phase that cost two round trips: the call came back `That control is
+gone`, the model read the page again to get a new number, then used it. The work
+is now done inside the call, by looking the control up by what it is.
+
+| What | Number |
+| --- | --- |
+| `sidecar_click` on a control the page just redrew | **462 ms median, 483 ms max** (8 samples) — one extra read of the page's visible text, 600 chars, to find the control again |
+| `sidecar_click` on a control that was not redrawn | 445 ms median, 446 ms max (8 runs) — the probe costs nothing when the number is still good |
+| stale refs recovered this way | **8/8** |
+| a control that really left the page | still refused, `Call sidecar_view and use the new number` — 2/2 in the breadth suite |
+
+So the recovery costs about **17 ms** when it is needed and nothing when it is
+not, against a model round trip of two calls plus the tokens of a fresh read.
+
+What counts as the same control: the same words and the same kind. A button does
+not become a field; a field never passes for the button beside it; a link keeps
+its destination, because the same words pointing somewhere else is a different
+thing to click. The words have to appear **exactly once** on the page — two
+"Delete" buttons in two rows are a choice only the person can make, so that case
+still asks for a read.
+
+The call says what it did: `(the page redrew, so "Learn more" has a new number — used where it is now)`, so the model knows its old number is not the one to keep
+using. On the live network the same thing happened on example.com: a link
+replaced by an identical clone, one click, 4.4 s including the iana.org page
+load, straight to `https://www.iana.org/help/example-domains`.

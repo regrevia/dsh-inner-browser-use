@@ -114,6 +114,21 @@ stealing the column from other chats.
   hid it because the dev profile symlinks the repo. Since 0.15.0 a test walks the
   import graph against `files`, and another unpacks the tarball and imports it.
 
+## Phase 7 — recovery inside the call, 0.16.0
+
+The measured weak spot after Phase 5 was not speed but turns spent recovering:
+every framework redraw invalidated the numbers from the last read, and the model
+paid a full read plus a turn to get them back. 0.16.0 moves that into the call by
+finding the control again by identity (kind + exact words + link destination),
+refusing when the words are not unique. Measured at 462 ms against 445 ms for a
+fresh control — 17 ms when needed, nothing when not.
+
+Next in this direction: the same identity recovery for `sidecar_do` steps that
+name a field by its label when the label element is rebuilt (today the step
+falls back to a fresh read), and a count in `sidecar_state` of how often a
+follow happened, so the following rounds can tell whether sites redraw this
+often in practice.
+
 ## Order of work
 
 1. Phase 0 baseline. 2. Phase 1 + 2 together (they share the read model).

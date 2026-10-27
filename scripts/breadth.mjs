@@ -82,6 +82,26 @@ const PAGES = {
     <div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.35)"><div style="margin:120px auto;width:280px;background:#fff;padding:16px">
       Delete this account? <button id="gone" onclick="document.title='deleted'">Delete forever</button></div></div>
     </body></html>`,
+  /* A list that redraws itself: every element is thrown away and made again
+     with the same words. Refs from a read before the redraw point at elements
+     that no longer exist, which is the everyday way a ref goes stale while the
+     control is still on screen. */
+  '/redraw': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Redraw</h1><div id="list"></div>
+    <div id="modal" style="display:none"><button id="kill">Discard draft</button></div>
+    <script>
+    window.paint = () => {
+      const list = document.getElementById('list')
+      list.innerHTML = ''
+      const button = document.createElement('button')
+      button.id = 'keep'
+      button.textContent = 'Keep going'
+      button.addEventListener('click', () => { document.title = 'kept clicked' })
+      list.appendChild(button)
+    }
+    window.paint()
+    window.repaint = () => { window.paint(); document.getElementById('modal').style.display = 'block' }
+    </script></body></html>`,
   '/partner': `<!doctype html><html><body style="font:16px system-ui;padding:12px">
     <p>a partner frame Chrome keeps apart</p><input placeholder="Partner field">
     <input type="file" aria-label="Partner file" onchange="document.title = 'partner got ' + this.files[0].name">
@@ -399,6 +419,29 @@ try {
   const guarded = String((await clickTool.execute({ ref: underGuard.ref })).text)
   const untouched = (await js(page, 'document.title')) === '' && String(await js(page, 'document.getElementById("modal") === null')) === 'false'
   line('guarded-overlay', guarded.includes('covers it') && guarded.includes('Delete this account') && guarded.includes('clicked') === false && untouched, guarded.replace(/\n/g, ' / ').slice(0, 120))
+
+  /* A ref the page invalidated by redrawing is not a dead end: the words are
+     still on screen, so the click goes where the control is now. A control that
+     really left still takes the refusal with it. */
+  await page.navigate(`${base}/redraw`)
+  const followState = { last: undefined }
+  const followTools = sidecarTools(sidecar, followState)
+  await followTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 400 })
+  const keepControl = followState.refs.find((c) => c.name.toLowerCase().includes('keep going'))
+  await js(page, 'window.repaint()')
+  const staleNow = await locate(page, keepControl.ref)
+  const followed = String((await followTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: keepControl.ref })).text)
+  const keptTitle = String(await js(page, 'document.title'))
+  line('ref-follows-redraw', staleNow.gone === true && keptTitle === 'kept clicked' && followed.includes('has a new number'), `${staleNow.gone === true ? 'ref was stale' : 'ref still pointed at something'} | title=${keptTitle} | ${followed.replace(/\n/g, ' / ').slice(0, 150)}`)
+
+  await page.navigate(`${base}/redraw`)
+  const refuseState = { last: undefined }
+  const refuseTools = sidecarTools(sidecar, refuseState)
+  await refuseTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 400 })
+  const keepGone = refuseState.refs.find((c) => c.name.toLowerCase().includes('keep going'))
+  await js(page, "document.getElementById('list').innerHTML = '<button>Something else</button>'")
+  const reallyGone = String((await refuseTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: keepGone.ref })).text)
+  line('ref-refuses-really-gone', reallyGone.includes('Call sidecar_view'), reallyGone.replace(/\n/g, ' / ').slice(0, 150))
 
   await page.navigate(`${base}/words`)
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }

@@ -69,34 +69,20 @@ try {
   const read = String((await within(view.execute({ max_chars: 700 }), 20_000))?.text ?? '')
   line('live-read', read.includes('Example Domain') && /\[link\]/.test(read), `${read.length} chars · ${read.split('\n')[1]?.slice(0, 50)}`)
 
-  // The language picker is a page whose controls are all links: click one by its words.
-  const wiki = await within(sidecar.ensure({ url: 'https://www.wikipedia.org/' }), 30_000)
-  if (wiki === undefined || wiki?.timedOut === true) throw new Error('wikipedia.org did not answer in 30 s')
-  await loaded()
+  // A page whose only control is a link: click it by its words and land on the
+  // page it points at. example.com's own link goes to iana.org, which answers on
+  // this network; wikipedia.org was dropped here because its redirect does not.
   const click = tool('sidecar_click')
+  const nav = tool('sidecar_nav')
   const clickedAt = Date.now()
-  const clicked = await within(click.execute({ text: 'English' }), 30_000)
+  const clicked = await within(click.execute({ text: 'Learn more' }), 30_000)
   await loaded(15_000)
   const landed = String(page.url)
-  line('live-follow-link', landed.includes('en.wikipedia.org'), `${Date.now() - clickedAt} ms → ${landed.slice(0, 60)} · ${String(clicked?.text ?? '').split('\n')[0].slice(0, 40)}`)
+  line('live-follow-link', landed.includes('iana.org'), `${Date.now() - clickedAt} ms → ${landed.slice(0, 60)} · ${String(clicked?.text ?? '').split('\n')[0].slice(0, 40)}`)
 
-  const nav = tool('sidecar_nav')
   await within(nav.execute({ back: true }), 20_000)
   await loaded(10_000)
-  line('live-back', String(page.url).includes('www.wikipedia.org'), String(page.url).slice(0, 60))
-
-  // A real article body: rows of list items with links in them.
-  const more = await within(sidecar.ensure({ url: 'https://en.wikipedia.org/wiki/Web_scraping' }), 30_000)
-  if (more === undefined || more?.timedOut === true) {
-    line('live-list', false, 'en.wikipedia.org did not answer in 30 s')
-  } else {
-    await loaded()
-    const extract = tool('sidecar_extract')
-    const started = Date.now()
-    const rows = String((await within(extract.execute({ select: '#mw-content-text ul > li', limit: 10 }), 30_000))?.text ?? '')
-    const count = Number((rows.match(/^(\d+) of/) ?? [])[1] ?? 0)
-    line('live-list', count >= 8 && rows.includes('· '), `${Date.now() - started} ms · ${count} rows · ${rows.length} chars · ${rows.split('\n')[1]?.slice(0, 60)}`)
-  }
+  line('live-back', String(page.url).includes('example.com'), String(page.url).slice(0, 60))
 
   // A dead host: the browser stops on its own error page, which is not the site.
   // Reading it back must say the network failed, not quote "This site can't be
@@ -141,6 +127,32 @@ try {
     const landedOn = String(page.url)
     const results = /\/search\?/.test(landedOn) && /browser automation/i.test(await title())
     line('live-search', results, `${Date.now() - typedStart} ms · ${landedOn.slice(0, 60)} · ${wrote.split('\n')[0].slice(0, 40)}`)
+
+    // Rows of results with links in them: a real list to read as rows.
+    const extract = tool('sidecar_extract')
+    const listedAt = Date.now()
+    const rows = String((await within(extract.execute({ select: '#b_results > li', limit: 10 }), 30_000))?.text ?? '')
+    const count = Number((rows.match(/^(\d+) of/) ?? [])[1] ?? 0)
+    line('live-list', count >= 5 && rows.includes('· '), `${Date.now() - listedAt} ms · ${count} rows · ${rows.length} chars · ${rows.split('\n')[1]?.slice(0, 60)}`)
+
+    /* The everyday stale ref: the page redraws itself and the number from the
+       last read stops pointing at the control while the control stays on
+       screen. One call carries on instead of costing a read and a fresh turn. */
+    const resultState = { last: undefined }
+    const resultTools = sidecarTools(sidecar, resultState)
+    const before = Date.now()
+    await resultTools.find((each) => each.name === 'sidecar_view').execute({ mode: 'text', max_chars: 500 })
+    const link = (resultState.refs ?? []).find((each) => each.kind === 'link' && each.href.startsWith('http'))
+    const moved = link === undefined ? 'no link numbered' : String(await said(`(() => {
+      const gone = ${JSON.stringify(String(link.name))}
+      const all = Array.from(document.querySelectorAll('a'))
+      const found = all.find((a) => (a.textContent || '').trim().startsWith(gone.slice(0, 12)))
+      if (found === undefined) return 'no match'
+      found.replaceWith(found.cloneNode(true))
+      return 'redrew a'
+    })()`))
+    const carried = link === undefined ? 'nothing to use' : String((await within(resultTools.find((each) => each.name === 'sidecar_click').execute({ ref: link.ref, read: false }), 30_000))?.text ?? '')
+    line('live-redraw-survives', moved === 'redrew a' && carried.includes('new number'), `${Date.now() - before} ms · ${moved} · ${carried.replace(/\n/g, ' / ').slice(0, 110)}`)
   }
 } catch (error) {
   line('live-crashed', false, String(error?.message ?? error).slice(0, 120))

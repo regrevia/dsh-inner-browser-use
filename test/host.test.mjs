@@ -345,3 +345,30 @@ test('the covering check also finds the way out of the overlay', async () => {
   assert.match(said, /\^\(accept\|/)
   assert.match(said, /risky/)
 })
+
+test('an identity is the name and the kind, so a redraw does not lose the control', async () => {
+  const { identityOf, sameThing } = await import('../read.js')
+  const was = identityOf({ kind: 'button', name: 'Keep going', href: '' })
+  assert.deepEqual(was, { kind: 'button', name: 'Keep going', href: '', inert: false })
+  /* The same words on a new element is the same control. */
+  assert.equal(sameThing(was, { kind: 'button', name: 'Keep going', href: '' }), true)
+  /* A different control that happens to sit in the same place is not. */
+  assert.equal(sameThing(was, { kind: 'button', name: 'Discard draft', href: '' }), false)
+  /* Nor is a container that now holds the words of the button. */
+  assert.equal(sameThing(was, { kind: 'section', name: 'Keep going', href: '' }), false)
+})
+
+test('a field never passes for the button beside it', async () => {
+  const { identityOf, sameThing } = await import('../read.js')
+  const field = identityOf({ kind: 'input', name: 'Search', href: '' })
+  assert.equal(field.inert, true)
+  assert.equal(sameThing(field, { kind: 'input', name: 'Search', href: '' }), true)
+  assert.equal(sameThing(field, { kind: 'button', name: 'Search', href: '' }), false)
+  /* A link keeps its destination: the same words pointing elsewhere is a
+     different thing to click. */
+  const link = identityOf({ kind: 'link', name: 'Docs', href: 'https://example.com/a' })
+  assert.equal(sameThing(link, { kind: 'link', name: 'Docs', href: 'https://example.com/a' }), true)
+  assert.equal(sameThing(link, { kind: 'link', name: 'Docs', href: 'https://example.com/b' }), false)
+  /* Nothing to look for is not a licence to click whatever is nearest. */
+  assert.equal(sameThing(identityOf({ kind: 'button', name: '', href: '' }), { kind: 'button', name: '', href: '' }), false)
+})

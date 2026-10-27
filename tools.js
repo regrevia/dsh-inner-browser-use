@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -352,22 +352,46 @@ async function findWords(page, words) {
   return { ...hit, x: Number(spot.x), y: Number(spot.y) }
 }
 
-async function runStep(page, step) {
+/**
+ * Where the control behind a ref is now, following it across a re-render.
+ * The module-level sibling of findAgain, for runStep, which has no closure.
+ * @param {any} page - sidecar page.
+ * @param {number} ref - the number the caller used.
+ * @param {any[]} [known] - controls from the read that produced the ref.
+ * @returns {Promise<{x?: number, y?: number, gone?: boolean, followed?: boolean, was?: string}>} where it is.
+ */
+async function followRef(page, ref, known) {
+  const spot = await locate(page, ref)
+  if (spot.gone !== true) return spot
+  const was = Array.isArray(known) ? known.find((control) => Number(control.ref) === Number(ref)) : undefined
+  if (was === undefined) return spot
+  const want = identityOf(was)
+  if (want.name === '') return spot
+  const read = await readPage(page, { mode: 'text', maxChars: 600, max: 400 })
+  const again = read.controls.filter((control) => sameThing(want, control))
+  if (again.length !== 1) return spot
+  const next = await locate(page, Number(again[0].ref))
+  if (next.gone === true) return spot
+  return { ...next, followed: true, was: want.name }
+}
+
+async function runStep(page, step, known) {
   if (step.ref !== undefined) {
     if (step.tap !== undefined || step.text !== undefined) {
       const lead = await coverLead(page, Number(step.ref))
-      const spot = await locate(page, Number(step.ref))
+      const spot = await followRef(page, Number(step.ref), known)
       if (spot.gone === true) return `ref ${String(step.ref)}: ${REF_GONE}`
+      const after = spot.followed === true ? ` (it was redrawn under a new number, used where it is now)` : ''
       const point = { x: Number(spot.x), y: Number(spot.y) }
       await page.mouse('mouseMoved', point)
       await page.mouse('mousePressed', { ...point, clickCount: 1 })
       await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-      if (step.tap !== undefined) return `${lead}clicked ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
+      if (step.tap !== undefined) return `${lead}clicked ${String(step.ref)} ${String(spot.name ?? '')}`.trim() + after
       await wait(80)
       if (step.clear === true) await clearFocus(page)
       await page.insertText(String(step.text))
       if (step.submit === true) await pressKey(page, 'Enter')
-      return `${lead}typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim()
+      return `${lead}typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim() + after
     }
   }
   if (step.tap !== undefined && !/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(step.tap))) {
@@ -587,6 +611,38 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     return { text: text + personNote(sidecar) }
   }
   const look = (page, options) => remember(page, refs, options).then((read) => renderPage(read, options))
+
+  /**
+   * Where the control behind a ref is now, following it across a re-render.
+   *
+   * A ref is a number for an element; a framework that redraws its list throws
+   * every element away and makes new ones with a fresh number, so the next call
+   * with the old number finds nothing. The page did not become unusable — the
+   * control is on screen, saying the same words, usually in the same place.
+   * Handing back REF_GONE costs the model a whole round: one read to find the
+   * number and one more call to use it. So look the control up by what it is,
+   * and only say it is gone when what it is, is gone too.
+   * @param {any} page - sidecar page.
+   * @param {number} ref - the number the caller used.
+   * @returns {Promise<{x?: number, y?: number, gone?: boolean, followed?: boolean, was?: string}>} where it is.
+   */
+  const findAgain = async (page, ref) => {
+    const spot = await locate(page, ref)
+    if (spot.gone !== true) return spot
+    const known = (refs?.refs ?? []).find((control) => Number(control.ref) === Number(ref))
+    if (known === undefined) return spot
+    const want = identityOf(known)
+    if (want.name === '') return spot
+    const read = await readPage(page, { mode: 'text', maxChars: 600, max: 400 })
+    const again = read.controls.filter((control) => sameThing(want, control))
+    /* Same words twice on one page is a choice only the person can make: two
+       "Delete" buttons in different rows are not interchangeable. */
+    if (again.length !== 1) return spot
+    const next = await locate(page, Number(again[0].ref))
+    if (next.gone === true) return spot
+    return { ...next, followed: true, was: want.name }
+  }
+
   return [
     {
       name: 'sidecar_open', // ui-copy-ignore
@@ -663,9 +719,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withPage(async (page) => {
         let point = { x: Number(args?.x ?? NaN), y: Number(args?.y ?? NaN) }
         let label = args?.ref === undefined ? `${point.x},${point.y}` : String(args.ref)
+        let followed = ''
         if (args?.ref !== undefined) {
-          const spot = await locate(page, Number(args.ref))
+          const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE
+          if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — used where it is now`
           point = { x: Number(spot.x), y: Number(spot.y) }
         } else if (String(args?.text ?? '') !== '') {
           const hit = await findWords(page, String(args.text))
@@ -689,7 +747,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await settle(page)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
-        return said + cover
+        return said + cover + (followed === '' ? '' : ` (${followed})`)
       }),
     },
     {
@@ -713,11 +771,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
         let cover = ''
+        let followed = ''
         if (args?.ref !== undefined) {
           const gate = await clearCover(page, Number(args.ref))
           cover = gate.note
-          const spot = await locate(page, Number(args.ref))
+          const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE + cover
+          if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — typed where it is now`
           const point = { x: Number(spot.x), y: Number(spot.y) }
           await page.mouse('mouseMoved', point)
           await page.mouse('mousePressed', { ...point, clickCount: 1 })
@@ -728,7 +788,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         await page.insertText(String(args?.text ?? ''))
         if (args?.submit === true) await pressKey(page, 'Enter')
         await settle(page)
-        return (await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')) + cover // ui-copy-ignore
+        const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')
+        return said + cover + (followed === '' ? '' : ` (${followed})`) // ui-copy-ignore
       }),
     },
     {
@@ -798,11 +859,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
-        const spot = await locate(page, Number(args?.ref))
+        const spot = await findAgain(page, Number(args?.ref))
         if (spot.gone === true) return REF_GONE
         const cursor = await page.hover({ x: Number(spot.x), y: Number(spot.y) })
         await wait(400)
-        return acted(page, args, () => look(page, { mode: 'text', maxChars: 2500 }), `hover ${String(args?.ref)} · ${cursor}`)
+        const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2500 }), `hover ${String(args?.ref)} · ${cursor}`)
+        return said + (spot.followed === true ? ` (the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — hovered where it is now)` : '')
       }),
     },
     {
@@ -882,7 +944,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (steps.length === 0) return 'Give at least one step.'
         const report = []
         for (const [index, step] of steps.entries()) {
-          const said = await runStep(page, step ?? {})
+          const said = await runStep(page, step ?? {}, refs?.refs)
           report.push(`${index + 1}. ${said}`)
           if (/^ref \d+: That control is gone/.test(said)) return `${report.join('\n')}\nStopped: the page changed. Call sidecar_view and use the new numbers.`
           /* A step can navigate straight onto Chrome's error page — a mistyped
@@ -976,7 +1038,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
-        const spot = await locate(page, Number(args?.ref))
+        const spot = await findAgain(page, Number(args?.ref))
         if (spot.gone === true) return REF_GONE
         const wanted = JSON.stringify(String(args?.value ?? ''))
         const route = await contextFor(page, Number(args?.ref))
@@ -1054,7 +1116,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const scale = Math.max(1, Math.min(3, Number(args?.scale ?? 1)))
         let clip = undefined
         if (args?.ref !== undefined) {
-          const spot = await locate(page, Number(args.ref))
+          const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE
           clip = { x: Math.max(0, Number(spot.x) - 20), y: Math.max(0, Number(spot.y) - 20), width: 220, height: 140 }
         }
@@ -1128,7 +1190,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withRawPage(async (page) => {
         let start = { x: Number(args?.x ?? NaN), y: Number(args?.y ?? NaN) }
         if (args?.from !== undefined) {
-          const spot = await locate(page, Number(args.from))
+          const spot = await findAgain(page, Number(args.from))
           if (spot.gone === true) return REF_GONE
           start = { x: Number(spot.x), y: Number(spot.y) }
         }
@@ -1177,7 +1239,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (now === null || now === undefined) return REF_GONE
         const want = args?.checked === undefined ? !Boolean(now.checked) : args.checked === true
         if (Boolean(now.checked) !== want) {
-          const spot = await locate(page, Number(args.ref))
+          const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE
           await page.mouse('mouseMoved', { x: Number(spot.x), y: Number(spot.y) })
           await page.mouse('mousePressed', { x: Number(spot.x), y: Number(spot.y) })

@@ -1,3 +1,13 @@
+## 0.16.0
+
+- **页面自己重画之后，旧编号不再是死路。** 框架（React / Vue / Svelte，或干脆 `innerHTML`）重画一块列表、一张表格时会丢掉所有元素再新建一批，于是上一次读到的编号指向已经不存在的节点——而那个控件还在屏幕上、还是那几句话，通常还在原来的位置。以前这一下要花两个回合：调用回 `That control is gone`，模型再读一次页面拿新编号，再用它。现在这一步在调用内部做完：按「它是什么」而不是「它排第几」把控件找回来。
+- **什么算同一个控件。** 同样的文字、同样的类型。按钮不会变成输入框；输入框也不会顶替它旁边的按钮；链接还要求去向一样，因为同样文字的另一个链接是另一件该不该点的事。文字必须在页面上**只出现一次**——两行里各有一个 `Delete` 是只有人能做的选择，那种情况照样要读一次，不猜。
+- **跟随的时候会说出来。** 回话里多一句 `(the page redrew, so "Learn more" has a new number — used where it is now)`，模型因此知道自己手里的旧编号不该继续用。真正消失的控件仍回 `Call sidecar_view and use the new number`。
+- **代价是 17 ms。** 重画过的控件一次点击 462 ms 中位、483 ms 最大（8 次），没重画的 445 ms 中位（8 次）——探针在编号仍有效时什么都不做。换掉的是模型的两三次调用加一次重读的 token（`docs/BENCH.md` Phase 6）。找回成功率 8/8。
+- **这条在真网上也成立。** example.com 上的链接被换成同样的克隆节点后，一次点击 4.4 s 落到 `https://www.iana.org/help/example-domains`；Bing 结果页上重画一个结果链接，546 ms 内接着点下去。新增 live 检查 `live-redraw-survives`，live 从 8 条变 9 条，9/9 全绿。
+- **动手的一共八个工具加批量步骤。** `click` / `type` / `hover` / `select` / `shot`（裁剪）/ `drag` / `check` 和 `sidecar_do` 的每一步都走同一条找回逻辑（`findAgain` / `followRef`），批量的每一行仍是一行。
+- 测试：39 条单测（新增两条身份判定：重画后按文字与类型认回来、输入框不顶替按钮且链接要去向一致）；广度 37 条全真（新增 `ref-follows-redraw`、`ref-refuses-really-gone`）。广度里的 `/redraw` 页面用 `createElement` 重画而不是拼接字符串——fixture 里嵌套引号会让 `onclick` 变成语法错误，页面只剩一个空 `div`，检查那时挂得莫名其妙。
+
 ## 0.15.0
 
 - **网站连不上时，工具不再把 Chrome 自己的报错页当成网站念回来。** Chrome 打不开地址时会把标签留在 `chrome-error://chromewebdata/`，而那个页面的 `readyState` 就是 `complete`——所以「等页面加载完」这类判断完全看不出区别。`unreachable()` 早就存在，但只有 `sidecar_open` 和 `sidecar_nav` 调它，于是 `sidecar_view` / `sidecar_click` / `sidecar_type` / `sidecar_do` 会把「无法访问此网站 · ERR_CONNECTION_CLOSED · 重新加载 · 详情」当成页面正文和一个有 3 个控件的页面交给模型：模型于是去点「重新加载」，把一次网络故障变成一串假进度。现在所有读和动作的工具都先看一眼地址，是浏览器自己的错误页就直接回绝，并把 `ERR_` 代号念出来（域名写错和代理挂了要分得清），再给出路：`the network could not reach that address — the browser stopped on its own error page (ERR_NAME_NOT_RESOLVED), which is not the site. Nothing on it is page content. Use sidecar_nav with another address, or fix the connection this machine needs.` 批量调用里某一步跳到错误页就停在那一步并说明，不再往「This site can't be reached」里输入文字。

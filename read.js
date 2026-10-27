@@ -599,3 +599,37 @@ export function renderPage(read, options = {}) {
 
 /** A ref that was valid on the previous read and is no longer here. */
 export const REF_GONE = 'That control is gone: the page changed since the read. Call sidecar_view and use the new number.'
+
+/**
+ * The control itself, not its number: what it is, what it is called, and where
+ * it sat. Kept from the read that produced the ref so a re-render can be
+ * survived without asking the person to read the page again.
+ * @param {any} control - a control from a read.
+ * @returns {{kind: string, name: string, href: string, inert: boolean}} what to look for.
+ */
+export function identityOf(control) {
+  const kind = String(control?.kind ?? '')
+  const name = String(control?.name ?? '')
+  const href = String(control?.href ?? '')
+  const inert = ['input', 'select', 'textarea', 'password', 'search', 'email', 'number', 'tel', 'url', 'date'].includes(kind)
+  return { kind, name, href, inert }
+}
+
+/**
+ * Whether a control read now is the one described by an identity: the same
+ * words, and not a container that happens to contain them.
+ * @param {{kind: string, name: string, href: string, inert: boolean}} want - identity.
+ * @param {any} control - a control from the current read.
+ * @returns {boolean} true when this is the same control.
+ */
+export function sameThing(want, control) {
+  /* Nothing to look for is not a licence to click whatever is nearest. */
+  if (want.name === '') return false
+  if (String(control?.name ?? '') !== want.name) return false
+  if (String(control?.kind ?? '') !== want.kind) return false
+  /* A field and the button beside it can share their words; a field never
+     becomes a button, so the kind must match exactly rather than loosely. */
+  if (want.inert && !['input', 'select', 'textarea', 'search', 'email', 'number', 'tel', 'url', 'date'].includes(String(control?.kind ?? ''))) return false
+  if (want.href !== '' && String(control?.href ?? '') !== want.href) return false
+  return true
+}
