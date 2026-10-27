@@ -149,3 +149,17 @@ hand on the mirror: while the person is using it a read still works
 (`hold-refuses-action`), and `sidecar_resume` hands the page back so the same
 click goes through (`resume-lets-go`).
 
+## Who the mirror serves
+
+The bar that matters most cannot be reached from `node --test`, because it is
+about a column that belongs to one conversation. With DSH running:
+
+```sh
+node scripts/live-safety.mjs http://127.0.0.1:49552
+```
+
+It reads the state, then tries the two ways in — a frame stream and a
+navigation — as a session that is not the owner. Both must answer 403, and the
+owner's stream must answer 200. Three `true` lines is the bar; `open · owner
+none` as the first line only means nothing is on screen, and the two refusals
+still have to hold.
