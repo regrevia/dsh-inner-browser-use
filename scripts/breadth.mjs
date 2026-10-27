@@ -105,6 +105,13 @@ const PAGES = {
       document.querySelector('#send').addEventListener('click', reply)
       box.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); reply() } })
     </script></body></html>`,
+  /* A drawing surface and a video frame never arrive as image files: the read
+     has to take the pixels out of the element itself. */
+  '/movie': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <video id="clip" muted playsinline width="160" height="120"
+      src="data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAQsEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEyTbuMU6uEHFO7a1OsggQW7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjMuMS4xMDJXQYxMYXZmNjMuMS4xMDJEiYhAj0AAAAAAABZUrmvXrgEAAAAAAABO14EBc8WIAsmC1VVRsgOcgQAitZyDdW5kiIEAhoVWX1ZQOYOBASPjg4QCYloA4JCwgaC6gXiagQJVsIRVuYEBVe6BAOwBAAAAAAAAAgAAElTDZ/5zc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYzLjEuMTAyc3PZY8CLY8WIAsmC1VVRsgNnyKRFo4dFTkNPREVSRIeXTGF2YzYzLjEuMTAyIGxpYnZweC12cDlnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAxLjAwMDAwMDAwMAAfQ7Z1QlvngQCjroEAAICCSYNCAAnwB3YAOCQcGMYAADBgAABnP//zrp////lwf///x0nUVMkMRwCjlYEAKACGAECSnABWgAADIAAAWfsNAKOVgQBQAIYAQJKcAFWAAAMgAABZ+w0Ao5WBAHgAhgBAkpwAVoAAAyAAAFn7DQCjlYEAoACGAECSnABUIAADIAAAWfsNAKOVgQDIAIYAQJKcAFaAAAMgAABZ+w0Ao5WBAPAAhgBAkpwAVYAAAyAAAFn7DQCjlYEBGACGAECSnABWgAADIAAAWfsNAKOVgQFAAIYAQJKcAFHAAAMgAABZ+w0Ao5WBAWgAhgBAkpwAVoAAAyAAAFn7DQCjlYEBkACGAMCSnABRwAADIAAAWfsNAKOVgQG4AIYAQJKcAFaAAAMgAABZ+w0Ao5WBAeAAhgBAkpwAVCAAAyAAAFn7DQCjlYECCACGAECSnABWgAADIAAAWfsNAKOVgQIwAIYAQJKcAFWAAAMgAABZ+w0Ao5WBAlgAhgBAkpwAVoAAAyAAAFn7DQCjlYECgACGAECSnABRwAADIAAAWfsNAKOVgQKoAIYAQJKcAFaAAAMgAABZ+w0Ao5WBAtAAhgBAkpwAVYAAAyAAAFn7DQCjlYEC+ACGAECSnABWgAADIAAAWfsNAKOVgQMgAIYAwJKcAFHAAAMgAABZ+w0Ao5WBA0gAhgBAkpwAVoAAAyAAAFn7DQCjlYEDcACGAECSnABVgAADIAAAWfsNAKOVgQOYAIYAQJKcAFaAAAMgAABZ+w0Ao5WBA8AAhgBAkpwAUcAAAyAAAFn7DQAcU7trkbuPs4EAt4r3gQHxggG18IED"></video>
+    <script>const clip = document.querySelector('#clip')
+    clip.addEventListener('loadedmetadata', () => { clip.currentTime = 0.2 })</script></body></html>`,
   '/wall': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Chat</h1>
     <textarea id="box" placeholder="Message the assistant" style="width:520px;height:60px"></textarea>
@@ -387,6 +394,18 @@ try {
   line('picture-in-read', /^picture 140x90 a picture with detail/m.test(picRead) && picRead.includes('sidecar_grab saves it as a file'), String(picRead.split('\n').filter((row) => row.startsWith('picture'))[0] ?? 'no line').slice(0, 80))
   line('grab-picture', grabWide === 140 && grabHigh === 90 && grabbed.includes('140x90'), `${Date.now() - grabbedAt} ms | ${grabbedFile.split('/').pop()} ${grabWide}x${grabHigh}`)
   line('grab-detail', grabbed.includes('picture with detail'), grabbed.slice(grabbed.indexOf('140x90')))
+  await page.navigate(`${base}/movie`)
+  /* A video has no pixels until its metadata has loaded: wait for that, not for a clock. */
+  for (let turn = 0; turn < 40; turn += 1) {
+    if (Number(await js(page, "document.querySelector('#clip').videoWidth")) > 0) break
+    await sleep(75)
+  }
+  const frameAt = Date.now()
+  const frameSaid = String((await grabTool.execute({ ref: undefined, name: 'video-check' })).text).trim()
+  const frameFile = frameSaid.split(' ')[0]
+  const frameWide = readFileSync(frameFile).readUInt32BE(16)
+  const frameHigh = readFileSync(frameFile).readUInt32BE(20)
+  line('grab-video-frame', frameWide === 160 && frameHigh === 120 && frameSaid.includes('160x120'), `${Date.now() - frameAt} ms | ${frameSaid.slice(0, 100)}`)
   await page.navigate(`${base}/flat`)
   const flatAt = Date.now()
   const flatSaid = String((await grabTool.execute({ name: 'picture-blank' })).text).trim()

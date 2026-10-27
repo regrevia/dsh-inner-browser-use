@@ -407,3 +407,20 @@ The reviewer inside the column cannot open a repository. Asking it to review
 Measured: `review-carries-diff` green in 2.6 s; the recorded round carries
 `+const cap = 60` verbatim.
 
+## Phase 22b — the mirror outlives the visit, 0.33.0
+
+A column tab only exists while the chat is on screen. The ask used to be a
+single frame pushed at request time: if that chat had no stream, the frame was
+lost and the mirror never appeared on return.
+
+| situation | before | now |
+| --- | --- | --- |
+| the chat is on screen | tab opens | tab opens |
+| the chat is elsewhere, then returns | nothing | tab is waiting |
+| the page was reloaded | nothing | tab is waiting |
+| the ask is 3 minutes old | nothing | nothing (spent) |
+| a different chat comes back | nothing | nothing (not its mirror) |
+
+Data flow never needed the column: measured with zero viewers — boot 626 ms,
+click and read back 114 ms, read 4 ms, shot 48 ms / 12.5 KB.
+

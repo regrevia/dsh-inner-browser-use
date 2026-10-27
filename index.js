@@ -63,6 +63,10 @@ export class Bridge {
     /* The one chat that owns the mirror. The column is global, so the picture
        may only ever be drawn for this chat; every other chat shows a note. */
     this.owner = ''
+    /* The tab asked for, kept until the chat comes back into view. A chat that
+       is not on screen has no stream, so a push at ask time is lost; remembering
+       the ask is what makes the mirror appear when the person returns. */
+    this.wanted = { session: '', at: 0 }
   }
 
   /**
@@ -74,6 +78,19 @@ export class Bridge {
   }
 
   /**
+   * Remember that a chat wants the mirror, and tell it now if it is listening.
+   * @param {string} sessionId - chat that asked.
+   * @param {number} [at] - when it asked; older asks are not replayed.
+   * @returns {boolean} whether a live tab took the frame.
+   */
+  want(sessionId, at = Date.now()) {
+    if (sessionId === '') return false
+    this.claim(sessionId)
+    this.wanted = { session: sessionId, at }
+    return this.push(sessionId, { type: 'sidecar-wanted', session: sessionId, at })
+  }
+
+  /**
    * Take the chat's event stream.
    * @param {string} sessionId - chat the tab belongs to.
    * @param {import('node:http').ServerResponse} res - open SSE response.
@@ -81,6 +98,13 @@ export class Bridge {
   attach(sessionId, res) {
     this.seats.get(sessionId)?.end()
     this.seats.set(sessionId, res)
+    /* A tab that connects after the ask still gets the mirror: this is the case
+       where the person was looking at another chat, or reloaded the page. An
+       ask older than two minutes is spent and is not replayed. */
+    const ask = this.wanted
+    if (ask.session === sessionId && Date.now() - ask.at <= 120_000) {
+      this.push(sessionId, { type: 'sidecar-wanted', session: sessionId, at: ask.at })
+    }
   }
 
   /**
@@ -230,8 +254,7 @@ export function apply(ctx) {
         })
         /* The mirror belongs to the chat that asked for it; any earlier owner
            loses it and its tab. */
-        bridge.claim(who)
-        bridge.push(who, { type: 'sidecar-wanted', session: who })
+        bridge.want(who)
         json(200, { ok: true, ...(await sidecar.state()), owner: bridge.owner })
       } catch (error) {
         json(500, { ok: false, text: String(error?.message ?? error) })
@@ -362,8 +385,7 @@ export function apply(ctx) {
       /* The mirror changes hands here: the calling chat owns it from now on,
          and every earlier owner loses it. */
       want: (sessionId) => {
-        bridge.claim(sessionId)
-        bridge.push(sessionId, { type: 'sidecar-wanted', session: sessionId })
+        bridge.want(sessionId)
       },
     }).map((definition) => scope.tools.register(definition))
     scope.effect(() => () => {

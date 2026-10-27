@@ -172,6 +172,30 @@ test('a chat with no tab receives nothing', () => {
   assert.equal(new Bridge().push('chat-1', { type: 'sidecar-wanted' }), false)
 })
 
+test('a mirror asked for while the chat was away arrives when it comes back', () => {
+  const bridge = new Bridge()
+  /** @param {string} tag - which stream. @returns {any} a response-shaped sink. */
+  const sink = (tag) => ({ tag, ended: false, frames: [], end() { this.ended = true }, write(frame) { this.frames.push(frame) } })
+  assert.equal(bridge.want('chat-1'), false, 'nobody is listening yet, so nothing is delivered')
+  const late = sink('late')
+  bridge.attach('chat-1', late)
+  assert.equal(late.frames.length, 1)
+  assert.match(String(late.frames[0]), /sidecar-wanted/, 'the tab opens without being asked again')
+  assert.match(String(late.frames[0]), /chat-1/)
+
+  const stale = new Bridge()
+  stale.want('chat-2', Date.now() - 130_000)
+  const seat = sink('stale')
+  stale.attach('chat-2', seat)
+  assert.equal(seat.frames.length, 0, 'a two-minute-old ask is spent')
+
+  const other = new Bridge()
+  other.want('chat-3')
+  const elsewhere = sink('elsewhere')
+  other.attach('chat-4', elsewhere)
+  assert.equal(elsewhere.frames.length, 0, 'another chat never receives this one\'s mirror')
+})
+
 test('a second stream for one chat replaces the first', () => {
   const bridge = new Bridge()
   /** @param {string} tag - which stream. @returns {any} a response-shaped sink. */

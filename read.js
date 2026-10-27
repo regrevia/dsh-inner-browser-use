@@ -385,8 +385,8 @@ export function pictures(ref, count) {
     if (el === null || el === undefined || seen.has(el)) return
     seen.add(el)
     const b = el.getBoundingClientRect()
-    const w = kind === 'canvas' ? el.width : el.naturalWidth || b.width
-    const h = kind === 'canvas' ? el.height : el.naturalHeight || b.height
+    const w = kind === 'canvas' ? el.width : kind === 'video' ? el.videoWidth || b.width : el.naturalWidth || b.width
+    const h = kind === 'canvas' ? el.height : kind === 'video' ? el.videoHeight || b.height : el.naturalHeight || b.height
     if (w < 48 || h < 48) return
     if (b.width < 8 || b.height < 8) return
     const s = getComputedStyle(el)
@@ -399,9 +399,13 @@ export function pictures(ref, count) {
     const tag = node.tagName
     if (tag === 'IMG') add(node, 'img')
     else if (tag === 'CANVAS') add(node, 'canvas')
+    /* A paused video is the frame the person is looking at; it never arrives as
+       an image file, so it has to be drawn out of the element. */
+    else if (tag === 'VIDEO' && (node.videoWidth || 0) > 0) add(node, 'video')
   }
   if (where && where.tagName === 'IMG') add(where, 'img')
   if (where && where.tagName === 'CANVAS') add(where, 'canvas')
+  if (where && where.tagName === 'VIDEO' && (where.videoWidth || 0) > 0) add(where, 'video')
   picked.sort((a, b) => b.area - a.area)
   /* A picture nobody can look at still has to be describable: how much of it is
      one colour tells a blank chart from a chart. Sampled at 32x32, which is
@@ -435,8 +439,15 @@ export function pictures(ref, count) {
     let data = ''
     let type = 'image/png'
     try {
-      if (item.kind === 'canvas') {
-        data = item.el.toDataURL('image/png')
+      if (item.kind === 'canvas' || item.kind === 'video') {
+        /* Same path for both: a video frame is copied onto a board and read as
+           a picture. Nothing here needs the video to be playing. */
+        const board = document.createElement('canvas')
+        board.width = Math.max(1, Math.round(item.w))
+        board.height = Math.max(1, Math.round(item.h))
+        const pen = board.getContext('2d')
+        pen.drawImage(item.el, 0, 0, board.width, board.height)
+        data = board.toDataURL('image/png')
       } else {
         const url = item.el.currentSrc || item.el.src || ''
         const answer = await fetch(url, { credentials: 'include' })
