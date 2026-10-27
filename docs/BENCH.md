@@ -424,3 +424,18 @@ lost and the mirror never appeared on return.
 Data flow never needed the column: measured with zero viewers — boot 626 ms,
 click and read back 114 ms, read 4 ms, shot 48 ms / 12.5 KB.
 
+## Phase 22c — a duplicate cannot take the pane down, 0.33.2
+
+A scan of the six shipped modules finds no repeated top-level name, no module
+imported twice, no two tools with one name, one tab id and one style sheet.
+The two places a reload can still meet itself are guarded instead of trusted:
+
+| case | before | now |
+| --- | --- | --- |
+| same tool name registered again | thrown error, surface down | warning, first one kept |
+| same tab mounted again | possible duplicate registration | no-op |
+| style sheet re-applied | second sheet stacked | replaced by id |
+| two mount entry points | possible double effect | one entry per half |
+
+Guards are covered by `test/no-duplicate.test.mjs` plus a double-mount test:
+65 unit tests, 66 breadth checks, 20 packaged files.
