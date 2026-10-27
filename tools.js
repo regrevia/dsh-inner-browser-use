@@ -295,7 +295,7 @@ async function remember(page, refs, options) {
  * @param {{maxChars?: number}} options - narrowing.
  * @returns {string} a diff, small by construction.
  */
-function diffRead(previous, next, options = {}) {
+export function diffRead(previous, next, options = {}) {
   const maxChars = Number(options.maxChars ?? 2000)
   const before = new Map(previous.controls.map((control) => [control.ref, control]))
   const after = new Map(next.controls.map((control) => [control.ref, control]))

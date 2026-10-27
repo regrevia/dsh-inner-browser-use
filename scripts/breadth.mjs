@@ -8,7 +8,8 @@
 import { createServer } from 'node:http'
 import { writeFileSync } from 'node:fs'
 
-import { readPage, locate, REF_GONE } from '../read.js'
+import { readPage, renderPage, locate, contextFor, REF_GONE } from '../read.js'
+import { diffRead } from '../tools.js'
 import { Sidecar } from '../sidecar.js'
 
 const PAGES = {
@@ -57,6 +58,7 @@ const PAGES = {
     </body></html>`,
   '/partner': `<!doctype html><html><body style="font:16px system-ui;padding:12px">
     <p>a partner frame Chrome keeps apart</p><input placeholder="Partner field">
+    <input type="file" aria-label="Partner file" onchange="document.title = 'partner got ' + this.files[0].name">
     <button id='pg' onclick="window.top.postMessage('partner clicked','*');document.title='partner clicked'">Partner go</button>
     </body></html>`,
 }
@@ -141,6 +143,10 @@ try {
     line('form-select', selected === 'Large')
   }
   const after = await readPage(page, { mode: 'forms', maxChars: 1600 })
+  const changed = diffRead(form, after, { maxChars: 2000 })
+  const whole = renderPage(after, { mode: 'forms', maxChars: 1600 })
+  line('changed-only', changed.includes('a@b.c') && changed.length < whole.length / 2, `${changed.length} chars vs ${whole.length}`)
+
   const agree = control(after, 'I agree')
   if (agree !== undefined) {
     await click(page, agree.ref)
@@ -214,6 +220,26 @@ try {
     const said = session === undefined ? undefined : (await page.cdp.send('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, session).catch(() => null))?.result?.value
     line('frame-cross-click', said === 'partner clicked', String(said))
   } else line('frame-cross-click', false, 'button not numbered')
+
+  const partnerFile = crossed.controls.find((c) => String(c.name).toLowerCase().includes('partner file'))
+  const fileRoute = partnerFile === undefined ? null : await contextFor(page, partnerFile.ref)
+  if (fileRoute === null) line('frame-cross-upload', false, 'file input not numbered')
+  else {
+    const chosen = '/tmp/breadth-partner.txt'
+    writeFileSync(chosen, 'handed over')
+    const evaluate = { expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${fileRoute.local}); return hit ? hit.el : null })()` }
+    if (fileRoute.contextId !== undefined) evaluate.contextId = fileRoute.contextId
+    const handle = await page.cdp.send('Runtime.evaluate', evaluate, fileRoute.sessionId)
+    const node = await page.cdp.send('DOM.describeNode', { objectId: handle.result?.objectId }, fileRoute.sessionId)
+    await page.cdp.send('DOM.setFileInputFiles', { files: [chosen], backendNodeId: node.node.backendNodeId }, fileRoute.sessionId)
+    let said = ''
+    for (let i = 0; i < 20 && !said.includes('breadth-partner.txt'); i += 1) {
+      await sleep(200)
+      const title = await page.cdp.send('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, fileRoute.sessionId)
+      said = String(title.result?.value ?? '')
+    }
+    line('frame-cross-upload', said === 'partner got breadth-partner.txt', said)
+  }
 
   await page.navigate(`${base}/download`)
   const getIt = control(await readPage(page, { mode: 'text', maxChars: 600 }), 'Get file')

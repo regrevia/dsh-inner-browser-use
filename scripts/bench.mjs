@@ -11,6 +11,7 @@
 import { createServer } from 'node:http'
 import { Sidecar } from '../sidecar.js?v=1'
 import { readPage, renderPage } from '../read.js?v=1'
+import { diffRead } from '../tools.js?v=1'
 
 /** A page worth measuring: one of controls, one of words, one nearly empty. */
 function page(name) {
@@ -92,6 +93,11 @@ async function main() {
     const again = renderPage(await readPage(sidecar.page), { mode: 'text', maxChars: 4600 })
     const controlLines = (text) => text.split('\n').filter((line) => /^\d+ \[/.test(line)).join('\n')
     emit('read-repeat', { page: name, firstMs, againMs: Date.now() - againAt, stable: controlLines(first) === controlLines(again) })
+    const before = await readPage(sidecar.page, { mode: 'text' })
+    await sidecar.page.cdp.send('Runtime.evaluate', { expression: `(() => { const field = document.querySelector('input'); if (field) field.value = 'typed by the agent'; return true })()` })
+    const after = await readPage(sidecar.page, { mode: 'text' })
+    const diff = diffRead(before, after, { maxChars: 2000 })
+    emit('read-changed', { page: name, chars: diff.length, approxTokens: Math.round(diff.length / 3.4), wholeChars: renderPage(after, { maxChars: 4600 }).length })
   }
   await sidecar.page.navigate(servers.dense.url)
   await wait(200)
