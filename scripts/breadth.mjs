@@ -88,7 +88,7 @@ const PAGES = {
     <img id="blank" src="/flat.png" width="140" height="90" alt="Chart"></body></html>`,
   /* A chat in the page: the answer arrives over a second, as a real one does. */
   '/chat': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
-    <div id="said">Ready</div>
+    <div id="said" style="white-space:pre-line">Ready</div>
     <textarea id="box" placeholder="Message the assistant" style="width:520px;height:60px"></textarea>
     <button id="send">Send</button>
     <script>
@@ -98,7 +98,7 @@ const PAGES = {
         const asked = box.value.trim()
         said.textContent = 'Thinking'
         setTimeout(() => { said.textContent = 'Thinking. ' }, 300)
-        setTimeout(() => { said.textContent = 'Answer: ' + asked + ' — the review is that names are clear.' }, 700)
+        setTimeout(() => { said.textContent = ['Answer: ' + asked, '- read.js: keep the names clear, they are what a reviewer reads', '- tools.js: one call should carry both halves'].join(String.fromCharCode(10)) }, 700)
       })
       document.querySelector('#send').addEventListener('click', reply)
       box.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); reply() } })
@@ -385,6 +385,17 @@ try {
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
   line('no-picture-noise', !wordsRead.includes('sidecar_grab saves it'), wordsRead.split('\n').length + ' lines')
 
+  /* A review round: brief in, a list out, and the round written down. */
+  {
+    const refs = { refs: [], at: 0 }
+    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_review') // ui-copy-ignore
+    await page.navigate(`${base}/chat`)
+    const started = Date.now()
+    const told = await review.execute({ repo: 'https://github.com/example/repo', commit: 'abc123def456', focus: 'token cost', timeout_ms: 8000 })
+    const body = String(told?.text ?? '')
+    line('review-round-recorded', body.startsWith('review round: abc123def456') && body.includes('1.'), `${Date.now() - started} ms | ${body.replace(/\s+/g, ' ').slice(0, 300)}`)
+  }
+
   /* One call carries a question and the answer back. */
   {
     const refs = { refs: [], at: 0 }
@@ -393,7 +404,7 @@ try {
     const started = Date.now()
     const told = await ask.execute({ text: 'review the read output', timeout_ms: 8000 })
     const body = String(told?.text ?? '')
-    line('ask-in-one-call', body.includes('the answer came back in') && body.includes('names are clear'), `${Date.now() - started} ms | ${body.replace(/\s+/g, ' ').slice(0, 90)}`)
+    line('ask-in-one-call', body.includes('the answer came back in') && body.includes('keep the names clear'), `${Date.now() - started} ms | ${body.replace(/\s+/g, ' ').slice(0, 300)}`)
   }
 
   /* Reading the same page twice should not cost the page twice. */

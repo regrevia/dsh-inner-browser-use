@@ -253,3 +253,14 @@ repository address there and the review back, and records in the round log which
 commit the review was about, so a later round can tell whether the advice was
 already taken.
 
+## Phase 22 — the reviewer sees the code, not a description of it, 0.31.0
+
+The round log now records what was asked and what came back. Next: paste the
+diff the review is about into the same message (bounded, so the column does not
+fill with code), and let a later round say which points were already acted on,
+so the loop stops repeating advice.
+
+## Phase 23 — the drawing half, 0.31.0
+
+A page that never shipped an image still has a canvas or a video frame; take
+that surface as the picture when the page has no file to grab.

@@ -370,3 +370,14 @@ A changed scroll offset is still reported, so "nothing changed" is never a lie.
 | **turns for a chat reply** | 3–7 | **1** |
 | measured `sidecar_ask` on `/chat` (answer over 2 arrivals, 700 ms tail) | — | 2.5 s, one turn |
 
+## Phase 21 — a review round that closes the loop, 0.31.0
+
+| step | before | `sidecar_review` |
+| --- | --- | --- |
+| write the request (repo, commit, focus) | by hand, every round | built from three fields |
+| send it, wait for the answer | `sidecar_ask` | same call |
+| turn the answer into a list | read it, retype it | parsed, numbering kept |
+| know what the last round was about | — | round log, with the commit and the time |
+| **turns for a review round** | 3–7 + bookkeeping | **1** |
+| measured round on `/chat` (echoed question + 2-item list) | — | 2.6 s, 2 points |
+

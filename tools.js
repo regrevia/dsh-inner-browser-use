@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
 import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
+import { brief as askBrief, recordRound, lastRoundNote } from './review.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -735,6 +736,82 @@ export async function extractRows(page, args) {
   return `${rows.length} of ${Number(value.total)} rows matching ${select}:\n${said.join('\n')}${more}`
 }
 
+/**
+ * Say one thing to a box in the page and take the answer back. The wait ends
+ * when the answer has stopped changing, so a streaming reply is not cut off and
+ * a page that never answers does not hold the call open forever.
+ * @param {any} page - sidecar page.
+ * @param {{text?: string, ref?: number, submit?: boolean, timeout_ms?: number}} args - what to say.
+ * @returns {Promise<string>} the answer, or why there is none.
+ */
+async function askInPage(page, args) {
+const said = String(args?.text ?? '').trim()
+if (said === '') return 'Give me something to say.'
+const budget = Math.max(3000, Math.min(180_000, Math.trunc(Number(args?.timeout_ms ?? 60_000)) || 60_000))
+const before = await readPage(page, { mode: 'text', maxChars: 4000 })
+let point = null
+if (args?.ref !== undefined) {
+  const spot = await findAgain(page, Number(args.ref))
+  if (spot.gone === true) return REF_GONE
+  point = { x: Number(spot.x), y: Number(spot.y) }
+} else {
+  const at = await evaluate(page, `(() => {
+    let best = null
+    for (const el of document.querySelectorAll('textarea, [contenteditable=""], [contenteditable="true"], input[type="text"], input[type="search"], input:not([type])')) {
+      const b = el.getBoundingClientRect()
+      const s = getComputedStyle(el)
+      if (s.visibility === 'hidden' || s.display === 'none' || b.width < 80 || b.height < 18) continue
+      if (b.bottom < 0 || b.top > innerHeight) continue
+      if (best === null || b.width * b.height > best.area) best = { area: b.width * b.height, x: b.x + Math.min(24, b.width / 2), y: b.y + b.height / 2, name: String(el.getAttribute('placeholder') ?? el.getAttribute('aria-label') ?? '').slice(0, 40) }
+    }
+    return best === null ? null : { x: Math.round(best.x), y: Math.round(best.y), name: best.name }
+  })()`)
+  if (at === null || at === undefined) return 'No box to type in on this page. Call sidecar_view to see what is there.'
+  point = { x: Number(at.x), y: Number(at.y) }
+}
+await page.mouse('mouseMoved', point)
+await page.mouse('mousePressed', { ...point, clickCount: 1 })
+await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+await wait(60)
+await page.insertText(said)
+if (args?.submit !== false) await pressKey(page, 'Enter')
+const started = Date.now()
+const deadline = started + budget
+let last = before.text
+let fresh = ''
+let steady = 0
+let quiet = 0
+while (Date.now() < deadline) {
+  await wait(500)
+  const now = await readPage(page, { mode: 'text', maxChars: 4000 })
+  if (now.text !== last) {
+    last = now.text
+    fresh = now.text
+    steady = 0
+    quiet = 0
+    continue
+  }
+  if (fresh !== '') {
+    steady += 1
+    if (steady >= 3) break
+  } else {
+    quiet += 1
+    if (quiet >= 4 && Date.now() - started > 4000) break
+  }
+}
+const took = Date.now() - started
+if (fresh === '') return `sent it — no answer after ${Math.round(took / 100) / 10}s; the page still says: ${before.text.slice(0, 400)}`
+/* The answer may replace the words that were there, so cut at the last
+   character the two reads share, not at the old length. */
+let shared = 0
+while (shared < fresh.length && shared < before.text.length && fresh[shared] === before.text[shared]) shared += 1
+const added = fresh.slice(shared)
+/* Lines are kept: a reviewer's list is one point per line, and flattening it
+       would leave the next round with a paragraph instead of items. */
+    const words = added.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 2500)
+return `the answer came back in ${Math.round(took / 100) / 10}s:\n${words}`
+}
+
 export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   /* Reading, clicking and typing on Chrome's own error page is not driving the
      site: the text there is Chrome talking, the buttons reload. Those calls are
@@ -993,70 +1070,40 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       timeoutMs: 180_000,
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the answer. */
+      execute: async (args) => withPage((page) => askInPage(page, args)),
+    },
+    {
+      name: 'sidecar_review', // ui-copy-ignore
+      description: 'Ask the chat in the page to review a repository and take its review back as a list: builds the message, sends it, waits for the answer, and writes the round down so the next round knows what was already said. Use it for a review round, not for a one-off question (that is sidecar_ask).',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          repo: { type: 'string', description: 'Address of the repository to review.' },
+          commit: { type: 'string', description: 'The commit the review is about. Omit for the newest one.' },
+          focus: { type: 'string', description: 'One thing to look at especially.' },
+          ref: { type: 'integer', description: 'The box to type in, from sidecar_view. Omit to use the page\u2019s own chat box.' },
+          timeout_ms: { type: 'integer', description: 'How long to wait for the review. Default 120000.' },
+        },
+        required: ['repo'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 240_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the review. */
       execute: async (args) => withPage(async (page) => {
-        const said = String(args?.text ?? '').trim()
-        if (said === '') return 'Give me something to say.'
-        const budget = Math.max(3000, Math.min(180_000, Math.trunc(Number(args?.timeout_ms ?? 60_000)) || 60_000))
-        const before = await readPage(page, { mode: 'text', maxChars: 4000 })
-        let point = null
-        if (args?.ref !== undefined) {
-          const spot = await findAgain(page, Number(args.ref))
-          if (spot.gone === true) return REF_GONE
-          point = { x: Number(spot.x), y: Number(spot.y) }
-        } else {
-          const at = await evaluate(page, `(() => {
-            let best = null
-            for (const el of document.querySelectorAll('textarea, [contenteditable=""], [contenteditable="true"], input[type="text"], input[type="search"], input:not([type])')) {
-              const b = el.getBoundingClientRect()
-              const s = getComputedStyle(el)
-              if (s.visibility === 'hidden' || s.display === 'none' || b.width < 80 || b.height < 18) continue
-              if (b.bottom < 0 || b.top > innerHeight) continue
-              if (best === null || b.width * b.height > best.area) best = { area: b.width * b.height, x: b.x + Math.min(24, b.width / 2), y: b.y + b.height / 2, name: String(el.getAttribute('placeholder') ?? el.getAttribute('aria-label') ?? '').slice(0, 40) }
-            }
-            return best === null ? null : { x: Math.round(best.x), y: Math.round(best.y), name: best.name }
-          })()`)
-          if (at === null || at === undefined) return 'No box to type in on this page. Call sidecar_view to see what is there.'
-          point = { x: Number(at.x), y: Number(at.y) }
-        }
-        await page.mouse('mouseMoved', point)
-        await page.mouse('mousePressed', { ...point, clickCount: 1 })
-        await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-        await wait(60)
-        await page.insertText(said)
-        if (args?.submit !== false) await pressKey(page, 'Enter')
+        const repo = String(args?.repo ?? '').trim()
+        if (repo === '') return 'Which repository should the reviewer look at?'
+        const commit = String(args?.commit ?? '').trim()
+        const asked = askBrief({ repo, commit, focus: String(args?.focus ?? '') })
         const started = Date.now()
-        const deadline = started + budget
-        let last = before.text
-        let fresh = ''
-        let steady = 0
-        let quiet = 0
-        while (Date.now() < deadline) {
-          await wait(500)
-          const now = await readPage(page, { mode: 'text', maxChars: 4000 })
-          if (now.text !== last) {
-            last = now.text
-            fresh = now.text
-            steady = 0
-            quiet = 0
-            continue
-          }
-          if (fresh !== '') {
-            steady += 1
-            if (steady >= 3) break
-          } else {
-            quiet += 1
-            if (quiet >= 4 && Date.now() - started > 4000) break
-          }
-        }
-        const took = Date.now() - started
-        if (fresh === '') return `sent it — no answer after ${Math.round(took / 100) / 10}s; the page still says: ${before.text.slice(0, 400)}`
-        /* The answer may replace the words that were there, so cut at the last
-           character the two reads share, not at the old length. */
-        let shared = 0
-        while (shared < fresh.length && shared < before.text.length && fresh[shared] === before.text[shared]) shared += 1
-        const added = fresh.slice(shared)
-        const words = added.replace(/\s+/g, ' ').trim().slice(0, 2500)
-        return `the answer came back in ${Math.round(took / 100) / 10}s:\n${words}`
+        const told = await askInPage(page, { text: asked, ref: args?.ref, timeout_ms: args?.timeout_ms ?? 120_000 })
+        const tookMs = Date.now() - started
+        if (!String(told).startsWith('the answer came back in')) return told
+        const answer = String(told).split('\n').slice(1).join('\n').trim()
+        const { round } = recordRound({ commit, question: asked, answer, tookMs })
+        const list = round.points.length === 0 ? 'It answered in prose; no list to work from.' : round.points.map((point, at) => `${at + 1}. ${point}`).join('\n')
+        return `review round: ${commit === '' ? 'newest commit' : commit.slice(0, 12)} in ${Math.round(tookMs / 100) / 10}s\n${list}`
       }),
     },
     {

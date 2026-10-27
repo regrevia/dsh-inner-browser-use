@@ -10,6 +10,9 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 /** @type {Array<{path: string, handler: any}>} */
 const routes = []
@@ -135,6 +138,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_open',
     'sidecar_pdf',
     'sidecar_resume',
+    'sidecar_review',
     'sidecar_scroll',
     'sidecar_select',
     'sidecar_shot',
@@ -510,4 +514,29 @@ test('there is a tool that asks a chat in the page and brings the answer back', 
   assert.match(ask.description, /read its answer back in the same call/)
   assert.deepEqual(Object.keys(ask.parameters.properties), ['text', 'ref', 'submit', 'timeout_ms'])
   assert.deepEqual(ask.parameters.required, ['text'])
+})
+
+test('a review round says what it asked, and keeps the list it got back', async () => {
+  const { brief, points, recordRound, lastRound, lastRoundNote, lastPoints } = await import('../review.js?v=1')
+  const asked = brief({ repo: 'https://github.com/o/r', commit: 'abc123def456', focus: 'token cost' })
+  assert.match(asked, /https:\/\/github\.com\/o\/r/)
+  assert.match(asked, /commit abc123def456/)
+  assert.match(asked, /Focus on: token cost/)
+  assert.match(asked, /Answer with a short list/)
+
+  const answer = 'Here is what I would change.\n- read.js: cut the picture line at 60 characters (cheap)\n2. tools.js: reuse the last read even when the mode changes\nnot a point'
+  assert.deepEqual(points(answer), ['read.js: cut the picture line at 60 characters (cheap)', 'tools.js: reuse the last read even when the mode changes'])
+
+  const dir = join(tmpdir(), `dsh-rounds-${process.pid}`)
+  rmSync(dir, { recursive: true, force: true })
+  const { file, round } = recordRound({ dir, commit: 'abc123def456', question: asked, answer, tookMs: 1250 })
+  assert.equal(round.points.length, 2)
+  assert.equal(round.tookMs, 1250)
+  assert.match(readFileSync(file, 'utf8'), /abc123def456/)
+  assert.equal(lastRound({ dir }).commit, 'abc123def456')
+  assert.match(lastRoundNote({ dir, commit: 'abc123def456' }), /about this commit/)
+  assert.match(lastRoundNote({ dir, commit: 'ffff999' }), /the code has moved since/)
+  assert.equal(lastPoints({ dir }).length, 2)
+  rmSync(dir, { recursive: true, force: true })
+  assert.equal(lastRound({ dir }), null)
 })
