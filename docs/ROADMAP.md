@@ -219,3 +219,10 @@ name, so the fallback has to be a picture plus a click, not a name lookup.
 `sidecar_grab` returns a path. Next: say one line about the picture (size, and
 whether it is mostly one colour) so a model that cannot open files still learns
 "the chart is blank" without a full read.
+
+## Phase 17 — a picture nobody can see, 0.26.0
+
+The description is coarse on purpose. Next: when a page's answer is a picture,
+let a read say so in one line ("the answer is a picture, and it is blank") so a
+model that cannot open files does not need the tool at all to notice a failure.
+

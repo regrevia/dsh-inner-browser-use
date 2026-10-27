@@ -467,4 +467,7 @@ test('the picture itself can be taken off the page', async () => {
   /* A drawing surface has no file behind it: its pixels come from itself. */
   assert.match(expr, /toDataURL/)
   assert.match(expr, /slice\(0, 2\)/)
+  /* A picture nobody can open still has to be described: sample it small. */
+  assert.match(expr, /willReadFrequently/)
+  assert.match(expr, /colors: feel\?\.colors/)
 })

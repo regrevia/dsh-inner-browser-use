@@ -1347,7 +1347,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const ext = type.includes('jpeg') ? 'jpg' : type.includes('webp') ? 'webp' : type.includes('svg') ? 'svg' : 'png'
           const file = join(dir, `${base}${list.length > 1 ? `-${index + 1}` : ''}.${ext}`)
           await writeFile(file, Buffer.from(body.slice(mark + 1), 'base64'))
-          rows.push(`${file} ${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`)
+          const size = `${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`
+          /* Say what the picture looks like in words: a model that cannot open
+             a file still needs to know a chart came back blank. */
+          const flat = Number(item.flat) || 0
+          const colors = Number(item.colors) || 0
+          const look = flat >= 0.9 ? 'mostly one colour' : colors <= 3 ? 'a few colours' : 'a picture with detail'
+          rows.push(`${file} ${size} ${look}`)
         }
         if (rows.length === 0) {
           return list.length === 0 ? 'There is no picture on the page.' : 'That picture could not be saved.'

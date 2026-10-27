@@ -342,6 +342,33 @@ export function pictures(ref, count) {
   if (where && where.tagName === 'IMG') add(where, 'img')
   if (where && where.tagName === 'CANVAS') add(where, 'canvas')
   picked.sort((a, b) => b.area - a.area)
+  /* A picture nobody can look at still has to be describable: how much of it is
+     one colour tells a blank chart from a chart. Sampled at 32x32, which is
+     enough for that and costs nothing. */
+  const look = async (data) => {
+    try {
+      const img = new Image()
+      img.src = data
+      await img.decode()
+      const board = document.createElement('canvas')
+      board.width = 32
+      board.height = 32
+      const pen = board.getContext('2d', { willReadFrequently: true })
+      if (pen === null) return null
+      pen.drawImage(img, 0, 0, 32, 32)
+      const dots = pen.getImageData(0, 0, 32, 32).data
+      const tally = new Map()
+      for (let at = 0; at < dots.length; at += 4) {
+        const key = (dots[at] >> 5) * 64 + (dots[at + 1] >> 5) * 8 + (dots[at + 2] >> 5)
+        tally.set(key, (tally.get(key) || 0) + 1)
+      }
+      let most = 0
+      for (const count of tally.values()) most = Math.max(most, count)
+      return { colors: tally.size, flat: Math.round((most / 1024) * 100) / 100 }
+    } catch {
+      return null
+    }
+  }
   const out = []
   for (const item of picked.slice(0, ${limit})) {
     let data = ''
@@ -364,7 +391,8 @@ export function pictures(ref, count) {
     } catch {
       data = ''
     }
-    out.push({ kind: item.kind, width: item.w, height: item.h, type, data })
+    const feel = data ? await look(data) : null
+    out.push({ kind: item.kind, width: item.w, height: item.h, type, data, colors: feel?.colors ?? 0, flat: feel?.flat ?? 0 })
   }
   return JSON.stringify({ pictures: out })
 })()`

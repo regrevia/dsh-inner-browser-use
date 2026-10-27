@@ -317,3 +317,16 @@ something the person can see.
 
 A picture page has no text at all, so a read of it costs one line and no tokens;
 the picture comes back as a file path the person can open.
+
+## Phase 16 — say what the picture looks like, 0.26.0
+
+Two 140x90 PNGs: one a gradient, one a single colour.
+
+| page | what `sidecar_grab` answers | time |
+| --- | --- | --- |
+| `/pic` | `... 140x90 a picture with detail` | 21 ms (first, page cold) |
+| `/flat` | `... 140x90 mostly one colour` | 4 ms |
+
+The sampling is 32x32 inside the page, so it costs no round trip and its result
+travels in the same line as the path.
+

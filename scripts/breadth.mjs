@@ -26,9 +26,7 @@ const chunk = (kind, body) => {
   crc.writeUInt32BE((~c) >>> 0)
   return Buffer.concat([size, head, body, crc])
 }
-const PNG_140 = (() => {
-  const wide = 140
-  const high = 90
+const makePng = (wide, high, flat) => {
   const header = Buffer.alloc(13)
   header.writeUInt32BE(wide, 0)
   header.writeUInt32BE(high, 4)
@@ -40,9 +38,9 @@ const PNG_140 = (() => {
     rows[at] = 0
     for (let x = 0; x < wide; x += 1) {
       const px = at + 1 + x * 3
-      rows[px] = 40 + x
-      rows[px + 1] = 90
-      rows[px + 2] = 200 - y
+      rows[px] = flat ? 120 : 40 + x
+      rows[px + 1] = flat ? 160 : 90
+      rows[px + 2] = flat ? 220 : 200 - y
     }
   }
   return Buffer.concat([
@@ -51,7 +49,9 @@ const PNG_140 = (() => {
     chunk('IDAT', deflateSync(rows)),
     chunk('IEND', Buffer.alloc(0)),
   ])
-})()
+}
+const PNG_140 = makePng(140, 90, false)
+const PNG_FLAT = makePng(140, 90, true)
 const PAGES = {
   '/shadow': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Shadow</h1><x-card></x-card>
@@ -80,6 +80,9 @@ const PAGES = {
   /* One picture and nothing else: a chart or a generated image is the answer. */
   '/pic': `<!doctype html><html><body style="margin:0;padding:24px">
     <img id="shot" src="/pic.png" width="140" height="90" alt="Chart"></body></html>`,
+  /* A chart that came back empty is the failure worth naming. */
+  '/flat': `<!doctype html><html><body style="margin:0;padding:24px">
+    <img id="blank" src="/flat.png" width="140" height="90" alt="Chart"></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
     <button onclick="document.title='beta clicked'">Beta sent</button>
@@ -174,6 +177,11 @@ const server = createServer((req, res) => {
   if (req.url.split('?')[0] === '/pic.png') {
     res.writeHead(200, { 'content-type': 'image/png' })
     res.end(PNG_140)
+    return
+  }
+  if (req.url.split('?')[0] === '/flat.png') {
+    res.writeHead(200, { 'content-type': 'image/png' })
+    res.end(PNG_FLAT)
     return
   }
   if (req.url.split('?')[0] === '/file') {
@@ -330,6 +338,11 @@ try {
   const grabWide = grabbedPng.readUInt32BE(16)
   const grabHigh = grabbedPng.readUInt32BE(20)
   line('grab-picture', grabWide === 140 && grabHigh === 90 && grabbed.includes('140x90'), `${Date.now() - grabbedAt} ms | ${grabbedFile.split('/').pop()} ${grabWide}x${grabHigh}`)
+  line('grab-detail', grabbed.includes('picture with detail'), grabbed.slice(grabbed.indexOf('140x90')))
+  await page.navigate(`${base}/flat`)
+  const flatAt = Date.now()
+  const flatSaid = String((await grabTool.execute({ name: 'picture-blank' })).text).trim()
+  line('grab-flat', flatSaid.includes('mostly one colour'), `${Date.now() - flatAt} ms | ${flatSaid.slice(flatSaid.indexOf('140x90'))}`)
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
