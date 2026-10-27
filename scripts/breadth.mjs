@@ -34,6 +34,7 @@ const PAGES = {
     <div class="box" style="margin-bottom:16px"><div class="lbl">Work email</div><input name="wk"></div>
     <div class="box"><div class="lbl">Team name</div><input name="tm"></div>
     <div class="box"><div class="lbl">Seats</div><select name="seats"><option value="1">One</option><option value="2">Two</option><option value="3">Three</option></select></div>
+    <div class="box"><div class="lbl">Birthday</div><div class="dp" style="position:relative;height:34px;border:1px solid #bbb;border-radius:6px"><input id="bd" type="text" style="position:absolute;inset:0;width:100%;height:100%;border:0;opacity:0"></div></div>
     <button type="submit">Send</button></form></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
@@ -250,6 +251,8 @@ try {
   const selectBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_select')
   const picked = String((await selectBare.execute({ field: 'Seats', value: 'Two' })).text)
   line('select-by-words', (await js(page, 'document.querySelector("select[name=seats]").value')) === '2' && picked.includes('chose Two in Seats'), picked.replace(/\n/g, ' / ').slice(0, 110))
+  const dateSaid = await bareDo.execute({ steps: [{ field: 'Birthday', text: '2001-02-03' }], read: 'none' })
+  line('do-field-behind', (await js(page, 'document.querySelector("#bd").value')) === '2001-02-03' && String(dateSaid.text).includes('typed into "Birthday"'), `${await js(page, 'document.querySelector("#bd").value')} | ${String(dateSaid.text).replace(/\n/g, ' / ').slice(0, 80)}`)
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')

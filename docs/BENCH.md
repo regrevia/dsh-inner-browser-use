@@ -290,3 +290,18 @@ the page reports as `Signin`.
 
 Exact equality still wins over the squeezed form, so `Sign in` never lands on
 `Sign up` when both exist.
+
+## Phase 13 — the field behind the box, 0.23.0
+
+`/bare` gains the date-picker shape: a visible rounded box with a transparent
+`<input>` laid over it, its words in a div two levels up.
+
+| what | before | now |
+| --- | --- | --- |
+| `{field: "Birthday"}` | not found, fell back to clicking the div | found the hidden input, clicked its visible box |
+| value after one `sidecar_do` step | whatever already had focus | `2001-02-03` in `#bd`, `typed into "Birthday"` |
+| extra round trips | read the page, guess a number | none |
+
+The visible-box rule: a candidate is usable when it, or its nearest visible
+ancestor, has a real box — so a 0-opacity input still counts if it covers
+something the person can see.

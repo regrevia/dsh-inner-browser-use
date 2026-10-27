@@ -206,3 +206,10 @@ Whitespace is normalised in both halves now (tool side and in-page side). Next
 in this line: the date/time box where the visible box is a div and the real
 input is hidden beside it, which needs the resolver to accept a hidden target
 and click the thing in front of it.
+
+## Phase 14 — behind the box, 0.23.0
+
+Both halves now resolve a name to a place: visible field, hidden field behind a
+visible box, words split over nodes, words outside the wrapper. Next: a page
+whose visible box is a `<canvas>` or an `<iframe>` — nothing in the tree to
+name, so the fallback has to be a picture plus a click, not a name lookup.

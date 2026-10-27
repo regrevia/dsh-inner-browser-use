@@ -675,6 +675,14 @@ const NAME_PRELUDE = `
     if (prev && editable(prev) !== true) add(prev.innerText ?? prev.textContent)
     const parent = el.parentElement
     if (parent && parent.querySelectorAll('input,textarea,select,[contenteditable=true]').length <= 1) add(parent.innerText ?? parent.textContent)
+    /* Wrapped a couple of levels deep (a styled box hiding a real input), the
+       words sit before the wrapper, not before the input. */
+    let up = parent
+    for (let depth = 0; depth < 3 && up; depth += 1) {
+      const before = up.previousElementSibling
+      if (before && editable(before) !== true) add(before.innerText ?? before.textContent)
+      up = up.parentElement
+    }
     /* The attribute is the last resort for a name on screen: it is often the
        developer's word for the field, not the one the user reads. */
     add(el.getAttribute('name'))
@@ -695,11 +703,20 @@ const NAME_PRELUDE = `
     }
     return { score, name }
   }
-  const bestOf = (selector, want) => {
+  const boxOf = (el) => {
+    for (let node = el; node; node = node.parentElement) {
+      const b = node.getBoundingClientRect()
+      if (b.width < 8 || b.height < 8) continue
+      const s = getComputedStyle(node)
+      if (s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) > 0.05) return b
+    }
+    return null
+  }
+  const bestOf = (selector, want, hiddenOk) => {
     let best = null
     for (const root of roots) {
       for (const el of root.querySelectorAll(selector)) {
-        if (shown(el) !== true) continue
+        if (hiddenOk !== true && shown(el) !== true) continue
         const hit = scored(el, want)
         if (hit.score === 0) continue
         if (best === null || hit.score > best.score) best = { el, score: hit.score, name: hit.name }
@@ -731,12 +748,22 @@ export function labelSpot(words) {
   const want = ${wanted}
   if (want === '') return JSON.stringify({})
   ${NAME_PRELUDE}
-  const best = bestOf('input,textarea,select,[contenteditable=""],[contenteditable=true],[role=textbox],[role=searchbox],[role=combobox]', want)
-  if (best === null) return JSON.stringify({})
+  const selector = 'input,textarea,select,[contenteditable=""],[contenteditable=true],[role=textbox],[role=searchbox],[role=combobox]'
+  let best = bestOf(selector, want)
+  let box = best === null ? null : boxOf(best.el)
+  let behind = false
+  if (best === null || box === null) {
+    /* The field a date picker shows is often a transparent box over a styled
+       div: the input stays out of sight, but the words still name it. */
+    const under = bestOf(selector, want, true)
+    const place = under === null ? null : boxOf(under.el)
+    if (under !== null && place !== null) { best = under; box = place; behind = true }
+  }
+  if (best === null || box === null) return JSON.stringify({})
   if (editable(best.el) !== true) return JSON.stringify({})
   best.el.scrollIntoView({ block: 'center', inline: 'nearest' })
-  const b = best.el.getBoundingClientRect()
-  return JSON.stringify({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), name: best.name, score: best.score })
+  const fresh = boxOf(best.el) ?? box
+  return JSON.stringify({ x: Math.round(fresh.left + fresh.width / 2), y: Math.round(fresh.top + fresh.height / 2), name: best.name, score: best.score, behind })
 })()`
 }
 

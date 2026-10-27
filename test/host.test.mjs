@@ -439,3 +439,12 @@ test('words split across inline nodes still name the same control', () => {
   assert.equal(squeeze('  Beta   sent '), squeeze('beta sent'))
   assert.notEqual(squeeze('Sign in'), squeeze('Sign up'))
 })
+
+test('the words can name a field that is hidden behind its box', async () => {
+  const { labelSpot } = await import('../read.js?v=1')
+  const expr = labelSpot('Birthday')
+  assert.match(expr, /boxOf/)
+  /* A picker that keeps its real input out of sight is still findable. */
+  assert.match(expr, /hiddenOk/)
+  assert.match(expr, /behind/)
+})
