@@ -216,7 +216,7 @@ async function main() {
   const holdReadAt = Date.now()
   await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 600 })
   const holdReadMs = Date.now() - holdReadAt
-  const holdTarget = holdState.refs.find((control) => control.kind === 'button')
+  const holdTarget = holdState.refs.find((control) => control.kind === 'btn')
   sidecar.humanUse({ kind: 'click', x: 40, y: 60 })
   const holdAt = Date.now()
   const held = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)

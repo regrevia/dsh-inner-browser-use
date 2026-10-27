@@ -633,3 +633,86 @@ export function sameThing(want, control) {
   if (want.href !== '' && String(control?.href ?? '') !== want.href) return false
   return true
 }
+
+/**
+ * The field a label belongs to, when nothing formally connects the two.
+ *
+ * `{field: "Email"}` used to mean "click the control that says Email". On a real
+ * form the words live in a div above a bare input, so the click landed on the
+ * text and the typing went wherever focus already was — the classic silent wrong
+ * field. This finds the *editable* element the words point at: a real label, an
+ * aria name, a placeholder, a name attribute, the text right before it, or the
+ * text of the small wrapper it sits in.
+ * @param {string} words - what the field is called.
+ * @returns {string} an expression that evaluates to a spot, or {} when nothing fits.
+ */
+export function labelSpot(words) {
+  const wanted = JSON.stringify(String(words ?? '').toLowerCase())
+  return `(() => {
+  const want = ${wanted}
+  if (want === '') return JSON.stringify({})
+  const roots = [document]
+  for (const el of document.querySelectorAll('*')) {
+    if (roots.length > 400) break
+    if (el.shadowRoot) roots.push(el.shadowRoot)
+  }
+  const norm = (s) => String(s ?? '').replace(/\\s+/g, ' ').trim()
+  const short = (s) => { const t = norm(s); return t !== '' && t.length <= 80 ? t : '' }
+  const editable = (el) => {
+    const tag = el.tagName
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+    if (tag === 'INPUT') {
+      const type = String(el.type ?? 'text').toLowerCase()
+      return !['hidden', 'button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(type)
+    }
+    if (el.isContentEditable === true) return true
+    return ['textbox', 'searchbox', 'combobox'].includes(String(el.getAttribute('role') ?? ''))
+  }
+  const shown = (el) => {
+    const b = el.getBoundingClientRect()
+    if (b.width < 2 || b.height < 2) return false
+    const s = getComputedStyle(el)
+    return s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity) > 0.05
+  }
+  const names = (el) => {
+    const out = []
+    const add = (v) => { const t = short(v); if (t !== '') out.push(t) }
+    if (el.labels) for (const l of el.labels) add(l.innerText ?? l.textContent)
+    for (const id of String(el.getAttribute('aria-labelledby') ?? '').split(/\\s+/).filter(Boolean)) {
+      const other = document.getElementById(id)
+      if (other) add(other.innerText ?? other.textContent)
+    }
+    add(el.getAttribute('aria-label'))
+    add(el.getAttribute('placeholder'))
+    add(el.getAttribute('title'))
+    add(el.getAttribute('name'))
+    if (el.id) for (const l of document.querySelectorAll('label[for]')) if (l.htmlFor === el.id) add(l.innerText ?? l.textContent)
+    const prev = el.previousElementSibling
+    if (prev && editable(prev) !== true) add(prev.innerText ?? prev.textContent)
+    const parent = el.parentElement
+    if (parent && parent.querySelectorAll('input,textarea,select,[contenteditable=true]').length <= 1) add(parent.innerText ?? parent.textContent)
+    return out
+  }
+  let best = null
+  for (const root of roots) {
+    for (const el of root.querySelectorAll('input,textarea,select,[contenteditable=""],[contenteditable=true],[role=textbox],[role=searchbox],[role=combobox]')) {
+      if (editable(el) !== true || shown(el) !== true) continue
+      let score = 0
+      let name = ''
+      for (const nm of names(el)) {
+        const low = nm.toLowerCase()
+        if (low === want) score = Math.max(score, 3)
+        else if (want.length >= 2 && low.includes(want)) score = Math.max(score, 2)
+        else if (low.length >= 3 && want.includes(low)) score = Math.max(score, 1)
+        if (score > 0 && name === '') name = nm
+      }
+      if (score === 0) continue
+      if (best === null || score > best.score) best = { el, score, name }
+    }
+  }
+  if (best === null) return JSON.stringify({})
+  best.el.scrollIntoView({ block: 'center', inline: 'nearest' })
+  const b = best.el.getBoundingClientRect()
+  return JSON.stringify({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), name: best.name, score: best.score })
+})()`
+}

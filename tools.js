@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -427,6 +427,23 @@ async function findWords(page, words) {
   return { ...hit, x: Number(spot.x), y: Number(spot.y) }
 }
 
+/** Kinds that take typed text, so a click on one is a click on a field. */
+const EDITABLE_KINDS = ['input', 'textarea', 'select', 'combobox', 'textbox', 'searchbox', 'password', 'search', 'email', 'number', 'tel', 'url', 'date']
+
+/**
+ * The field the words belong to, when the words are not on the field itself.
+ * @param {any} page - sidecar page.
+ * @param {string} words - what the field is called on screen.
+ * @returns {Promise<{x: number, y: number, name: string}|null>} where to click.
+ */
+async function fieldSpot(page, words) {
+  const said = await evaluate(page, labelSpot(words))
+  if (said.error !== undefined || said.result === undefined) return null
+  const spot = said.result
+  if (spot === undefined || spot === null || spot.name === undefined) return null
+  return { x: Number(spot.x), y: Number(spot.y), name: String(spot.name) }
+}
+
 /**
  * Where the control behind a ref is now, following it across a re-render.
  * The module-level sibling of findAgain, for runStep, which has no closure.
@@ -483,12 +500,34 @@ async function runStep(page, step, known) {
     return `${lead}clicked "${hit.name.slice(0, 60)}"`
   }
   if (step.field !== undefined) {
+    /* The words may sit on the field or in a div above a bare input. Only a
+       click that lands on the field itself can be trusted with the typing. */
     const hit = await findWords(page, String(step.field))
-    if (hit === null) return `no control says ${JSON.stringify(String(step.field))}`
-    const lead = await coverLead(page, hit.ref)
-    const spot = await locate(page, hit.ref)
-    if (spot.gone === true) return `ref ${String(hit.ref)}: ${REF_GONE}`
-    const point = { x: Number(spot.x), y: Number(spot.y) }
+    let lead = ''
+    let point = null
+    let called = ''
+    if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
+      lead = await coverLead(page, hit.ref)
+      const spot = await locate(page, hit.ref)
+      if (spot.gone !== true) {
+        point = { x: Number(spot.x), y: Number(spot.y) }
+        called = String(hit.name)
+      }
+    }
+    if (point === null) {
+      const field = await fieldSpot(page, String(step.field))
+      if (field !== null) {
+        point = { x: field.x, y: field.y }
+        called = field.name
+      }
+    }
+    if (point === null) {
+      if (hit === null) return `no control says ${JSON.stringify(String(step.field))}`
+      const spot = await locate(page, hit.ref)
+      if (spot.gone === true) return `ref ${String(hit.ref)}: ${REF_GONE}`
+      point = { x: Number(spot.x), y: Number(spot.y) }
+      called = String(hit.name)
+    }
     await page.mouse('mouseMoved', point)
     await page.mouse('mousePressed', { ...point, clickCount: 1 })
     await page.mouse('mouseReleased', { ...point, clickCount: 1 })
@@ -496,7 +535,7 @@ async function runStep(page, step, known) {
     if (step.clear === true) await clearFocus(page)
     await page.insertText(String(step.text ?? ''))
     if (step.submit === true) await pressKey(page, 'Enter')
-    return `${lead}typed into "${hit.name.slice(0, 60)}"`
+    return `${lead}typed into "${called.slice(0, 60)}"`
   }
   if (step.tap !== undefined) {
     const [x, y] = String(step.tap).split(',').map(Number)

@@ -460,7 +460,7 @@ try {
   const holdState = { last: undefined }
   const holdTools = sidecarTools(sidecar, holdState)
   await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })
-  const holdTarget = holdState.refs.find((c) => c.kind === 'button')
+  const holdTarget = holdState.refs.find((c) => c.kind === 'btn')
   sidecar.humanUse({ kind: 'click', x: 12, y: 12 })
   const heldRead = String((await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 200 })).text)
   line('hold-allows-read', /Something else/.test(heldRead) || heldRead.includes('button'), heldRead.replace(/\n/g, ' / ').slice(0, 120))
