@@ -174,3 +174,13 @@ Next in this direction: the drawing half could re-attach by itself. A tab that
 reloads re-subscribes on its own, but a tab that never loaded the half cannot be
 told to — that is a load-order problem, so the fix belongs in how the panel half
 is delivered, not in the wait.
+
+## Phase 10 — words are not where the field is, 0.19.0
+
+The tool used to treat "the control that says Email" as "the field called
+Email". Real forms separate the two, so the writing step now resolves the words
+to the element that takes text, and says which one it used.
+
+Next in this direction: the same resolution for `sidecar_type` when the caller
+names a field by its words instead of a ref, and for date/time pickers where the
+visible box is a div and the real input is hidden beside it.

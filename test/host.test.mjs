@@ -396,3 +396,13 @@ test('a browser nobody is drawing says so, and a drawn one says nothing', async 
   assert.equal(viewerNote(1), '', 'a tab is watching, so there is nothing to explain')
   assert.equal(viewerNote(3), '')
 })
+
+test('a field with its words in a div above it can still be found', async () => {
+  const { labelSpot } = await import('../read.js?v=1')
+  const expr = labelSpot('Work email')
+  assert.equal(typeof expr, 'string')
+  assert.match(expr, /scrollIntoView/)
+  assert.match(expr, /input,textarea,select/)
+  /* The words are data, never code: a quote in them must not break the probe. */
+  assert.ok(labelSpot('say "hi"').includes('say \\"hi\\"'))
+})

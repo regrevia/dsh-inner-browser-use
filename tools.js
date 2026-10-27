@@ -438,9 +438,9 @@ const EDITABLE_KINDS = ['input', 'textarea', 'select', 'combobox', 'textbox', 's
  */
 async function fieldSpot(page, words) {
   const said = await evaluate(page, labelSpot(words))
-  if (said.error !== undefined || said.result === undefined) return null
-  const spot = said.result
-  if (spot === undefined || spot === null || spot.name === undefined) return null
+  if (said === undefined || said === null || said.error !== undefined) return null
+  const spot = typeof said === 'string' ? JSON.parse(said) : said
+  if (spot === null || spot.name === undefined || spot.name === '') return null
   return { x: Number(spot.x), y: Number(spot.y), name: String(spot.name) }
 }
 
@@ -503,11 +503,12 @@ async function runStep(page, step, known) {
     /* The words may sit on the field or in a div above a bare input. Only a
        click that lands on the field itself can be trusted with the typing. */
     const hit = await findWords(page, String(step.field))
-    let lead = ''
+    /* A banner over the words covers the field too; clear it on whichever
+       control carries the words, then look for the field again. */
+    const lead = hit === null ? '' : await coverLead(page, hit.ref)
     let point = null
     let called = ''
     if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
-      lead = await coverLead(page, hit.ref)
       const spot = await locate(page, hit.ref)
       if (spot.gone !== true) {
         point = { x: Number(spot.x), y: Number(spot.y) }

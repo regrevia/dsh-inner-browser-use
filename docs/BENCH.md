@@ -232,3 +232,21 @@ Measured with `/tmp/probe-unseen.mjs` (tool layer, example.com, profile
 `probe-tool`): 1344 ms with nothing watching and no column asked for, 3236 ms in
 the first version of the same wait that did not skip the case where no column was
 ever requested — the whole difference was the wasted 1.2 s.
+
+## Phase 9 — finding the field behind the words, 0.19.0
+
+A read of a `/bare` form (two div labels, two bare inputs, no aria anywhere on
+the fields) and one `{field: "Work email"}` step:
+
+| what | result |
+| --- | --- |
+| the click lands on the field, not on the div | yes, value `me@x.y` in `input[name=wk]` |
+| the second, untouched field | still empty |
+| the tool's own words | `typed into "Work email"` |
+| worst case when nothing matches | one extra in-page query, then the old behaviour |
+
+The query walks the open shadow roots (capped at 400) and, per visible editable
+element, builds a list of candidate names from real labels, `aria-labelledby`,
+`aria-label`, `placeholder`, `title`, `name`, `label[for]`, the element right
+before it, and its wrapper's text — then scores exact (3) / contains (2) /
+reverse-contains (1).

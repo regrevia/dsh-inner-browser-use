@@ -28,6 +28,12 @@ const PAGES = {
     <span id="hint">Search the catalog</span><input aria-labelledby="hint">
     <label><input type="checkbox" name="agree"> I agree</label>
     <button type="submit">Send</button></form></body></html>`,
+  /* The words are in a div over a bare input: no label, no aria, no placeholder. */
+  '/bare': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <form onsubmit="event.preventDefault()">
+    <div class="box" style="margin-bottom:16px"><div class="lbl">Work email</div><input name="wk"></div>
+    <div class="box"><div class="lbl">Team name</div><input name="tm"></div>
+    <button type="submit">Send</button></form></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
     <button onclick="document.title='beta clicked'">Beta sent</button></body></html>`,
@@ -225,6 +231,17 @@ try {
     }
     line('form-submit', arrived, String(await js(page, 'location.href')))
   }
+
+  /* A label in a div, a bare input under it: clicking the words must still put
+     the typing in the field the words belong to, not wherever focus was. */
+  await page.navigate(`${base}/bare`)
+  const bareDo = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  const bareSaid = await bareDo.execute({ steps: [{ field: 'Work email', text: 'me@x.y' }], read: 'none' })
+  const bareValue = await js(page, 'document.querySelector("input[name=wk]").value')
+  const teamValue = await js(page, 'document.querySelector("input[name=tm]").value')
+  line('do-field-bare', bareValue === 'me@x.y' && teamValue === '', `${bareValue} | ${teamValue} | ${String(bareSaid.text).replace(/\n/g, ' / ').slice(0, 80)}`)
+  const teamSaid = await bareDo.execute({ steps: [{ field: 'Team name', text: 'core' }], read: 'none' })
+  line('do-field-bare-second', (await js(page, 'document.querySelector("input[name=tm]").value')) === 'core', String(teamSaid.text).slice(0, 80))
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
@@ -460,7 +477,7 @@ try {
   const holdState = { last: undefined }
   const holdTools = sidecarTools(sidecar, holdState)
   await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })
-  const holdTarget = holdState.refs.find((c) => c.kind === 'btn')
+  const holdTarget = holdState.refs.find((c) => ['btn', 'button'].includes(c.kind))
   sidecar.humanUse({ kind: 'click', x: 12, y: 12 })
   const heldRead = String((await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 200 })).text)
   line('hold-allows-read', /Something else/.test(heldRead) || heldRead.includes('button'), heldRead.replace(/\n/g, ' / ').slice(0, 120))

@@ -1,3 +1,10 @@
+## 0.19.0
+
+- **词在 div 里、输入框光秃秃的表单，现在能把字打进对的框。** 真实表单里 `<div class="label">Work email</div>` 底下跟一个没有任何 label / aria / placeholder 的 input，是极常见的一种写法（Ant Design、MUI、自绘表单都这样）。以前的 `{field: "Work email"}` 只会找「说这几个字的控件」，找到那个 div，点它——焦点没落到任何输入框，字就打在「原来有焦点的地方」，静默地错格。现在点之前先确认：命中控件本身能收文本就直接点；不能，就在页面里找这几个字真正对应的可编辑元素（真 label、aria-labelledby、aria-label、placeholder、name、紧跟在前面的文本、只包一个输入的父容器），滚到可见处再点。
+- **只装一层词也能对上，但不会乱点。** 名字完全相等记 3 分、包含 2 分、反向包含 1 分，取得分最高的可见字段；没有任何字段及格就回到老路，并且结果文字里写明打进了哪个字段（`typed into "Work email"`），错格至少看得见，不再无声。
+- 遮罩依旧先清：横幅盖住词也盖住字段，所以「清遮罩」用的是带字的那个控件，清完再找字段。0.17.1 那条 `after Accept on a banner, typed into "Note"` 仍然成立。
+- 测试：44 条单测（新增 `labelSpot`：词只当数据不当代码，引号不会破坏探测）；广度 45 条全真，新增两条真页面检查 `do-field-bare` / `do-field-bare-second`——`/bare` 页里两个 div 标签加裸 input，第一步打第一个框、断言第二个框仍是空，第二步打第二个框。
+
 ## 0.18.0
 
 - **右栏没在画的时候，浏览器会自己说出来。** 镜像是「发起会话右栏里的那块画面」，而画它的那一半是跟着页面加载进来的：插件是在本页载入之后才装好的话，那一半根本没加载，于是浏览器照常在跑、化学元素照常在读，人却在屏幕上找不到任何画面——`sidecar_state` 只给一行 `viewers 0`，读起来像 bug，不像「刷新一下就对了」。这一轮就是从这个坑里出来的：本会话正是这样，浏览器开着、能读能点，右栏一片空。现在 `sidecar_open` 与 `sidecar_state` 在没人画的时候直接写清：`Nothing is drawing the mirror in the column yet — this page was loaded before the mirror was, so refresh it once. The window on screen is the same browser.` 一句话说清「画面在哪、为什么没有、怎么出」。

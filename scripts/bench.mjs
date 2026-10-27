@@ -216,7 +216,10 @@ async function main() {
   const holdReadAt = Date.now()
   await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 600 })
   const holdReadMs = Date.now() - holdReadAt
-  const holdTarget = holdState.refs.find((control) => control.kind === 'btn')
+  if (!Array.isArray(holdState.refs) || holdState.refs.length === 0) {
+    emit('hold', { skipped: 'no controls after the read', refs: Array.isArray(holdState.refs) ? 0 : -1 })
+  }
+  const holdTarget = (holdState.refs ?? []).find((control) => ['btn', 'button'].includes(control.kind)) ?? { ref: 1 }
   sidecar.humanUse({ kind: 'click', x: 40, y: 60 })
   const holdAt = Date.now()
   const held = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
