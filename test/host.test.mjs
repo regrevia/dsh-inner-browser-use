@@ -115,6 +115,28 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve))
 })
 
+test('a second mount of the same tools is a warning, not a crash', () => {
+  const taken = new Set(defs.keys())
+  const strict = {
+    ...context(),
+    logger: { info() {}, warn() {} },
+    get: (name) => (name === 'systemPrompt' ? { section() { return () => {} } } : undefined),
+    inject(names, callback) {
+      callback({
+        effect: (effect) => effect(),
+        tools: {
+          register(definition) {
+            if (taken.has(definition.name)) throw new Error('tool already registered')
+            taken.add(definition.name)
+            return () => {}
+          },
+        },
+      })
+    },
+  }
+  assert.doesNotThrow(() => apply(strict), 'the surface goes up even when every name is taken')
+})
+
 test('registers the sidecar tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
     'sidecar_ask',
@@ -194,6 +216,16 @@ test('a mirror asked for while the chat was away arrives when it comes back', ()
   const elsewhere = sink('elsewhere')
   other.attach('chat-4', elsewhere)
   assert.equal(elsewhere.frames.length, 0, 'another chat never receives this one\'s mirror')
+})
+
+test('a tab closed on purpose is not reopened on return', () => {
+  const bridge = new Bridge()
+  bridge.want('chat-1')
+  assert.equal(bridge.forget('chat-1'), true)
+  const seat = { frames: [], end() {}, write(frame) { this.frames.push(frame) } }
+  bridge.attach('chat-1', seat)
+  assert.equal(seat.frames.length, 0, 'the ask was withdrawn with the tab')
+  assert.equal(bridge.forget('chat-2'), false, 'another chat has nothing to forget')
 })
 
 test('a second stream for one chat replaces the first', () => {

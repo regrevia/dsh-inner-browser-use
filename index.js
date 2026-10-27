@@ -134,6 +134,17 @@ export class Bridge {
     return [...this.seats.keys()]
   }
 
+  /**
+   * Forget a mirror nobody is waiting for any more.
+   * @param {string} sessionId - chat that closed its tab.
+   * @returns {boolean} whether the ask was the remembered one.
+   */
+  forget(sessionId) {
+    if (sessionId === '' || this.wanted.session !== sessionId) return false
+    this.wanted = { session: '', at: 0 }
+    return true
+  }
+
   /** Close every stream. */
   dispose() {
     for (const res of this.seats.values()) res.end()
@@ -348,6 +359,12 @@ export function apply(ctx) {
       return
     }
 
+    if (path === '/sidecar/forget' && req.method === 'POST') {
+      /* Closing the tab is an answer: coming back should not reopen it. */
+      json(200, { ok: true, forgot: bridge.forget(sessionId) })
+      return
+    }
+
     if (path === '/sidecar/stop' && req.method === 'POST') {
       await sidecar.shutdown()
       json(200, { ok: true })
@@ -387,7 +404,17 @@ export function apply(ctx) {
       want: (sessionId) => {
         bridge.want(sessionId)
       },
-    }).map((definition) => scope.tools.register(definition))
+    }).map((definition) => {
+      /* A reload can mount this surface twice before the old one is torn down.
+         A name already in the registry is kept, not fought over: a duplicate
+         registration is a warning, never a crash. */
+      try {
+        return scope.tools.register(definition)
+      } catch (error) {
+        ctx.logger?.warn?.(`browser tool ${definition.name} already registered: ${String(error?.message ?? error)}`)
+        return () => {}
+      }
+    })
     scope.effect(() => () => {
       for (const dispose of disposers) dispose()
     }, 'dsh-inner-browser-use: tool surface')

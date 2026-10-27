@@ -84,6 +84,9 @@ window.__ModuleLoader__.load({
           /* one locale service or none */
         }
         ctx.effect(() => {
+          /* A reload keeps one sheet, not one per lifetime: the same id is
+             replaced instead of stacked. */
+          document.getElementById?.(STYLE_ID)?.remove()
           const style = document.createElement('style')
           style.id = STYLE_ID
           /* A sheet is keyed by the plugin that brought it. */
@@ -109,6 +112,12 @@ window.__ModuleLoader__.load({
             }
           }
           const closeHere = (sessionId) => {
+            /* A tab the person closed is not a tab they want back on return. */
+            try {
+              void fetch(`${ROUTE}/sidecar/forget?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }) // ui-copy-ignore
+            } catch {
+              /* a page that cannot hear it keeps its note */
+            }
             let records = []
             try {
               records = surface?.tabsIn?.(sessionId) ?? []
@@ -138,14 +147,23 @@ window.__ModuleLoader__.load({
               /* a column that refuses keeps its own tabs */
             }
           }
-          disposers.push(tabs.register({
+          /* The same rule on this side: a second mount of the same tab is a
+             no-op, not a thrown error that takes the pane down. */
+          const safely = (register) => {
+            try {
+              return register()
+            } catch (error) {
+              return () => {}
+            }
+          }
+          disposers.push(safely(() => tabs.register({
             id: SIDE_ID, // ui-copy-ignore
             kind: SIDE_KIND, // ui-copy-ignore
             keepMounted: true,
             single: true,
             priority: 'extension',
             title: () => L('side.label'),
-          }))
+          })))
           disposers.push(scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore
             key: SIDE_ID, // ui-copy-ignore
