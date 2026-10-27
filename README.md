@@ -95,8 +95,8 @@ In the app: **Plugins → Install from folder**, and pick the clone. To install 
 tarball instead, build it from that directory and install the file:
 
 ```bash
-npm pack                                  # writes dsh-inner-browser-use-0.13.3.tgz
-dsh plugin install ./dsh-inner-browser-use-0.13.3.tgz
+npm pack                                  # writes dsh-inner-browser-use-0.13.4.tgz
+dsh plugin install ./dsh-inner-browser-use-0.13.4.tgz
 ```
 
 The plugin appears under **Plugins** as *Background browser*. It needs Google Chrome or

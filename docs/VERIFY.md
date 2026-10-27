@@ -87,6 +87,21 @@ still hold the cookies.
   内置浏览器 means the page half is stale: reload the GUI page.
 - Guest-era logins are not migrated; sign in once in the new profile.
 
+## Live
+
+`node scripts/live.mjs` does the same work on the open internet, with no local
+fixture: it opens `example.com` (752 ms), reads it, clicks the language link on
+`wikipedia.org` and lands on `en.wikipedia.org` (11.8 s, the page's own load
+included), goes back (URL back to `wikipedia.org`), reads ten list items out of
+the Web scraping article in one call (2 ms, 1813 chars), and types into the
+Wikipedia search box then presses Enter (5.3 s to a results URL). Six JSON
+lines; six `true` is the bar. A site being unreachable is reported as such and
+is not a plugin failure — the run says which site and how long it waited.
+
+None of the numbers are the plugin's own latency: they are dominated by the
+site and the network, which is the point of having them next to the local
+measurements in [BENCH.md](BENCH.md).
+
 ## Breadth
 
 `node scripts/breadth.mjs` drives a shadow-DOM component, a form (type, select,

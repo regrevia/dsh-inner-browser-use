@@ -102,6 +102,16 @@ answer), and a read now also asks for the frame tree.
 against 1291 chars for the same page read as text — and at a 500-char read
 budget the text read stops around row 12 while the list still returns 30.
 
+Live run (`npm run live`), 6 checks, all true on the open internet: open
+example.com in 752 ms, read it for 785 chars, click the language link on
+wikipedia.org and land on en.wikipedia.org in 11.8 s, go back to
+www.wikipedia.org, extract ten list rows from the Web scraping article in 2 ms
+(1813 chars), type into the Wikipedia search box and reach a results URL in
+5.3 s. These are wall-clock end to end including the site's own load; the
+local numbers below are where the driver's own cost lives. Hacker News was
+unreachable from this machine (12 s connect timeout, confirmed with curl), so
+the list check uses Wikipedia.
+
 Breadth run (`npm run breadth`), 31 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
 iframe read, iframe typing, iframe click, cross-site frame read and click,

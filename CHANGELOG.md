@@ -1,3 +1,9 @@
+## 0.13.4
+
+- **工具在真实网站上跑通了，不只是本地夹具。** 新增 `scripts/live.mjs`（`npm run live`）：不开本地服务器，直接走公网——打开 example.com（752 ms）、读它、在 wikipedia.org 上按文字点语言链接落到 en.wikipedia.org（11.8 s，含页面自己加载的时间）、返回后 URL 回到 wikipedia.org、一次调用从「Web scraping」条目里读出十条列表（2 ms、1813 字符）、在维基搜索框里输入并回车（5.3 s 到结果页）。6 条全真。数字主要被网站和网络占掉，正因为如此才和 [BENCH.md](docs/BENCH.md) 里的本地延迟放在一起看。
+- 这一步也顺手证明了按文字点击在真实页面上成立：维基首页的语言链接渲染出来是「English — Wikipedia — The Free」，带上后面的说明文字也能点到；本地点选夹具里没有这种拼在一起的控件名。
+- 站点连不上会如实写成「某站在 30 秒内没有回应」，不算插件失败；今天这台机器上 Hacker News 就属于这一类，于是列表检查改用维基条目。
+
 ## 0.13.3
 
 - **点了没反应，现在会说是谁挡着。** 真实网站上最常见的失败不是点不到，而是点到了：cookie 横幅、遮罩弹层盖在按钮上，坐标对了、点击也真的发出去了，页面却毫无变化。`sidecar_click` 和 `sidecar_type` 在按下去之前先问页面「这个点上最上面的是谁」，如果那不是目标控件也不在它里面，工具结果末尾会多一行「an overlay covers it: We use cookies to remember you. Accept — the click landed beneath it」。模型于是知道该先关横幅，而不是把同一次点击重试到超时。
