@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, bounds, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -1287,7 +1287,18 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (args?.ref !== undefined) {
           const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return REF_GONE
-          clip = { x: Math.max(0, Number(spot.x) - 20), y: Math.max(0, Number(spot.y) - 20), width: 220, height: 140 }
+          /* The picture is of the control, not of a guess around its middle:
+             a canvas can be most of the page, a checkbox a few pixels. */
+          const box = await evaluate(page, bounds(Number(args.ref)))
+          const rect = typeof box === 'string' ? JSON.parse(box) : box
+          if (rect?.gone === true) return REF_GONE
+          const pad = 8
+          clip = {
+            x: Math.max(0, Math.round(Number(rect.x) - pad)),
+            y: Math.max(0, Math.round(Number(rect.y) - pad)),
+            width: Math.max(8, Math.round(Number(rect.width) + pad * 2)),
+            height: Math.max(8, Math.round(Number(rect.height) + pad * 2)),
+          }
         }
         const data = await page.shot({ full: args?.full === true, rect: clip, scale })
         const dir = join(homedir(), SHOT_DIR)

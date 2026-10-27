@@ -448,3 +448,11 @@ test('the words can name a field that is hidden behind its box', async () => {
   assert.match(expr, /hiddenOk/)
   assert.match(expr, /behind/)
 })
+
+test('a drawing surface can be pictured on its own', async () => {
+  const { bounds } = await import('../read.js?v=1')
+  const expr = bounds(7)
+  assert.match(expr, /getBoundingClientRect/)
+  assert.match(expr, /scrollIntoView/)
+  assert.match(expr, /width: b\.width/)
+})

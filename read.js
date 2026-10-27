@@ -43,6 +43,9 @@ const SELECTOR = [
   '[role="option"]',
   '[role="textbox"]',
   '[role="searchbox"]',
+  /* A drawing surface has no words in the tree, but it is the whole page in
+     some products: number it, and let a picture be taken of it. */
+  'canvas',
 ].join(',')
 
 /** How a role is written in the compact read: short enough to cost little. */
@@ -133,6 +136,10 @@ function snapshot(mode, budget, max) {
     const own = named || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.getAttribute?.('placeholder') || ''
     const text = String(el.innerText ?? '').replace(/\\s+/g, ' ').trim()
     const value = el.tagName === 'INPUT' && el.type !== 'password' ? String(el.value ?? '') : ''
+    if (el.tagName === 'CANVAS' && label === '' && own === '' && text === '' && value === '') {
+      const b = el.getBoundingClientRect()
+      return 'drawing ' + Math.round(b.width) + 'x' + Math.round(b.height)
+    }
     return String(label || own || text || value || el.getAttribute?.('alt') || el.getAttribute?.('name') || '').replace(/\\s+/g, ' ').trim().slice(0, 140)
   }
   const box = (el) => el.getBoundingClientRect()
@@ -275,6 +282,25 @@ export function resolve(ref) {
   const after = el.getBoundingClientRect()
   const s = getComputedStyle(el)
   return JSON.stringify({ gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true })
+})()`
+}
+
+/**
+ * How big the control is and where it sits, so a picture can be of it alone.
+ * @param {number} ref - ref from a read.
+ * @returns {string} an expression that answers with the rectangle.
+ */
+export function bounds(ref) {
+  return `(() => {
+  const reg = window.${REGISTRY}
+  if (!reg) return JSON.stringify({ gone: true })
+  const hit = reg.find(${Number(ref)})
+  if (!hit) return JSON.stringify({ gone: true })
+  const el = hit.el
+  if (el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'center' })
+  const b = el.getBoundingClientRect()
+  if (b.width < 2 || b.height < 2) return JSON.stringify({ gone: true, off: true })
+  return JSON.stringify({ gone: false, x: b.left, y: b.top, width: b.width, height: b.height })
 })()`
 }
 
