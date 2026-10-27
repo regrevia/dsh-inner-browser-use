@@ -131,11 +131,21 @@ browser without pulling the column away from the person reading it.
 
 ## Tool surface
 
-`sidecarTools()` in `index.js` builds the eight definitions and registers them on the
-plugin's tool scope. All of them return one text block. A page read renumbers the controls and
-replaces the ref list, so `sidecar_click` by number means the read the model last saw.
-Calls that touch the browser are marked not concurrency-safe, and `sidecar_open` and
-`sidecar_view` carry longer timeouts than the rest.
+`sidecarTools()` in `tools.js` builds the 23 definitions and `index.js` registers them on the
+plugin's tool scope. All of them return one text block. A page read numbers the controls and
+keeps those numbers across later reads, so `sidecar_click` by ref means the element the model
+last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
+
+An action answers with one line — address, title, focused field — and reads the page only when
+`read: true` is passed. That is what keeps a long batch cheap (see `BENCH.md`).
+
+Calls that touch the browser are marked not concurrency-safe; reading state, console and failed
+requests is. `sidecar_open`, `sidecar_view`, `sidecar_wait` and `sidecar_shot` carry longer
+timeouts than the rest.
+
+Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,
+which Chrome would otherwise drop on exit — are saved next to it and restored on the next
+launch, so a restart of the app does not sign the person out.
 
 A system-prompt section (`browser-in-this-chat`) tells the model to reach for these tools
 without asking first when someone wants something done on a site.

@@ -244,10 +244,10 @@ test('a key reaches the browser as itself, and a composed word as text', () => {
   const plain = (key, keyCode) => ({ key, code: key, keyCode, isComposing: false, metaKey: false, ctrlKey: false, altKey: false, preventDefault() {} }) // ui-copy-ignore
 
   stage.props.onKeyDown(plain('Backspace', 8))
-  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Backspace', code: 'Backspace', keyCode: 8 })
+  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Backspace', code: 'Backspace', keyCode: 8, session: 'chat-shown' })
 
   stage.props.onKeyDown(plain('Enter', 13))
-  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Enter', code: 'Enter', keyCode: 13 })
+  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Enter', code: 'Enter', keyCode: 13, session: 'chat-shown' })
 
   /* A key the IME is still composing is its own, not the page's. */
   const held = plain('a', 65)
@@ -258,7 +258,7 @@ test('a key reaches the browser as itself, and a composed word as text', () => {
 
   /* The composed word travels once, and the field empties. */
   field.props.onCompositionEnd({ data: '你好' })
-  assert.deepEqual(posts.at(-1).body, { kind: 'text', text: '你好' })
+  assert.deepEqual(posts.at(-1).body, { kind: 'text', text: '你好', session: 'chat-shown' })
 })
 
 test('hover carries the page cursor, and only a cursor the pane knows is applied', () => {

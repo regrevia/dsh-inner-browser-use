@@ -114,14 +114,29 @@ after(async () => {
 
 test('registers the sidecar tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
+    'sidecar_check',
     'sidecar_click',
+    'sidecar_clipboard',
+    'sidecar_console',
+    'sidecar_cookie',
+    'sidecar_dialog',
+    'sidecar_do',
+    'sidecar_drag',
+    'sidecar_eval',
+    'sidecar_failed',
+    'sidecar_hover',
     'sidecar_key',
+    'sidecar_nav',
     'sidecar_open',
+    'sidecar_pdf',
     'sidecar_scroll',
+    'sidecar_select',
     'sidecar_shot',
     'sidecar_state',
     'sidecar_type',
+    'sidecar_upload',
     'sidecar_view',
+    'sidecar_wait',
   ])
   for (const [name, definition] of defs) {
     assert.ok(name.startsWith('sidecar_'), `${name} drives its own browser`)
@@ -130,7 +145,7 @@ test('registers the sidecar tools and nothing else', () => {
     assert.deepEqual(definition.output.schema.required, ['text'])
     assert.deepEqual(definition.output.render({}, { text: 'hi' }), [{ type: 'text', text: 'hi' }])
     /* Reading where the sidecar stands is safe anywhere; driving it is not. */
-    assert.equal(definition.isConcurrencySafe(), name === 'sidecar_state')
+    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_console', 'sidecar_failed'].includes(name))
   }
 })
 
@@ -191,6 +206,28 @@ test('a state read on a stopped sidecar says so without starting one', async () 
   assert.equal(state.alive, false)
   assert.equal(state.profile, 'default')
   assert.equal(state.url, '')
+})
+
+test('the mirror belongs to one chat until another one asks', () => {
+  const bridge = new Bridge()
+  assert.equal(bridge.owner, '', 'no chat owns it before anyone asks')
+  bridge.claim('chat-a')
+  assert.equal(bridge.owner, 'chat-a')
+  bridge.claim('chat-b')
+  assert.equal(bridge.owner, 'chat-b', 'a later ask takes the mirror, it is never shared')
+  bridge.claim('')
+  assert.equal(bridge.owner, 'chat-b', 'an ask with no chat takes nothing')
+})
+
+test('a state read reports which chat owns the mirror', async () => {
+  const state = await call('/sidecar/state').then((response) => response.json())
+  assert.equal(state.owner, '')
+})
+
+test('an ask that cannot name its chat is refused before a browser starts', async () => {
+  const response = await call('/sidecar/open', { method: 'POST', body: JSON.stringify({ url: 'https://example.com' }) })
+  assert.equal(response.status, 400)
+  assert.equal((await response.json()).text, 'which chat asked for it')
 })
 
 test('stopping a browser that never started is a no-op', async () => {

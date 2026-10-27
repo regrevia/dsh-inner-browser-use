@@ -6,7 +6,7 @@
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -148,23 +148,69 @@ export class SidecarPage {
     this.pointerSinks = new Set()
     this.latest = ''
     this.seq = 0
+    /* Total JPEG bytes seen, for the bench and for noticing when a page got
+       expensive to watch. */
+    this.bytes = 0
     this.pointer = { x: VIEW.width / 2, y: VIEW.height / 2 }
     this.url = ''
     this.title = ''
     this.casting = false
     this.inflight = 0
     this.touched = Date.now()
+    /* A dialog blocks the page until someone answers it, so it is state, not an
+       event: the driver can look at it before deciding. */
+    this.dialog = null
+    this.console = []
+    this.failed = []
+  }
+
+  /**
+   * Record the page events that matter to a driver: dialogs, console lines and
+   * failed requests. Buffers are capped so a chatty page cannot grow memory.
+   * @param {any} message - one CDP message.
+   */
+  watch(message) {
+    if (message.method === 'Page.javascriptDialogOpening') {
+      this.dialog = message.params ?? {}
+      return
+    }
+    if (message.method === 'Page.javascriptDialogClosed') {
+      this.dialog = null
+      return
+    }
+    if (message.method === 'Runtime.exceptionThrown') {
+      const detail = message.params?.exceptionDetails ?? {}
+      this.console.push({ type: 'error', text: String(detail.exception?.description ?? detail.text ?? '').slice(0, 300) })
+      if (this.console.length > 200) this.console.splice(0, 50)
+      return
+    }
+    if (message.method === 'Runtime.consoleAPICalled') {
+      const params = message.params ?? {}
+      const text = (params.args ?? []).map((arg) => String(arg.value ?? arg.description ?? '')).join(' ').slice(0, 300)
+      this.console.push({ type: String(params.type ?? 'log'), text })
+      if (this.console.length > 200) this.console.splice(0, 50)
+      return
+    }
+    if (message.method === 'Network.loadingFailed') {
+      const params = message.params ?? {}
+      if (params.canceled === true) return
+      this.failed.push({ error: String(params.errorText ?? ''), type: String(params.type ?? '') })
+      if (this.failed.length > 100) this.failed.splice(0, 25)
+    }
   }
 
   /** Keep one listener that fans frames out to every viewer. */
   async start() {
+    await this.cdp.send('Network.enable').catch(() => {})
     this.cdp.on((message) => {
+      this.watch(message)
       if (message.method !== 'Page.screencastFrame') return
       const { data, sessionId, metadata } = message.params ?? {}
       void this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
       if (typeof data !== 'string' || data === '') return
       this.latest = data
       this.seq += 1
+      this.bytes += data.length
       if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
       if (this.inflight >= MAX_INFLIGHT_FRAMES) return
       this.inflight += 1
@@ -194,6 +240,12 @@ export class SidecarPage {
       if (message.method === 'Page.loadEventFired') void this.readTitle()
     })
     await this.cdp.send('Page.enable')
+    /* An instance left behind by a stopped app can still be sitting on a
+       dialog; a paused renderer answers nothing, so clear it first. */
+    await Promise.race([
+      this.cdp.send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 800)),
+    ])
     await this.cdp.send('Runtime.enable')
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: VIEW.width, // ui-copy-ignore
@@ -218,10 +270,12 @@ export class SidecarPage {
 
   async readTitle() {
     try {
-      const { result } = await this.cdp.send('Runtime.evaluate', {
+      const call = this.cdp.send('Runtime.evaluate', {
         expression: 'JSON.stringify({url: location.href, title: document.title})',
         returnByValue: true,
       })
+      const answer = await Promise.race([call, new Promise((resolve) => setTimeout(resolve, 1500))])
+      const result = answer?.result
       const value = JSON.parse(String(result?.value ?? '{}'))
       this.url = String(value.url ?? this.url)
       this.title = String(value.title ?? this.title)
@@ -330,8 +384,22 @@ export class SidecarPage {
    * @param {{x: number, y: number}} point - where the hand is, in viewport pixels.
    * @returns {Promise<string>} the cursor shape the page shows under it.
    */
+  /**
+   * Send one input event and do not wait on a renderer that a dialog or a long
+   * task has paused. The event still lands; only the acknowledgement is dropped.
+   * @param {string} method - Input.* method.
+   * @param {object} params - its parameters.
+   * @returns {Promise<void>} done when sent or when the wait gives up.
+   */
+  async input(method, params) {
+    await Promise.race([
+      this.cdp.send(method, params).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 1200)),
+    ])
+  }
+
   async hover(point) {
-    await this.cdp.send('Input.dispatchMouseEvent', {
+    await this.input('Input.dispatchMouseEvent', {
       type: 'mouseMoved', // ui-copy-ignore
       x: Math.round(point.x),
       y: Math.round(point.y),
@@ -350,7 +418,7 @@ export class SidecarPage {
    */
   async mouse(type, point) {
     this.movePointer(point)
-    await this.cdp.send('Input.dispatchMouseEvent', {
+    await this.input('Input.dispatchMouseEvent', {
       type,
       x: point.x,
       y: point.y,
@@ -367,7 +435,7 @@ export class SidecarPage {
    */
   async wheel(args) {
     this.movePointer(args)
-    await this.cdp.send('Input.dispatchMouseEvent', {
+    await this.input('Input.dispatchMouseEvent', {
       type: 'mouseWheel', // ui-copy-ignore
       x: args.x, // ui-copy-ignore
       y: args.y, // ui-copy-ignore
@@ -384,7 +452,7 @@ export class SidecarPage {
    */
   async key(type, key) {
     this.touched = Date.now()
-    await this.cdp.send('Input.dispatchKeyEvent', {
+    await this.input('Input.dispatchKeyEvent', {
       type: key.text === undefined || key.text === '' ? type : (type === 'keyDown' ? 'keyDown' : type),
       key: key.key, // ui-copy-ignore
       code: key.code ?? '', // ui-copy-ignore
@@ -399,7 +467,7 @@ export class SidecarPage {
   /** @param {string} text - any unicode, including Chinese. @returns {Promise<void>} resolves when typed. */
   async insertText(text) {
     this.touched = Date.now()
-    await this.cdp.send('Input.insertText', { text })
+    await this.input('Input.insertText', { text })
   }
 
   /** @returns {Promise<string>} a full-size screenshot as base64 PNG. */
@@ -409,7 +477,117 @@ export class SidecarPage {
     return String(data ?? '')
   }
 
+  /**
+   * @param {{full?: boolean, rect?: {x: number, y: number, width: number, height: number}, scale?: number}} [options] - what to capture.
+   * @returns {Promise<string>} base64 PNG; `full` ignores the viewport.
+   */
+  async shot(options = {}) {
+    this.touched = Date.now()
+    /** @type {any} */
+    const args = { format: 'png' }
+    if (options.rect) {
+      args.clip = { ...options.rect, scale: options.scale ?? 1 }
+      args.captureBeyondViewport = options.full === true
+    } else if (options.full === true) {
+      const { result } = await this.cdp.send('Runtime.evaluate', {
+        expression: 'JSON.stringify({w: Math.max(document.documentElement.scrollWidth, innerWidth), h: Math.max(document.documentElement.scrollHeight, innerHeight)})',
+        returnByValue: true,
+      })
+      const size = JSON.parse(String(result?.value ?? '{"w":1440,"h":900}'))
+      args.clip = { x: 0, y: 0, width: Math.min(size.w, 8000), height: Math.min(size.h, 20000), scale: options.scale ?? 1 }
+      args.captureBeyondViewport = true
+    }
+    const { data } = await this.cdp.send('Page.captureScreenshot', args)
+    return String(data ?? '')
+  }
+
+  /** @returns {Promise<string>} base64 PDF of the whole document. */
+  async pdf() {
+    this.touched = Date.now()
+    const { data } = await this.cdp.send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true })
+    return String(data ?? '')
+  }
+
+  /** Allow the page to use the clipboard; without this the API rejects. */
+  async allowClipboard() {
+    let origin = 'http://localhost'
+    try {
+      origin = new URL(this.url).origin
+    } catch {
+      /* a blank page has no origin yet */
+    }
+    await this.cdp.send('Browser.grantPermissions', {
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      origin,
+    }).catch(() => {})
+  }
+
+  /** @returns {Promise<string>} clipboard text, or an empty string when the page cannot read it. */
+  async clipboardRead() {
+    await this.allowClipboard()
+    const { result } = await this.cdp.send('Runtime.evaluate', {
+      expression: 'navigator.clipboard.readText().then((text) => JSON.stringify({ text }))',
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+    })
+    try {
+      return String(JSON.parse(String(result?.value ?? '{"text":""}')).text ?? '')
+    } catch {
+      return ''
+    }
+  }
+
+  /** @param {string} text - what to put on the clipboard. @returns {Promise<void>} resolves when written. */
+  async clipboardWrite(text) {
+    await this.allowClipboard()
+    await this.cdp.send('Runtime.evaluate', {
+      expression: `navigator.clipboard.writeText(${JSON.stringify(text)}).then(() => true)`,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+    })
+  }
+
   /** @param {number} sessionId - the screencast frame being acknowledged. */
+  /**
+   * The cookies this profile holds, newest state, straight from the browser.
+   * @param {string[]} [urls] - only cookies the given addresses would send.
+   * @returns {Promise<Array<{name: string, value: string, domain: string, path: string, secure: boolean, httpOnly: boolean}>>} cookies.
+   */
+  async cookies(urls) {
+    if (Array.isArray(urls) && urls.length > 0) {
+      const { cookies: found } = await this.cdp.send('Network.getCookies', { urls })
+      return found ?? []
+    }
+    const { cookies: all } = await this.cdp.send('Network.getAllCookies')
+    return all ?? []
+  }
+
+  /**
+   * @param {{name: string, value: string, domain?: string, path?: string, secure?: boolean, httpOnly?: boolean, sameSite?: string}} cookie - what to keep.
+   * @returns {Promise<{ok: boolean, reason?: string}>} whether the browser took it.
+   */
+  async setCookie(cookie) {
+    const params = {
+      name: cookie.name, // ui-copy-ignore
+      value: cookie.value, // ui-copy-ignore
+      path: cookie.path ?? '/', // ui-copy-ignore
+      secure: cookie.secure === true,
+      httpOnly: cookie.httpOnly === true,
+    }
+    if (cookie.domain !== undefined) params.domain = cookie.domain
+    else params.url = this.url
+    if (cookie.sameSite !== undefined) params.sameSite = cookie.sameSite
+    const answer = await this.cdp.send('Network.setCookie', params)
+    return { ok: answer?.success === true, reason: String(answer?.error ?? '') }
+  }
+
+  /** @returns {Promise<void>} drops every cookie in this profile. */
+  async clearCookies() {
+    await this.cdp.send('Network.clearBrowserCookies')
+  }
+
   async ack(sessionId) {
     await this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
   }
@@ -422,6 +600,11 @@ export class SidecarPage {
  * person out, so an already-running sidecar is adopted through its port file // ui-copy-ignore
  * instead of being spawned again.
  */
+/** Where a profile keeps the cookies a browser would otherwise drop on exit. */
+function sessionJar(dir) {
+  return join(dir, 'session-cookies.json') // ui-copy-ignore
+}
+
 export class Sidecar {
   /** @param {{logger?: any}} options - logging. */
   constructor(options = {}) {
@@ -429,7 +612,9 @@ export class Sidecar {
     this.child = null
     this.cdp = null
     this.page = null
-    this.profile = 'default'
+    /* A measurement or a test may want a profile of its own; the person's
+       browser keeps the default one. */
+    this.profile = String(options.profile ?? 'default')
     this.headless = true
     this.starting = null
     this.idle = null
@@ -475,6 +660,7 @@ export class Sidecar {
     await cdp.ready
     this.cdp = cdp
     this.page = await new SidecarPage(cdp, this.profile).start()
+    await this.restoreSessionCookies()
     await this.page.cast()
     if (url !== undefined && url !== '') await this.page.navigate(url)
     this.touch()
@@ -526,6 +712,12 @@ export class Sidecar {
          this browser is meant to come back; the profile itself is the state. */
       '--hide-crash-restore-bubble',
       '--disable-session-crashed-bubble',
+      /* A background page is throttled to about one frame a second, and the
+         mirror would show a slideshow: nothing here is background work. */
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-ipc-flooding-protection',
       '--metrics-recording-only',
       '--no-service-autorun',
       '--password-store=basic',
@@ -614,6 +806,7 @@ export class Sidecar {
   async shutdown() {
     /* Ask Chrome to close first: a browser that is killed outright may lose the
        last minute of cookies, and keeping the person signed in is the point. */
+    if (this.page !== null) await this.saveSessionCookies()
     if (this.cdp !== null) {
       await this.cdp.send('Browser.close').catch(() => {})
       await new Promise((resolve) => setTimeout(resolve, 400))
@@ -628,6 +821,54 @@ export class Sidecar {
         /* already gone */
       }
       this.child = null
+    }
+  }
+
+  /**
+   * Chrome drops session cookies when it closes, and most sign-ins are session
+   * cookies. Keeping them here is what lets a person stay signed in across a
+   * reload of the app, which is the whole point of the profile.
+   * @returns {Promise<void>} done.
+   */
+  async saveSessionCookies() {
+    try {
+      const jar = (await this.page.cookies()).filter((c) => c.session === true || Number(c.expires) < 0)
+      const file = sessionJar(profileDir(this.profile))
+      if (jar.length === 0) {
+        rmSync(file, { force: true })
+        return
+      }
+      writeFileSync(file, JSON.stringify(jar), { mode: 0o600 })
+    } catch {
+      /* a browser that is already gone has nothing to save */
+    }
+  }
+
+  /** @returns {Promise<void>} puts back what saveSessionCookies kept. */
+  async restoreSessionCookies() {
+    let jar = []
+    try {
+      jar = JSON.parse(String(readFileSync(sessionJar(profileDir(this.profile)), 'utf8')))
+    } catch {
+      return
+    }
+    if (!Array.isArray(jar)) return
+    for (const cookie of jar.slice(0, 200)) {
+      const domain = String(cookie?.domain ?? '').replace(/^\./, '')
+      if (domain === '') continue
+      try {
+        await this.page.setCookie({
+          name: String(cookie.name),
+          value: String(cookie.value),
+          domain,
+          path: String(cookie.path ?? '/'),
+          secure: cookie.secure === true,
+          httpOnly: cookie.httpOnly === true,
+          sameSite: cookie.sameSite,
+        })
+      } catch {
+        /* one stale cookie must not stop the others */
+      }
     }
   }
 

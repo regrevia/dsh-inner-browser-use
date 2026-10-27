@@ -82,8 +82,8 @@ dsh plugin install /path/to/dsh-inner-browser-use
 在应用里走 **插件 → 从文件夹安装**，选这个仓库目录。要装打包好的 tgz，就在该目录里打一个再装：
 
 ```bash
-npm pack                                  # 得到 dsh-inner-browser-use-0.12.0.tgz
-dsh plugin install ./dsh-inner-browser-use-0.12.0.tgz
+npm pack                                  # 得到 dsh-inner-browser-use-0.12.1.tgz
+dsh plugin install ./dsh-inner-browser-use-0.12.1.tgz
 ```
 
 装好后在 **插件** 里显示为 *后台浏览器*。机器上要有 Google Chrome 或 Chromium，细节见

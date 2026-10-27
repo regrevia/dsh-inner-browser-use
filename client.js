@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
         'side.empty': '还没有打开的页面',
         'side.connecting': '正在连接…',
         'side.failed': '画面没有连上',
+        'side.foreign': '这个浏览器属于发起它的会话，回到那个会话继续。',
         'side.back': '后退',
         'side.forward': '前进',
         'side.reload': '刷新',
@@ -46,6 +47,7 @@ window.__ModuleLoader__.load({
         'side.empty': 'No page open',
         'side.connecting': 'Connecting…',
         'side.failed': 'The picture did not connect',
+        'side.foreign': 'This browser belongs to the chat that opened it.',
         'side.back': 'Back',
         'side.forward': 'Forward',
         'side.reload': 'Reload',
@@ -96,8 +98,9 @@ window.__ModuleLoader__.load({
           const tabs = scope.sidebarRightTabs
           const surface = scope.sidebarRight
           const disposers = []
-          /** Chats already given this tab; a closed tab stays closed. */
-          const opened = new Set()
+          /* The one chat that owns the mirror. Every other chat loses the tab
+             and gets no picture: the column is global, the browser is not. */
+          let ownerSession = ''
           const mountedOf = () => {
             try {
               return String(surface?.mounted?.getSnapshot?.() ?? '')
@@ -105,8 +108,29 @@ window.__ModuleLoader__.load({
               return ''
             }
           }
+          const closeHere = (sessionId) => {
+            let records = []
+            try {
+              records = surface?.tabsIn?.(sessionId) ?? []
+            } catch {
+              records = []
+            }
+            for (const record of records) {
+              const kind = String(record?.kind ?? record?.record?.kind ?? '')
+              const id = String(record?.id ?? record?.record?.id ?? '')
+              if (kind !== SIDE_KIND && id !== SIDE_ID) continue
+              try {
+                if (typeof record?.close === 'function') record.close()
+                else if (typeof surface?.closeIn === 'function') surface.closeIn(sessionId, id)
+              } catch {
+                /* a tab already gone needs no closing */
+              }
+            }
+          }
           const ask = (sessionId) => {
             if (sessionId === '' || mountedOf() !== sessionId) return
+            if (ownerSession !== '' && ownerSession !== sessionId) closeHere(ownerSession)
+            ownerSession = sessionId
             try {
               if (typeof surface?.openTabIn === 'function') surface.openTabIn(sessionId, SIDE_KIND, {})
               else if (typeof surface?.openTab === 'function') surface.openTab(SIDE_KIND)
@@ -125,7 +149,7 @@ window.__ModuleLoader__.load({
           disposers.push(scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore
             key: SIDE_ID, // ui-copy-ignore
-            inject: (sessionId) => ({ sessionId }),
+            inject: (sessionId) => ({ sessionId, dropMirror: () => closeHere(sessionId) }),
           }, SidecarBody)))
           disposers.push(scope.slots.inject(TITLE_SLOT, () => scope.slots.register({
             name: TITLE_SLOT, // ui-copy-ignore
@@ -134,11 +158,7 @@ window.__ModuleLoader__.load({
           }, () => h('span', { className: 'dshib-title' }, L('side.label')))))
           /* The mirror comes only when this chat asked for it: the ask is pushed
              to this chat's page, and nothing opens by itself. // ui-copy-ignore */
-          sidecarOpener = (sessionId) => {
-            if (opened.has(sessionId) === true) return
-            opened.add(sessionId)
-            ask(sessionId)
-          }
+          sidecarOpener = (sessionId) => ask(sessionId)
           /* The ask arrives on this chat's own downlink, so a frame for another
              chat never reaches this column. The stream follows the chat on
              screen: a switch closes the old one and opens the new one. */
@@ -236,8 +256,50 @@ window.__ModuleLoader__.load({
       const [editing, setEditing] = React.useState(false)
       const [size, setSize] = React.useState({ w: 0, h: 0 })
       const stage = React.useRef(null)
+      /* Which chat owns the mirror, as the sidecar host records it. // ui-copy-ignore
+         Empty until
+         the host answers; a chat that does not own it draws no picture at all. // ui-copy-ignore */
+      const [owner, setOwner] = React.useState(null)
+      React.useEffect(() => {
+        let alive = true
+        let dropped = false
+        const read = () => {
+          void fetch(`${ROUTE}/sidecar/state`, { cache: 'no-store' }) // ui-copy-ignore
+            .then((reply) => (reply.ok === true ? reply.json() : null))
+            .then((info) => {
+              if (alive !== true) return
+              const next = String(info?.owner ?? '')
+              setOwner((prev) => (prev === next ? prev : next))
+              /* Another chat holds the browser now: this tab goes away instead
+                 of sitting here as a note. */
+              if (dropped !== true && next !== '' && next !== String(props.sessionId ?? '')) {
+                dropped = true
+                try {
+                  props.dropMirror?.()
+                } catch {
+                  /* a column already gone needs no closing */
+                }
+              }
+            })
+            .catch(() => {})
+        }
+        read()
+        const timer = setInterval(read, 2500)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [props.sessionId])
+      const asked = String(props.sessionId ?? '')
+      /* Unknown until the host answers: the pane then shows no picture. // ui-copy-ignore
+         But it
+         does not flash a refusal either. Once the answer names another chat,
+         this chat keeps only a note. // ui-copy-ignore */
+      const unknown = owner === null
+      const mine = unknown !== true && owner === asked
 
       React.useEffect(() => {
+        if (mine !== true) return undefined
         const who = encodeURIComponent(String(props.sessionId ?? ''))
         const source = new EventSource(`${ROUTE}/sidecar/frames?session=${who}`)
         /* Bursts arrive faster than a picture can decode: only the newest frame
@@ -288,7 +350,7 @@ window.__ModuleLoader__.load({
           if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
           source.close()
         }
-      }, [props.sessionId])
+      }, [props.sessionId, mine])
 
       /* The address field follows the page except while the person is editing it. */
       React.useEffect(() => {
@@ -312,11 +374,12 @@ window.__ModuleLoader__.load({
       const padX = (size.w - SIDE_VIEW.width * scale) / 2
       const padY = (size.h - SIDE_VIEW.height * scale) / 2
 
+      const who = String(props.sessionId ?? '')
       const post = (path, body) => {
         void fetch(`${ROUTE}${path}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ ...body, session: who }),
         }).catch(() => {})
       }
       /* The page names the cursor it would show under the hand; the black
@@ -332,7 +395,7 @@ window.__ModuleLoader__.load({
         void fetch(`${ROUTE}/sidecar/input`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ kind: 'hover', x: point.x, y: point.y }),
+          body: JSON.stringify({ kind: 'hover', x: point.x, y: point.y, session: who }),
         })
           .then((reply) => (reply.ok === true ? reply.json() : null))
           .then((answer) => {
@@ -411,6 +474,11 @@ window.__ModuleLoader__.load({
         post('/sidecar/nav', { op: 'goto', url: address })
       }
 
+      /* A chat that does not own the browser never shows its picture. */
+      if (mine !== true && unknown !== true) {
+        return h('div', { className: 'dshib-side' },
+          h('div', { className: 'dshib-side-note' }, L('side.foreign')))
+      }
       const pointer = ptr
       const noteText = phase === 'failed' ? note || L('side.failed') : phase === 'live' ? L('side.empty') : L('side.connecting')
       return h('div', { className: 'dshib-side' },

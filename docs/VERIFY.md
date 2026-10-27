@@ -4,7 +4,7 @@ Five minutes, one page, no debugger. Each step names what a failure looks like.
 
 ## Before you start
 
-- The plugin is installed and enabled, `0.12.0` or later (`package.json`).
+- The plugin is installed and enabled, `0.12.1` or later (`package.json`).
 - The GUI page was reloaded after the install: the page half loads on a page load.
 - Chrome sits at one of the paths in
   [COMPATIBILITY.md](COMPATIBILITY.md#where-chrome-is-looked-for).
@@ -86,3 +86,11 @@ still hold the cookies.
 - The tab is called **后台浏览器** / **Background browser**; a tab still named
   内置浏览器 means the page half is stale: reload the GUI page.
 - Guest-era logins are not migrated; sign in once in the new profile.
+
+## Breadth
+
+`node scripts/breadth.mjs` drives a shadow-DOM component, a form (type, select,
+checkbox, submit), a native dialog and a dead ref against local pages, and prints
+one JSON line per check. Nine `true` lines is the bar; a `false` line names the
+check that broke.
+
