@@ -123,11 +123,12 @@ finding the control again by identity (kind + exact words + link destination),
 refusing when the words are not unique. Measured at 462 ms against 445 ms for a
 fresh control — 17 ms when needed, nothing when not.
 
+Since 0.16.1 the count is visible: `sidecar_state` reports `refs followed N`,
+and breadth asserts it moved after a redraw, so the next rounds can tell from
+real sites whether redrawing is frequent enough to justify more work here.
 Next in this direction: the same identity recovery for `sidecar_do` steps that
 name a field by its label when the label element is rebuilt (today the step
-falls back to a fresh read), and a count in `sidecar_state` of how often a
-follow happened, so the following rounds can tell whether sites redraw this
-often in practice.
+falls back to a fresh read).
 
 ## Order of work
 

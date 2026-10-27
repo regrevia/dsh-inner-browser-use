@@ -18,6 +18,9 @@ import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThi
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
 
+/** How many times a call found a control again after the page redrew it. */
+const follows = { count: 0 }
+
 /** Shown when the sidecar has never been started in this run. */
 export const SIDECAR_OFF = 'The sidecar browser is not running. Call sidecar_open with the address first.'
 
@@ -372,6 +375,7 @@ async function followRef(page, ref, known) {
   if (again.length !== 1) return spot
   const next = await locate(page, Number(again[0].ref))
   if (next.gone === true) return spot
+  follows.count += 1
   return { ...next, followed: true, was: want.name }
 }
 
@@ -640,6 +644,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     if (again.length !== 1) return spot
     const next = await locate(page, Number(again[0].ref))
     if (next.gone === true) return spot
+    follows.count += 1
     return { ...next, followed: true, was: want.name }
   }
 
@@ -1131,7 +1136,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'sidecar_state', // ui-copy-ignore
-      description: 'Report the sidecar browser: whether it runs, its profile, address, title, and how many people are watching its mirror.',
+      description: 'Report the sidecar browser: whether it runs, its profile, address, title, how many people are watching its mirror, and how many times a call had to find a control again after the page redrew it.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: TEXT_OUTPUT, // ui-copy-ignore
       timeoutMs: 15_000,
@@ -1147,6 +1152,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `title ${String(state.title)}`,
           `viewers ${String(state.viewers)}`,
           owner === '' ? 'no owner' : `owner ${owner}`,
+          `refs followed ${String(follows.count)}`,
         ]
         return { text: rows.join('\n') }
       },

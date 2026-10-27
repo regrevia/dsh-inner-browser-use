@@ -443,6 +443,11 @@ try {
   const reallyGone = String((await refuseTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: keepGone.ref })).text)
   line('ref-refuses-really-gone', reallyGone.includes('Call sidecar_view'), reallyGone.replace(/\n/g, ' / ').slice(0, 150))
 
+  const stateTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_state')
+  const stateSaid = await stateTool.execute({})
+  const counted = Number(String(stateSaid.text).match(/refs followed (\d+)/)?.[1] ?? -1)
+  line('follow-counted', counted >= 1, `${String(counted)} | ${String(stateSaid.text).replace(/\n/g, ' / ').slice(0, 160)}`)
+
   await page.navigate(`${base}/words`)
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }
   const lookTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_view')

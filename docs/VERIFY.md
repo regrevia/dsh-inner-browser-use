@@ -135,12 +135,13 @@ the tarball and imports it from outside the repo.
 `node scripts/breadth.mjs` drives a shadow-DOM component, a form (type, select,
 checkbox, submit), a native dialog, an iframe (read, type, click), a click that
 opens a tab, and a dead ref against local pages, and prints one JSON line per
-check. Thirty-five `true` lines is the bar; a `false` line names the check that
+check. Thirty-eight `true` lines is the bar; a `false` line names the check that
 broke. Two of them cover a cross-site frame, which Chrome runs in its own
 process. Three cover a control under an overlay: the click clears a cookie
 banner and lands (`under clicked`), typing into a field under the same banner
 works, and a modal that offers to delete the account is reported without
 anything being pressed. Two more drive the same overlay through `sidecar_do`:
 a batch step clears the banner before it clicks, and a batch step fills a field
-that was under it.
+that was under it. One more counts the recoveries: after the redraw check, the
+state line says at least one ref was followed to its new number.
 
