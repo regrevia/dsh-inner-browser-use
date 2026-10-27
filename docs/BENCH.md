@@ -381,3 +381,16 @@ A changed scroll offset is still reported, so "nothing changed" is never a lie.
 | **turns for a review round** | 3–7 + bookkeeping | **1** |
 | measured round on `/chat` (echoed question + 2-item list) | — | 2.6 s, 2 points |
 
+## Phase 21b — an answer that is not an answer, 0.31.1
+
+A chat box on a page that is not signed in still accepts text, still redraws,
+and still looks busy. Three cheap checks keep that from being reported as a
+review.
+
+| what the page does | before | now | cost |
+| --- | --- | --- | --- |
+| keeps the words in the box | waits 4 s, then reads the page | says so at 0.5 s | 1 evaluate |
+| redraws but never shows the message | the new words were the answer | says the page did not take it | none (text compare) |
+| shows the message, no reply | "answered in prose" | "has the message but has not answered yet" | none (text compare) |
+| real page, signed out (Doubao) | a review-shaped paragraph of menu chips | the sign-in is named, 2.6 s | — |
+

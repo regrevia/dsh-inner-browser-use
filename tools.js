@@ -744,6 +744,26 @@ export async function extractRows(page, args) {
  * @param {{text?: string, ref?: number, submit?: boolean, timeout_ms?: number}} args - what to say.
  * @returns {Promise<string>} the answer, or why there is none.
  */
+/**
+ * Whether a box on the page still holds the words that were typed.
+ * A box that keeps them never sent them, which is what a signed-out page does.
+ * @param {any} page - sidecar page.
+ * @param {string} words - what was typed.
+ * @returns {Promise<boolean>} true when the words are still in a box.
+ */
+async function boxHolds(page, words) {
+  const wanted = String(words).slice(0, 24)
+  if (wanted === '') return false
+  const held = await evaluate(page, `(() => {
+  const wanted = ${JSON.stringify(wanted)}
+  for (const el of document.querySelectorAll('textarea, [contenteditable=""], [contenteditable="true"], input[type="text"], input[type="search"], input:not([type])')) {
+    if (String(el.value ?? el.innerText ?? '').trim().includes(wanted)) return true
+  }
+  return false
+})()`)
+  return held === true
+}
+
 async function askInPage(page, args) {
 const said = String(args?.text ?? '').trim()
 if (said === '') return 'Give me something to say.'
@@ -775,6 +795,10 @@ await page.mouse('mouseReleased', { ...point, clickCount: 1 })
 await wait(60)
 await page.insertText(said)
 if (args?.submit !== false) await pressKey(page, 'Enter')
+await wait(500)
+if (args?.submit !== false && (await boxHolds(page, said))) {
+  return `the words are still in the box 0.5s after pressing Enter: the page did not take the message. If it is waiting for a sign-in, sign in in the column, then ask again.`
+}
 const started = Date.now()
 const deadline = started + budget
 let last = before.text
@@ -800,15 +824,29 @@ while (Date.now() < deadline) {
   }
 }
 const took = Date.now() - started
-if (fresh === '') return `sent it — no answer after ${Math.round(took / 100) / 10}s; the page still says: ${before.text.slice(0, 400)}`
+/* A page that shows neither the words in a box nor the message itself never
+   took it: the chips moved, the menu redrew, and none of that is an answer. */
+const echo = String(said.slice(0, 24))
+if (fresh !== '' && echo.length >= 8 && !fresh.includes(echo)) {
+  const asking = /(sign in|log in|登录|注册)/i.test(fresh)
+  return `the page changed but does not show the message: it did not take what was sent.${asking ? ' It is asking for a sign-in — sign in in the column, then ask again.' : ' Try sidecar_view to see what is in the way.'}`
+}
+/* A box that still holds the words is the page saying it did not take them:
+   a signed-out page leaves them there, and the old wording sent the reader
+   looking for an answer that was never asked for. */
+const stuck = fresh === '' && (await boxHolds(page, said))
+if (fresh === '') {
+  if (stuck) return `sent it — no answer after ${Math.round(took / 100) / 10}s, and the words are still in the box: the page did not take the message. If it is waiting for a sign-in, sign in in the column, then ask again.`
+  return `sent it — no answer after ${Math.round(took / 100) / 10}s; the page still says: ${before.text.slice(0, 400)}`
+}
 /* The answer may replace the words that were there, so cut at the last
    character the two reads share, not at the old length. */
 let shared = 0
 while (shared < fresh.length && shared < before.text.length && fresh[shared] === before.text[shared]) shared += 1
 const added = fresh.slice(shared)
 /* Lines are kept: a reviewer's list is one point per line, and flattening it
-       would leave the next round with a paragraph instead of items. */
-    const words = added.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 2500)
+   would leave the next round with a paragraph instead of items. */
+const words = added.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 2500)
 return `the answer came back in ${Math.round(took / 100) / 10}s:\n${words}`
 }
 
@@ -1102,7 +1140,19 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (!String(told).startsWith('the answer came back in')) return told
         const answer = String(told).split('\n').slice(1).join('\n').trim()
         const { round } = recordRound({ commit, question: asked, answer, tookMs })
-        const list = round.points.length === 0 ? 'It answered in prose; no list to work from.' : round.points.map((point, at) => `${at + 1}. ${point}`).join('\n')
+        /* A wall answers too, and its words are not advice: name it rather than
+           call the login screen prose. */
+        const wall = /(sign in|log in|登录|注册|verif|checking your browser)/i.test(answer)
+        /* The question sitting there unanswered is not prose: say that instead. */
+        const busy = asked.slice(0, 24)
+        const waiting = round.points.length === 0 && busy.length >= 8 && answer.includes(busy)
+        const list = round.points.length > 0
+          ? round.points.map((point, at) => `${at + 1}. ${point}`).join('\n')
+          : waiting
+            ? `the page has the message but has not answered yet; it shows: ${answer.replace(/\s+/g, ' ').slice(0, 200)}`
+            : wall
+            ? `the page is asking to sign in first, so there is no review yet: ${answer.replace(/\s+/g, ' ').slice(0, 200)}`
+            : `It answered in prose; no list to work from. It said: ${answer.replace(/\s+/g, ' ').slice(0, 200)}`
         return `review round: ${commit === '' ? 'newest commit' : commit.slice(0, 12)} in ${Math.round(tookMs / 100) / 10}s\n${list}`
       }),
     },

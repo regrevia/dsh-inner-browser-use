@@ -96,6 +96,7 @@ const PAGES = {
       const box = document.querySelector('#box')
       const reply = (() => {
         const asked = box.value.trim()
+        box.value = ''
         said.textContent = 'Thinking'
         setTimeout(() => { said.textContent = 'Thinking. ' }, 300)
         setTimeout(() => { said.textContent = ['Answer: ' + asked, '- read.js: keep the names clear, they are what a reviewer reads', '- tools.js: one call should carry both halves'].join(String.fromCharCode(10)) }, 700)
@@ -103,6 +104,23 @@ const PAGES = {
       document.querySelector('#send').addEventListener('click', reply)
       box.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); reply() } })
     </script></body></html>`,
+  '/wall': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Chat</h1>
+    <textarea id="box" placeholder="Message the assistant" style="width:520px;height:60px"></textarea>
+    <div id="said">Sign in to continue</div>
+    <script>
+      const box = document.querySelector('#box')
+      box.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        box.value = ''
+        setTimeout(() => { document.querySelector('#said').textContent = 'Please sign in first, then ask again.' }, 400)
+      })
+    </script></body></html>`,
+  '/nochat': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Sign in to continue</h1>
+    <p>This page holds a box but sends nothing until you sign in.</p>
+    <textarea id="box" placeholder="Message the assistant" style="width:520px;height:60px"></textarea></body></html>`,
   '/dense': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Catalog</h1>${Array.from({ length: 40 }, (_, at) => `<p>Item ${at + 1}: a plain sentence about a thing worth reading, long enough to fill a line.</p>`).join('')}</body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
@@ -384,6 +402,26 @@ try {
   await page.navigate(`${base}/words`)
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
   line('no-picture-noise', !wordsRead.includes('sidecar_grab saves it'), wordsRead.split('\n').length + ' lines')
+
+  /* A wall is not a review: it is named, not passed off as prose. */
+  {
+    const refs = { refs: [], at: 0 }
+    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_review') // ui-copy-ignore
+    await page.navigate(`${base}/wall`)
+    const told = await review.execute({ repo: 'https://github.com/example/repo', timeout_ms: 8000 })
+    const body = String(told?.text ?? '')
+    line('wall-is-named', body.includes('does not show the message') && body.includes('sign-in'), `${body.replace(/\s+/g, ' ').slice(0, 200)}`)
+  }
+
+  /* A page that keeps the words says so, instead of pretending an answer came. */
+  {
+    const refs = { refs: [], at: 0 }
+    const ask = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_ask') // ui-copy-ignore
+    await page.navigate(`${base}/nochat`)
+    const told = await ask.execute({ text: 'please look at the diff', timeout_ms: 4200 })
+    const body = String(told?.text ?? '')
+    line('stuck-box-says-so', body.includes('still in the box') && body.includes('sign in'), `${body.replace(/\s+/g, ' ').slice(0, 200)}`)
+  }
 
   /* A review round: brief in, a list out, and the round written down. */
   {
