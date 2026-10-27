@@ -1,3 +1,10 @@
+## 0.27.0
+
+- **一次读取就说清"答案是张图"。** 页面几乎没字、只有一张大图时，`sidecar_view` 现在直接多一行：`picture 140x90 a picture with detail "Chart" — sidecar_grab saves it as a file`；纯色图则是 `mostly one colour`，空白图表在读取这一步就暴露，不用先存文件再看。行内采样 32×32，随同一次读取返回，不多一次往返。
+- 有字的页面不会出现这一行（`no-picture-noise`）；小于 64px 或 8000 平方像素的小图标也不算答案。
+- 实测：`/pic` → `picture 140x90 a picture with detail`；`/flat` → `picture 140x90 mostly one colour`。
+- 测试：51 条单测；广度 56 条全真。
+
 ## 0.26.0
 
 - **存下来的图带一句描述。** `sidecar_grab` 以前只回路径和尺寸，模型打不开文件就只能猜。现在图在页面里先缩到 32×32 采样一次，回一行「路径 宽x高 + 大面积单色 / 只有几种颜色 / 有细节」，空白图表和真图表一眼分清。

@@ -330,3 +330,14 @@ Two 140x90 PNGs: one a gradient, one a single colour.
 The sampling is 32x32 inside the page, so it costs no round trip and its result
 travels in the same line as the path.
 
+## Phase 17 — the answer is a picture, in the read itself, 0.27.0
+
+| page | read line | extra round trips |
+| --- | --- | --- |
+| `/pic` (gradient, no words) | `picture 140x90 a picture with detail "Chart" — sidecar_grab saves it as a file` | 0 |
+| `/flat` (single colour) | `picture 140x90 mostly one colour "Chart" — …` | 0 |
+| `/words` (text page) | no picture line | 0 |
+
+The sampling is 32x32 inside the page, in the same call that reads the page, so a
+blank chart is visible before anything is saved.
+

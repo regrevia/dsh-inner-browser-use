@@ -247,6 +247,52 @@ function snapshot(mode, budget, max) {
       }
     }
   }
+  /* A page with almost no words and one big picture is answering with the
+     picture. Say so here, in the same round trip, so a model that cannot open
+     files still learns that something came back: and sample it small to tell a
+     blank chart from a chart. */
+  const picture = (() => {
+    if (full >= 40) return null
+    let best = null
+    for (const el of document.querySelectorAll('img,canvas')) {
+      const b = box(el)
+      if (b.width < 64 || b.height < 64 || b.width * b.height < 8000) continue
+      const s = getComputedStyle(el)
+      if (s.visibility === 'hidden' || s.display === 'none') continue
+      const w = el.tagName === 'CANVAS' ? el.width : el.naturalWidth || Math.round(b.width)
+      const h = el.tagName === 'CANVAS' ? el.height : el.naturalHeight || Math.round(b.height)
+      if (best === null || w * h > best.w * best.h) best = { el, w, h, kind: String(el.tagName).toLowerCase() }
+    }
+    if (best === null) return null
+    /* What the read hands back about one picture: not a screen of fields. */
+    const said = { name: String(best.el.getAttribute?.('alt') ?? best.el.getAttribute?.('aria-label') ?? '').replace(/\s+/g, ' ').trim().slice(0, 60) }
+    said.kind = best.kind
+    said.width = best.w
+    said.height = best.h
+    said.colors = 0
+    said.flat = 0
+    try {
+      const board = document.createElement('canvas')
+      board.width = 32
+      board.height = 32
+      const pen = board.getContext('2d', { willReadFrequently: true })
+      if (pen === null) return said
+      pen.drawImage(best.el, 0, 0, 32, 32)
+      const dots = pen.getImageData(0, 0, 32, 32).data
+      const tally = new Map()
+      for (let at = 0; at < dots.length; at += 4) {
+        const key = (dots[at] >> 5) * 64 + (dots[at + 1] >> 5) * 8 + (dots[at + 2] >> 5)
+        tally.set(key, (tally.get(key) || 0) + 1)
+      }
+      let most = 0
+      for (const count of tally.values()) most = Math.max(most, count)
+      said.colors = tally.size
+      said.flat = Math.round((most / 1024) * 100) / 100
+    } catch {
+      /* A picture from elsewhere cannot be sampled: report its size only. */
+    }
+    return said
+  })()
   return JSON.stringify({
     url: location.href, // ui-copy-ignore
     title: document.title, // ui-copy-ignore
@@ -259,6 +305,7 @@ function snapshot(mode, budget, max) {
       return { ref: reg.id(el), kind: role(el), name: name(el) }
     })(),
     controls: picked,
+    picture,
   })
 })()`
 }
@@ -641,6 +688,7 @@ export async function readPage(page, options = {}) {
     title: String(read?.title ?? page.title),
     text: String(read?.text ?? ''),
     textChars: Number(read?.textChars ?? 0),
+    picture: read?.picture ?? null,
     scroll: read?.scroll,
     focused: read?.focused ?? null,
     controls: Array.isArray(read?.controls) ? read.controls : [],
@@ -710,6 +758,12 @@ export function renderPage(read, options = {}) {
     lines.push('')
     lines.push(body)
     if (read.textChars > body.length) lines.push(`… ${read.textChars - body.length} more characters`)
+  }
+  if (read.picture) {
+    const pic = read.picture
+    const look = Number(pic.flat) >= 0.9 ? 'mostly one colour' : Number(pic.colors) <= 3 ? 'a few colours' : 'a picture with detail'
+    const size = `${Math.round(Number(pic.width) || 0)}x${Math.round(Number(pic.height) || 0)}`
+    lines.push(`picture ${size} ${look}${pic.name === '' ? '' : ` "${pic.name}"`} — sidecar_grab saves it as a file`)
   }
   if (read.scroll && read.scroll.height > read.scroll.viewport + 40) {
     lines.push(`scroll ${read.scroll.y}/${read.scroll.height - read.scroll.viewport}`)

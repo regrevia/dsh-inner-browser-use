@@ -226,3 +226,9 @@ The description is coarse on purpose. Next: when a page's answer is a picture,
 let a read say so in one line ("the answer is a picture, and it is blank") so a
 model that cannot open files does not need the tool at all to notice a failure.
 
+## Phase 18 — a picture that never arrived, 0.27.0
+
+A picture is only an answer if it loaded. Next: report a large picture element
+whose source failed (`naturalWidth === 0`) as a broken picture rather than
+staying silent, since that is the commonest way a generated image "disappears".
+

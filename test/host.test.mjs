@@ -471,3 +471,15 @@ test('the picture itself can be taken off the page', async () => {
   assert.match(expr, /willReadFrequently/)
   assert.match(expr, /colors: feel\?\.colors/)
 })
+
+test('a read says when the answer is a picture', async () => {
+  const { renderPage } = await import('../read.js?v=1')
+  const said = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { kind: 'img', width: 140, height: 90, name: 'Chart', colors: 40, flat: 0.1 } }, { mode: 'text' })
+  assert.match(said, /picture 140x90 a picture with detail "Chart"/)
+  assert.match(said, /sidecar_grab saves it as a file/)
+  /* A page with words does not get the line: it is not the answer there. */
+  const words = renderPage({ url: 'https://example.test', title: 'Home', text: 'some words', textChars: 10, controls: [], picture: null }, { mode: 'text' })
+  assert.doesNotMatch(words, /picture /)
+  const blank = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { kind: 'img', width: 800, height: 600, name: '', colors: 1, flat: 1 } }, { mode: 'text' })
+  assert.match(blank, /mostly one colour/)
+})
