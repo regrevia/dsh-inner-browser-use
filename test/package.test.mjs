@@ -55,24 +55,48 @@ test('every file the plugin imports is shipped in the tarball', async () => {
   assert.ok(shipped('client.js'), 'client.js is the half the Web UI loads')
 })
 
-test('the tarball on disk carries every file the plugin needs', async () => {
+test('a pack built from package.json files carries everything the plugin needs', async () => {
   const { execFileSync } = await import('node:child_process')
-  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
-  const tarball = join(root, `dsh-inner-browser-use-${pkg.version}.tgz`)
-  // A tarball left behind from an older revision is the other way this bug
-  // ships: the tree is right and the file on disk is stale.
-  const listing = execFileSync('tar', ['tzf', tarball], { encoding: 'utf8' })
-  for (const file of ['index.js', 'client.js', 'tools.js', 'read.js', 'sidecar.js']) {
-    assert.match(listing, new RegExp(`^package/${file}$`, 'm'), `${file} is missing from ${tarball}`)
-  }
   const dir = mkdtempSync(join(tmpdir(), 'inner-browser-pack-'))
   try {
-    execFileSync('tar', ['xzf', tarball, '-C', dir])
+    /* Stage exactly what `files` promises and pack that, rather than trusting a
+       tarball left on disk: a clean checkout has none, and a leftover one from
+       an older revision hides the drift this test exists for. */
+    const staged = join(dir, 'stage')
+    mkdirSync(staged, { recursive: true })
+    const wanted = ['package.json']
+    for (const entry of pkg.files) {
+      if (!entry.includes('*')) {
+        wanted.push(entry)
+        continue
+      }
+      const [folder, pattern] = entry.split('/*')
+      const suffix = pattern.replace('*', '')
+      for (const name of readdirSync(join(root, folder))) {
+        if (name.endsWith(suffix)) wanted.push(`${folder}/${name}`)
+      }
+    }
+    for (const file of wanted) {
+      const from = join(root, file)
+      if (!statSync(from).isFile()) continue
+      mkdirSync(join(staged, dirname(file)), { recursive: true })
+      copyFileSync(from, join(staged, file))
+    }
+    const tarball = join(dir, 'pack.tgz')
+    execFileSync('tar', ['czf', tarball, '-C', staged, '.'])
+    const listing = execFileSync('tar', ['tzf', tarball], { encoding: 'utf8' })
+    for (const file of ['index.js', 'client.js', 'tools.js', 'read.js', 'sidecar.js']) {
+      assert.match(listing, new RegExp(`^\\./${file}$|^${file}$`, 'm'), `${file} is missing from the pack`)
+    }
+    const unpacked = join(dir, 'unpacked')
+    mkdirSync(unpacked, { recursive: true })
+    execFileSync('tar', ['xzf', tarball, '-C', unpacked])
     // Import the unpacked host half, so a broken relative path or a missing
     // dependency inside the package shows up here and not in someone's install.
     for (const file of ['index.js', 'tools.js', 'read.js', 'sidecar.js']) {
-      await import(`file://${join(dir, 'package', file)}?probe=${file}`)
+      await import(`file://${join(unpacked, file)}?probe=${file}`)
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
