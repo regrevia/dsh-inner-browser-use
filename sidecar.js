@@ -22,6 +22,9 @@ const CHROME_BINARIES = [
 /** Viewport the screencast and the pointer share. Nothing here is a user-agent detail. */
 export const VIEW = { width: 1440, height: 900 }
 
+/** What a person's Chrome on this machine sends. */
+export const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36'
+
 /**
  * Pixels the mirror actually sends. The viewport is never downscaled: a
  * half-size JPEG turns 12px body text into mush in a column this narrow, and
@@ -749,6 +752,56 @@ export class SidecarPage {
     })
   }
 
+  /**
+   * Type the way a person does: one character at a time, uneven gaps, a longer
+   * pause where a person would think, and no clipboard paste at all. Paste is
+   * the single event that tells a site a machine filled the box; per-character
+   * key events do not. Longer messages are typed in small bursts so a whole
+   * page of text does not take a minute.
+   * @param {string} text - any unicode, including Chinese.
+   * @param {{burst?: number, min?: number, max?: number}} [options] - pacing.
+   * @returns {Promise<void>} resolves once the last character was accepted.
+   */
+  async humanType(text, options = {}) {
+    this.touched = Date.now()
+    const chars = Array.from(String(text))
+    /* A long message is typed faster per burst: the opening still looks like
+       fingers, but nobody wants to wait fifteen seconds for a paragraph. */
+    const long = chars.length > 160
+    const burst = Math.max(1, Number(options.burst ?? (long ? 8 : 3)))
+    const min = Number(options.min ?? (long ? 10 : 26))
+    const max = Math.max(min + 1, Number(options.max ?? (long ? 46 : 110)))
+    const gap = () => min + Math.random() * (max - min)
+    let at = 0
+    while (at < chars.length) {
+      const size = at < 12 ? 1 : burst
+      const chunk = chars.slice(at, at + size).join('')
+      /* One key event per character is what a keyboard produces. A multi-letter
+         key event would only deliver its first letter, so a run of Latin text
+         is pressed key by key; a run of Chinese arrives as an input-method
+         commit, which is one event for a whole phrase. */
+      if (size > 1 && /[\u3040-\u9fff\uac00-\ud7af]/.test(chunk)) {
+        await this.input('Input.insertText', { text: chunk })
+      } else {
+        for (const one of Array.from(chunk)) {
+          await this.input('Input.dispatchKeyEvent', {
+            type: 'keyDown', // ui-copy-ignore
+            key: one, // ui-copy-ignore
+            text: one, // ui-copy-ignore
+            unmodifiedText: one, // ui-copy-ignore
+            windowsVirtualKeyCode: 0,
+            nativeVirtualKeyCode: 0,
+          }).catch(() => {})
+        }
+      }
+      at += size
+      const last = chars[at - 1] ?? ''
+      /* Stop longer after a full stop or a comma, the way a person does. */
+      const pause = /[。！？，、；：\n.,!?;:]/.test(last) ? gap() * 2.2 + 90 : gap()
+      await wait(at < chars.length ? pause : 0)
+    }
+  }
+
   /** @param {string} text - any unicode, including Chinese. @returns {Promise<void>} resolves when typed. */
   async insertText(text) {
     this.touched = Date.now()
@@ -902,6 +955,9 @@ export class Sidecar {
     this.child = null
     this.cdp = null
     this.page = null
+    /* One tab per chat: a second chat opening an address gets a tab of its
+       own, so neither can navigate the other's page away. */
+    this.pages = new Map()
     /* A measurement or a test may want a profile of its own; the person's
        browser keeps the default one. */
     this.profile = String(options.profile ?? 'default')
@@ -971,7 +1027,52 @@ export class Sidecar {
   }
 
   /**
-   * @param {{profile?: string, headless?: boolean, url?: string}} [options] - how to start.
+   * The tab a chat drives. A named chat gets a tab of its own, made once and
+   * kept; an unnamed caller (a test, a screenshot script) drives the first tab.
+   * @param {string} session - chat id, empty for the default tab.
+   * @returns {SidecarPage | null} the tab, if the browser is up.
+   */
+  pageFor(session) {
+    const id = String(session ?? '')
+    if (id === '') return this.page
+    const mine = this.pages.get(id)
+    if (mine !== undefined && mine.cdp?.closed !== true) return mine
+    if (mine !== undefined) this.pages.delete(id)
+    return null
+  }
+
+  /**
+   * Give a chat its own tab, on the same browser: logins are shared, addresses
+   * are not.
+   * @param {string} session - chat id.
+   * @param {string} [url] - address to open in it.
+   * @returns {Promise<SidecarPage>} its tab.
+   */
+  async tabFor(session, url) {
+    const id = String(session ?? '')
+    const had = this.pageFor(id)
+    if (had !== null) {
+      if (url !== undefined && url !== '') await had.navigate(url)
+      return had
+    }
+    if (this.page === null) await this.ensure()
+    const port = this.page?.port ?? 0 // ui-copy-ignore
+    if (port === 0) throw new Error('sidecar: no browser to open a tab in') // ui-copy-ignore
+    const address = url === undefined || url === '' ? 'about:blank' : String(url)
+    const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
+    if (!created.ok) throw new Error('sidecar: could not open a tab')
+    const target = await created.json()
+    if (typeof target.webSocketDebuggerUrl !== 'string') throw new Error('sidecar: new tab has no socket')
+    const cdp = new Cdp(target.webSocketDebuggerUrl)
+    await cdp.ready
+    const page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
+    this.pages.set(id, page)
+    this.touch()
+    return page
+  }
+
+  /**
+   * @param {{profile?: string, headless?: boolean, url?: string, session?: string}} [options] - how to start.
    * @returns {Promise<SidecarPage>} the page being driven.
    */
   async ensure(options = {}) {
@@ -1011,6 +1112,12 @@ export class Sidecar {
         }
       }
       this.touch()
+      const id = String(options.session ?? '')
+      if (id !== '') {
+        /* Another chat may be looking at another tab: this one gets its own. */
+        const mine = await this.tabFor(id, options.url)
+        return mine
+      }
       if (options.url !== undefined && options.url !== '') await this.page.navigate(options.url)
       return this.page
     }
@@ -1113,6 +1220,10 @@ export class Sidecar {
       '--password-store=basic',
       '--lang=zh-CN',
       `--window-size=${VIEW.width},${VIEW.height}`,
+      /* A windowless build says "HeadlessChrome" in every request, and a site
+         that checks for it answers the whole browser with a parked page. The
+         browser is windowless, not a robot: say what a person's Chrome says. */
+      `--user-agent=${DESKTOP_UA}`,
       /* A site that refuses a headless build still gets a window, but never on
          the desktop: the mirror in the column is the only thing to look at. */
       '--window-position=-3000,-3000',
@@ -1152,8 +1263,9 @@ export class Sidecar {
    * The browser's pages, in the order the browser lists them.
    * @returns {Promise<Array<{targetId: string, title: string, url: string, current: boolean}>>} the tabs.
    */
-  async tabs() {
-    return this.page === null ? [] : this.page.tabs()
+  async tabs(session = '') {
+    const page = this.pageFor(session) ?? this.page
+    return page === null ? [] : page.tabs()
   }
 
   /**
@@ -1161,12 +1273,29 @@ export class Sidecar {
    * @param {number} index - a row from `tabs()`.
    * @returns {Promise<SidecarPage>} the page now being driven.
    */
-  async useTab(index) {
-    const list = await this.tabs()
+  async useTab(index, session = '') {
+    const list = await this.tabs(session)
     const tab = list[Number(index)]
     if (tab === undefined) throw new Error(`sidecar: no tab ${String(index)}`)
+    const owned = String(session ?? '') !== ''
+    const mine = owned ? this.pageFor(session) : null
+    if (tab.current && mine !== null) return mine
+    if (tab.current && !owned) return this.page
     if (tab.current) return this.page
-    const was = this.page
+    const was = mine ?? this.page
+    /* A chat that owns a tab keeps owning one: switching moves the chat, not
+       the browser's first tab that a different chat may be driving. */
+    if (mine !== null) {
+      const cdp = new Cdp(tab.webSocketUrl)
+      await cdp.ready
+      const page = await new SidecarPage(cdp, this.profile, mine.port).start() // ui-copy-ignore
+      this.pages.set(String(session), page)
+      mine.cdp.send('Page.stopScreencast').catch(() => {})
+      mine.cdp.close()
+      await page.cast()
+      this.touch()
+      return page
+    }
     const cdp = new Cdp(tab.webSocketUrl)
     await cdp.ready
     const page = await new SidecarPage(cdp, this.profile, was.port).start() // ui-copy-ignore
@@ -1184,18 +1313,25 @@ export class Sidecar {
    * Close a tab; the mirror moves to a neighbour when the closed one was shown.
    * @param {number} index - a row from `tabs()`.
    */
-  async closeTab(index) {
-    const list = await this.tabs()
+  async closeTab(index, session = '') {
+    const list = await this.tabs(session)
     const tab = list[Number(index)]
     if (tab === undefined) throw new Error(`sidecar: no tab ${String(index)}`)
-    let port = this.page?.port ?? 0 // ui-copy-ignore
+    const mine = String(session ?? '') === '' ? null : this.pageFor(session)
+    let port = (mine ?? this.page)?.port ?? 0 // ui-copy-ignore
     let alone = true
     if (tab.current) {
       const other = list.findIndex((item) => !item.current)
       alone = other < 0
-      if (!alone) await this.useTab(other)
+      if (!alone) await this.useTab(other, session)
     }
     if (port > 0) await fetch(`http://127.0.0.1:${port}/json/close/${tab.targetId}`, { signal: AbortSignal.timeout(1000) }).catch(() => {}) // ui-copy-ignore
+    if (alone && mine !== null) {
+      /* The chat still needs somewhere to go: a fresh tab in the same browser. */
+      this.pages.delete(String(session))
+      await this.tabFor(String(session), 'about:blank')
+      return
+    }
     if (alone) {
       await this.shutdown()
       await this.ensure()
@@ -1244,8 +1380,8 @@ export class Sidecar {
    * @param {(frame: any) => void} sink - called per frame.
    * @returns {Promise<() => void>} detach.
    */
-  async watch(sink) {
-    const page = await this.ensure()
+  async watch(sink, session = '') {
+    const page = await this.ensure({ session })
     page.frames.add(sink)
     page.pointerSinks.add(sink)
     await page.cast()
@@ -1262,7 +1398,9 @@ export class Sidecar {
       this.idle = null
       /* Someone is watching the mirror: the page stays up, and the clock starts
          again so the browser is closed only once it is truly unused. */
-      if ((this.page?.frames.size ?? 0) > 0) {
+      let watched = this.page?.frames.size ?? 0
+      for (const page of this.pages.values()) watched += page.frames?.size ?? 0
+      if (watched > 0) {
         this.touch()
         return
       }
@@ -1281,6 +1419,7 @@ export class Sidecar {
       await new Promise((resolve) => setTimeout(resolve, 400))
     }
     this.page = null
+    this.pages.clear()
     this.cdp?.close()
     this.cdp = null
     if (this.child !== null) {
@@ -1355,6 +1494,7 @@ export class Sidecar {
       profile: this.profile, // ui-copy-ignore
       headless: this.headless, // ui-copy-ignore
       url: this.page?.url ?? '', // ui-copy-ignore
+      pages: this.pages.size,
       title: this.page?.title ?? '',
       viewers: this.page?.frames.size ?? 0,
       frames: this.page?.seq ?? 0,

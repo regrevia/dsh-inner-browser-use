@@ -9,12 +9,21 @@
  * has settled.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
 import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote } from './review.js?v=1'
+
+/** Which chat the running call belongs to, so each gets its own tab. */
+export const sessionScope = new AsyncLocalStorage()
+
+/** @returns {string} the chat id of the running call. */
+function currentSession() {
+  return String(sessionScope.getStore() ?? '')
+}
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -480,12 +489,22 @@ async function fieldByName(page, words) {
  * @param {{clear?: boolean, submit?: boolean}} options - how.
  */
 async function writeAt(page, point, text, options = {}) {
+  /* Approach the control the way a hand does: a couple of small moves that
+     land in different places, not a teleport followed by a click. */
+  const drift = (by) => ({ x: point.x + by, y: point.y + Math.round(by / 2) })
+  await page.mouse('mouseMoved', drift(-14 - Math.round(Math.random() * 10)))
+  await wait(40 + Math.round(Math.random() * 45))
+  await page.mouse('mouseMoved', drift(-4 - Math.round(Math.random() * 4)))
+  await wait(25 + Math.round(Math.random() * 35))
   await page.mouse('mouseMoved', point)
+  await wait(35 + Math.round(Math.random() * 60))
   await page.mouse('mousePressed', { ...point, clickCount: 1 })
+  await wait(20 + Math.round(Math.random() * 40))
   await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-  await wait(80)
+  await wait(90 + Math.round(Math.random() * 120))
   if (options.clear === true) await clearFocus(page)
-  await page.insertText(text)
+  if (options.human === false) await page.insertText(text)
+  else await page.humanType(text)
   if (options.submit === true) await pressKey(page, 'Enter')
 }
 
@@ -527,7 +546,7 @@ async function runStep(page, step, known) {
       if (step.tap !== undefined) return `${lead}clicked ${String(step.ref)} ${String(spot.name ?? '')}`.trim() + after
       await wait(80)
       if (step.clear === true) await clearFocus(page)
-      await page.insertText(String(step.text))
+      await page.humanType(String(step.text))
       if (step.submit === true) await pressKey(page, 'Enter')
       return `${lead}typed into ${String(step.ref)} ${String(spot.name ?? '')}`.trim() + after
     }
@@ -562,7 +581,7 @@ async function runStep(page, step, known) {
   }
   if (step.text !== undefined) {
     if (step.clear === true) await clearFocus(page)
-    await page.insertText(String(step.text))
+    await page.humanType(String(step.text))
     if (step.submit === true) await pressKey(page, 'Enter')
     return `typed ${String(step.text).slice(0, 60)}`
   }
@@ -793,7 +812,7 @@ await page.mouse('mouseMoved', point)
 await page.mouse('mousePressed', { ...point, clickCount: 1 })
 await page.mouse('mouseReleased', { ...point, clickCount: 1 })
 await wait(60)
-await page.insertText(said)
+await page.humanType(said)
 if (args?.submit !== false) await pressKey(page, 'Enter')
 await wait(500)
 if (args?.submit !== false && (await boxHolds(page, said))) {
@@ -858,14 +877,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
      run, because they are how a stuck person finds out what happened. */
   const withRawPage = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
-    const page = await sidecar.ensure()
+    const page = await sidecar.ensure({ session: currentSession() })
     const text = await work(page)
     return { text: text + personNote(sidecar) }
   }
   /** Looking is still useful while the person has the page. */
   const withRead = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
-    const page = await sidecar.ensure()
+    const page = await sidecar.ensure({ session: currentSession() })
     const dead = await unreachable(page)
     if (dead !== '') return { text: dead + personNote(sidecar) }
     const text = await work(page)
@@ -932,7 +951,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @param {any} exec - tool run. @returns {Promise<{text: string}>} what the page is. */
       execute: async (args, exec) => {
-        const page = await sidecar.ensure({ url: args?.url, headless: args?.headless })
+        const who = String(exec?.agent?.id ?? '')
+        const page = await sidecar.ensure({ url: args?.url, headless: args?.headless, session: who })
         if (args?.url === undefined) await page.readTitle()
         /* A window on the person's screen is their business, not a surprise: say
            it, so nobody wonders what popped up. A site that refuses a windowless
@@ -940,7 +960,6 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const windowed = sidecar.headless === false ? 'The browser is showing a window this time — a site only opens for a windowed one. Same profile, same logins.\n' : ''
         /* The tab appears in the calling chat and nowhere else: the person may
            be reading a different chat, and a browser there would be a surprise. */
-        const who = String(exec?.agent?.id ?? '')
         if (who !== '') host.want?.(who) // ui-copy-ignore
         await settle(page, 8000)
         const dead = await unreachable(page)
@@ -1083,7 +1102,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           await wait(80)
         }
         if (args?.clear === true) await clearFocus(page)
-        await page.insertText(String(args?.text ?? ''))
+        await page.humanType(String(args?.text ?? ''))
         if (args?.submit === true) await pressKey(page, 'Enter')
         await settle(page)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')
@@ -1917,18 +1936,18 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withRawPage(async (page) => {
         const action = String(args?.action ?? 'list')
         if (action === 'list') {
-          const rows = await sidecar.tabs()
+          const rows = await sidecar.tabs(currentSession())
           if (rows.length === 0) return 'no tabs'
           return rows.map((row, i) => `${i}${row.current ? ' *' : ''} ${row.title || row.url} · ${row.url}`).join('\n')
         }
         const index = Number(args?.index ?? 0)
         if (action === 'switch') {
-          const next = await sidecar.useTab(index)
+          const next = await sidecar.useTab(index, currentSession())
           return `tab ${index} · ${String(next?.url ?? '')}`
         }
         if (action === 'close') {
-          await sidecar.closeTab(index)
-          return `closed tab ${index} · ${String(sidecar.page?.url ?? '')}`
+          await sidecar.closeTab(index, currentSession())
+          return `closed tab ${index} · ${String((sidecar.pageFor(currentSession()) ?? sidecar.page)?.url ?? '')}`
         }
         throw new Error(`sidecar: unknown action ${action}`)
       }),

@@ -439,3 +439,22 @@ The two places a reload can still meet itself are guarded instead of trusted:
 
 Guards are covered by `test/no-duplicate.test.mjs` plus a double-mount test:
 65 unit tests, 66 breadth checks, 20 packaged files.
+
+## Phase 23 — one tab per chat, typing that looks like hands, 0.34.0
+
+The browser used to be one page for the whole app, so any chat could navigate
+the page another chat was reading. Tabs are now per chat; one windowless Chrome
+and one profile still back all of them, so a login is shared and an address is
+not.
+
+| what | measured |
+| --- | --- |
+| first chat, browser cold | 725 ms to a driven page |
+| second chat, own tab | 1 round trip, no second Chrome |
+| chat A navigates | chat B's URL and the first tab unchanged |
+| frames per chat | `/sidecar/frames?session=` streams only that tab |
+| paste, 46 chars | 5 ms |
+| human typing, 46 chars | 1965–2238 ms (43–49 ms per char) |
+| human typing, >160 chars | 8-char bursts, 16–58 ms gaps, ≈6 ms per char |
+| headless UA | desktop Chrome UA, no `HeadlessChrome` |
+| suite | 70 pass, breadth 66, ui-copy clean |

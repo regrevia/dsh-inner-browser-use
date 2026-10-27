@@ -203,7 +203,9 @@ export function apply(ctx) {
       /* The column is global and only one chat may hold the mirror: a chat that
          does not own it is refused here, so a stale tab cannot stream a picture
          of somebody else's browser. */
-      if (bridge.owner !== '' && sessionId !== bridge.owner) {
+      const asked = String(url.searchParams.get('session') ?? '')
+      const watching = asked !== '' ? asked : sessionId
+      if (watching !== '' && bridge.owner !== '' && watching !== bridge.owner) {
         json(403, { ok: false, text: 'this chat does not own the browser', owner: bridge.owner })
         return
       }
@@ -226,7 +228,7 @@ export function apply(ctx) {
              page wait: the newest picture is the only one worth sending. */
           if (res.writableLength > 3 * 1024 * 1024) return
           res.write(`data: ${JSON.stringify(frame)}\n\n`)
-        })
+        }, watching)
         const info = await sidecar.state()
         res.write(`data: ${JSON.stringify({ type: 'hello', ...info })}\n\n`)
       } catch (error) {
@@ -262,6 +264,7 @@ export function apply(ctx) {
         await sidecar.ensure({
           url: address === '' ? undefined : address,
           headless: body.headless === undefined ? undefined : body.headless === true,
+          session: who,
         })
         /* The mirror belongs to the chat that asked for it; any earlier owner
            loses it and its tab. */
@@ -409,7 +412,14 @@ export function apply(ctx) {
          A name already in the registry is kept, not fought over: a duplicate
          registration is a warning, never a crash. */
       try {
-        return scope.tools.register(definition)
+        const run = definition.execute
+        const scoped = {
+          ...definition,
+          /* Every tool call runs inside the chat that made it, so the browser
+             hands that chat its own tab and no other. */
+          execute: async (args, exec) => sessionScope.run(String(exec?.agent?.id ?? ''), () => run(args, exec)),
+        }
+        return scope.tools.register(scoped)
       } catch (error) {
         ctx.logger?.warn?.(`browser tool ${definition.name} already registered: ${String(error?.message ?? error)}`)
         return () => {}
