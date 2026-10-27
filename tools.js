@@ -413,6 +413,58 @@ export function diffRead(previous, next, options = {}) {
  * @param {{logger?: any}} [host] - host services. // ui-copy-ignore
  * @returns {any[]} tool definitions.
  */
+/**
+ * Read what a selector matches as one line per item.
+ * A list read this way costs a fraction of the whole page and keeps the model on
+ * the items it came for: the text, plus the link when the item has one.
+ * @param {any} page - sidecar page.
+ * @param {any} args - select, ref, limit.
+ * @returns {Promise<string>} one line per row, and how many there were.
+ */
+export async function extractRows(page, args) {
+  const select = typeof args?.select === 'string' ? args.select.trim() : ''
+  if (select === '') return 'Give a selector: what to read, for example "ul.results > li".'
+  const ref = Math.trunc(Number(args?.ref ?? 0)) || 0
+  const limit = Math.min(200, Math.max(1, Math.trunc(Number(args?.limit ?? 40)) || 40))
+  const expression = `(() => {
+    const reg = window.__dshRead
+    let scope = document
+    if (${ref} > 0) {
+      const hit = reg !== undefined && typeof reg.find === 'function' ? reg.find(${ref}) : null
+      if (hit === null || hit === undefined || hit.el === null || hit.el === undefined) return { gone: true }
+      scope = hit.el
+    }
+    let nodes
+    try { nodes = scope.querySelectorAll(${JSON.stringify(select)}) }
+    catch { return { bad: true } }
+    const rows = []
+    for (const node of nodes) {
+      if (rows.length >= ${limit}) break
+      const raw = typeof node.innerText === 'string' && node.innerText !== '' ? node.innerText : String(node.textContent ?? '')
+      const text = raw.replace(/\\s+/g, ' ').trim().slice(0, 200)
+      const own = node.matches !== undefined && node.matches('a[href]') === true ? node : null
+      const link = own ?? (typeof node.querySelector === 'function' ? node.querySelector('a[href]') : null)
+      const full = link !== null && link !== undefined && typeof link.href === 'string' ? link.href : ''
+      /* A row on this site says the same with the path alone; the origin is
+         already in the result and would be repeated thirty times. */
+      const href = full.startsWith(location.origin) ? full.slice(location.origin.length) : full
+      rows.push({ text, href })
+    }
+    return { rows, total: nodes.length }
+  })()`
+  const out = await page.cdp.send('Runtime.evaluate', { expression, returnByValue: true }).catch((error) => ({ error: String(error?.message ?? error) }))
+  if (out?.error !== undefined && out.error !== null && typeof out.error === 'string') return `the page did not answer: ${out.error}`
+  const value = out?.result?.value
+  if (value === undefined || value === null || value === '') return 'the page did not answer; try again, or read the page with sidecar_view.'
+  if (value.gone === true) return `ref ${ref} is gone. Read the page again and use a new number.`
+  if (value.bad === true) return `${select} is not a selector this browser understands.`
+  const rows = Array.isArray(value.rows) ? value.rows : []
+  if (rows.length === 0) return `nothing matched ${select} — the page may still be loading, or the selector is off.`
+  const said = rows.map((row, index) => `${index + 1}. ${row.text === '' ? '(empty)' : row.text}${row.href === '' ? '' : ` · ${row.href}`}`)
+  const more = Number(value.total) > rows.length ? `\n… ${Number(value.total) - rows.length} more rows` : ''
+  return `${rows.length} of ${Number(value.total)} rows matching ${select}:\n${said.join('\n')}${more}`
+}
+
 export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   const withPage = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
@@ -722,6 +774,25 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         refs.last = read
         return `${report.join('\n')}\n\n${renderPage(read, options)}`
       }),
+    },
+    {
+      name: 'sidecar_extract', // ui-copy-ignore
+      description: 'Read the items a selector matches as one compact line each — lists, search results, tables, menus — instead of the whole page. Each row keeps its link when it has one. Use it when a page has more rows than the read budget allows; it costs a fraction of a full read.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          select: { type: 'string', description: 'CSS selector for the items, for example "ul.results > li".' },
+          ref: { type: 'integer', description: 'Only look inside this control, as numbered by the last sidecar_view.' },
+          limit: { type: 'integer', description: 'Most rows to return. Default 40, at most 200.' },
+        },
+        required: ['select'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 30_000,
+      isConcurrencySafe: () => true,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the rows. */
+      execute: async (args) => withPage((page) => extractRows(page, args)),
     },
     {
       name: 'sidecar_eval', // ui-copy-ignore

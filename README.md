@@ -12,6 +12,7 @@ live picture of that browser, and your own cursor keeps working on the picture.
 | --- | --- |
 | `sidecar_open` | Starts the browser (or reuses the running one) and opens an address. `headless: false` shows a real window on the desktop instead. |
 | `sidecar_view` | Returns the address, the title, every control as `1 … 120`, and the visible text. |
+| `sidecar_extract` | Returns the items a CSS selector matches, one compact line each with its link, instead of the whole page. |
 | `sidecar_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. |
 | `sidecar_type` | Types text into the focused field, or clicks a numbered control first. Chinese goes in as one string. `submit: true` presses Enter. |
 | `sidecar_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down, Home, End, PageUp, PageDown. |

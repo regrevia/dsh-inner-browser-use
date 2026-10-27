@@ -98,7 +98,11 @@ answer), and a read now also asks for the frame tree.
 | key round trip | 13 ms | 2 ms |
 | screenshot | 82 ms, 133 KB | 77 ms, 113 KB |
 
-Breadth run (`npm run breadth`), 25 checks, all true: open shadow DOM read and
+`sidecar_extract` on a 30-row list: 1106 chars for all 30 rows (≈330 tokens),
+against 1291 chars for the same page read as text — and at a 500-char read
+budget the text read stops around row 12 while the list still returns 30.
+
+Breadth run (`npm run breadth`), 30 checks, all true: open shadow DOM read and
 click, form typing, select, checkbox, submit, `confirm()` seen and accepted,
 iframe read, iframe typing, iframe click, cross-site frame read and click,
 popup followed, download saved, network responses listed, a file uploaded

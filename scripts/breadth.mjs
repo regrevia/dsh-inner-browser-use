@@ -66,6 +66,9 @@ const PAGES = {
     <h1>Cross</h1>
     <iframe src="http://localhost:__PORT__/partner" style="width:520px;height:240px;border:1px solid #999"></iframe>
     </body></html>`,
+  '/list': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
+    <h1>Catalog</h1><ul id="rows">${Array.from({ length: 30 }, (_, i) => `<li><a href="/item?id=${i + 1}">Item ${i + 1} sold</a> — <span>$${i + 1}</span></li>`).join('')}</ul>
+    </body></html>`,
   '/partner': `<!doctype html><html><body style="font:16px system-ui;padding:12px">
     <p>a partner frame Chrome keeps apart</p><input placeholder="Partner field">
     <input type="file" aria-label="Partner file" onchange="document.title = 'partner got ' + this.files[0].name">
@@ -344,6 +347,13 @@ try {
   const closed = otherRow < 0 ? { text: '' } : await tabsTool.execute({ action: 'close', index: 0 })
   page = sidecar.page
   line('tabs', rows.length >= 2 && otherRow >= 0 && onLight && String(closed.text).includes('/dense'), `${rows.length} rows | ${switched.text} | ${closed.text} | ${String(listed.text).replace(/\n/g, ' / ').slice(0, 160)}`)
+
+  await page.navigate(`${base}/list`)
+  const extractTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_extract')
+  const extracted = String((await extractTool.execute({ select: '#rows li' })).text)
+  const wholeList = renderPage(await readPage(page, { mode: 'text', maxChars: 4000 }), { mode: 'text', maxChars: 4000 })
+  const budgetList = renderPage(await readPage(page, { mode: 'text', maxChars: 500 }), { mode: 'text', maxChars: 500 })
+  line('extract-rows', /^30 of 30 rows/.test(extracted) && extracted.includes('/item?id=30') && budgetList.includes('/item?id=30') === false, `${extracted.length} chars vs ${wholeList.length} whole, ${budgetList.length} at a 500-char budget · ${extracted.split('\n')[1]?.slice(0, 70)}`)
 
   await page.navigate(`${base}/words`)
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }

@@ -124,6 +124,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_downloads',
     'sidecar_drag',
     'sidecar_eval',
+    'sidecar_extract',
     'sidecar_failed',
     'sidecar_hover',
     'sidecar_key',
@@ -148,7 +149,7 @@ test('registers the sidecar tools and nothing else', () => {
     assert.deepEqual(definition.output.schema.required, ['text'])
     assert.deepEqual(definition.output.render({}, { text: 'hi' }), [{ type: 'text', text: 'hi' }])
     /* Reading where the sidecar stands is safe anywhere; driving it is not. */
-    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads', 'sidecar_network'].includes(name))
+    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads', 'sidecar_network', 'sidecar_extract'].includes(name))
   }
 })
 
@@ -268,4 +269,10 @@ test('a person who acted first is reported to the agent once', async () => {
 test('looking around in the mirror is not taking over', async () => {
   const { personNote } = await import('../tools.js')
   assert.equal(personNote({ person: { at: 0, kind: '', x: 0, y: 0, seen: true } }), '')
+})
+
+test('extraction with no selector says what it needs', async () => {
+  const { extractRows } = await import('../tools.js')
+  assert.match(await extractRows({}, {}), /Give a selector/)
+  assert.match(await extractRows({}, { select: '  ' }), /Give a selector/)
 })

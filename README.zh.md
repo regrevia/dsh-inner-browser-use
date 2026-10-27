@@ -11,6 +11,7 @@ profile，不是产品自带的那个浏览页签：右栏放的是它的画面�
 | --- | --- |
 | `sidecar_open` | 启动浏览器（已在跑就复用）并打开一个地址。传 `headless: false` 会改为在桌面上开真实窗口。 |
 | `sidecar_view` | 返回地址、标题、编号成 `1 … 120` 的控件，以及可见文字。 |
+| `sidecar_extract` | 按 CSS 选择器把列表项读成一行一条、带链接，比整页读省得多。 |
 | `sidecar_click` | 点编号控件，或点 `x`/`y` 坐标。`double: true` 双击。 |
 | `sidecar_type` | 往焦点输入框输入文字，也可以先点一个编号控件。中文整段送进去。`submit: true` 回车提交。 |
 | `sidecar_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
