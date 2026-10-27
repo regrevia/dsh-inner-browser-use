@@ -261,3 +261,18 @@ reverse-contains (1).
 
 Breadth check `type-by-words` on the `/bare` form: value lands in
 `input[name=wk]`, the page does not move (no stray Enter).
+
+## Phase 11 — choosing a dropdown by name, 0.21.0
+
+`/bare` now carries a `select[name=seats]` whose only name on screen is a div
+saying `Seats`. One `sidecar_select` with `field: "Seats"`, `value: "Two"`:
+
+| what | result |
+| --- | --- |
+| the value after the call | `2` |
+| the tool's own words | `chose Two in Seats` (on-screen name, not `name="seats"`) |
+| a wrong option | answered with the first 12 options instead of a page read |
+| round trips to do it | one; no read beforehand, no read after |
+
+The naming rules (`labelSpot` and `selectSpot`) now live in one shared in-page
+block, so the two steps cannot drift apart.

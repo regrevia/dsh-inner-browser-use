@@ -634,23 +634,8 @@ export function sameThing(want, control) {
   return true
 }
 
-/**
- * The field a label belongs to, when nothing formally connects the two.
- *
- * `{field: "Email"}` used to mean "click the control that says Email". On a real
- * form the words live in a div above a bare input, so the click landed on the
- * text and the typing went wherever focus already was — the classic silent wrong
- * field. This finds the *editable* element the words point at: a real label, an
- * aria name, a placeholder, a name attribute, the text right before it, or the
- * text of the small wrapper it sits in.
- * @param {string} words - what the field is called.
- * @returns {string} an expression that evaluates to a spot, or {} when nothing fits.
- */
-export function labelSpot(words) {
-  const wanted = JSON.stringify(String(words ?? '').toLowerCase())
-  return `(() => {
-  const want = ${wanted}
-  if (want === '') return JSON.stringify({})
+/** The in-page half shared by `labelSpot` and `selectSpot`: shadow roots, what says what. */
+const NAME_PRELUDE = `
   const roots = [document]
   for (const el of document.querySelectorAll('*')) {
     if (roots.length > 400) break
@@ -685,34 +670,95 @@ export function labelSpot(words) {
     add(el.getAttribute('aria-label'))
     add(el.getAttribute('placeholder'))
     add(el.getAttribute('title'))
-    add(el.getAttribute('name'))
     if (el.id) for (const l of document.querySelectorAll('label[for]')) if (l.htmlFor === el.id) add(l.innerText ?? l.textContent)
     const prev = el.previousElementSibling
     if (prev && editable(prev) !== true) add(prev.innerText ?? prev.textContent)
     const parent = el.parentElement
     if (parent && parent.querySelectorAll('input,textarea,select,[contenteditable=true]').length <= 1) add(parent.innerText ?? parent.textContent)
+    /* The attribute is the last resort for a name on screen: it is often the
+       developer's word for the field, not the one the user reads. */
+    add(el.getAttribute('name'))
     return out
   }
-  let best = null
-  for (const root of roots) {
-    for (const el of root.querySelectorAll('input,textarea,select,[contenteditable=""],[contenteditable=true],[role=textbox],[role=searchbox],[role=combobox]')) {
-      if (editable(el) !== true || shown(el) !== true) continue
-      let score = 0
-      let name = ''
-      for (const nm of names(el)) {
-        const low = nm.toLowerCase()
-        if (low === want) score = Math.max(score, 3)
-        else if (want.length >= 2 && low.includes(want)) score = Math.max(score, 2)
-        else if (low.length >= 3 && want.includes(low)) score = Math.max(score, 1)
-        if (score > 0 && name === '') name = nm
-      }
-      if (score === 0) continue
-      if (best === null || score > best.score) best = { el, score, name }
+  const scored = (el, want) => {
+    let score = 0
+    let name = ''
+    for (const nm of names(el)) {
+      const low = nm.toLowerCase()
+      if (low === want) score = Math.max(score, 3)
+      else if (want.length >= 2 && low.includes(want)) score = Math.max(score, 2)
+      else if (low.length >= 3 && want.includes(low)) score = Math.max(score, 1)
+      if (score > 0 && name === '') name = nm
     }
+    return { score, name }
   }
+  const bestOf = (selector, want) => {
+    let best = null
+    for (const root of roots) {
+      for (const el of root.querySelectorAll(selector)) {
+        if (shown(el) !== true) continue
+        const hit = scored(el, want)
+        if (hit.score === 0) continue
+        if (best === null || hit.score > best.score) best = { el, score: hit.score, name: hit.name }
+      }
+    }
+    return best
+  }
+`
+
+/**
+ * The field a label belongs to, when nothing formally connects the two.
+ * ...
+ */
+/**
+ * The field a label belongs to, when nothing formally connects the two.
+ *
+ * `{field: "Email"}` used to mean "click the control that says Email". On a real
+ * form the words live in a div above a bare input, so the click landed on the
+ * text and the typing went wherever focus already was — the classic silent wrong
+ * field. This finds the *editable* element the words point at: a real label, an
+ * aria name, a placeholder, a name attribute, the text right before it, or the
+ * text of the small wrapper it sits in.
+ * @param {string} words - what the field is called.
+ * @returns {string} an expression that evaluates to a spot, or {} when nothing fits.
+ */
+export function labelSpot(words) {
+  const wanted = JSON.stringify(String(words ?? '').toLowerCase())
+  return `(() => {
+  const want = ${wanted}
+  if (want === '') return JSON.stringify({})
+  ${NAME_PRELUDE}
+  const best = bestOf('input,textarea,select,[contenteditable=""],[contenteditable=true],[role=textbox],[role=searchbox],[role=combobox]', want)
   if (best === null) return JSON.stringify({})
+  if (editable(best.el) !== true) return JSON.stringify({})
   best.el.scrollIntoView({ block: 'center', inline: 'nearest' })
   const b = best.el.getBoundingClientRect()
   return JSON.stringify({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), name: best.name, score: best.score })
+})()`
+}
+
+/**
+ * The dropdown the words belong to, with the wanted option already chosen.
+ * @param {string} words - what the dropdown is called on screen.
+ * @param {string} value - option label or value.
+ * @returns {string} an expression that picks the option and says what it did.
+ */
+export function selectSpot(words, value) {
+  const wanted = JSON.stringify(String(words ?? '').toLowerCase())
+  const wanted2 = JSON.stringify(String(value ?? ''))
+  return `(() => {
+  const want = ${wanted}
+  const wanted = ${wanted2}
+  if (want === '') return 'no dropdown was named'
+  ${NAME_PRELUDE}
+  const best = bestOf('select', want)
+  if (best === null) return 'no dropdown says ' + JSON.stringify(want)
+  const select = best.el
+  const option = Array.from(select.options).find((item) => item.value === wanted || item.text.trim() === wanted || item.text.trim().toLowerCase() === wanted.toLowerCase())
+  if (!option) return 'no option ' + wanted + ' in ' + best.name + '; options are ' + Array.from(select.options).slice(0, 12).map((item) => item.text.trim()).join(' | ')
+  select.value = option.value
+  select.dispatchEvent(new Event('input', { bubbles: true }))
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+  return 'chose ' + option.text.trim() + ' in ' + best.name
 })()`
 }

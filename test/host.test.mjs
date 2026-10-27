@@ -416,3 +416,17 @@ test('the typing tool can be told which field by its words', async () => {
   assert.ok(type.parameters.properties.ref !== undefined)
   assert.deepEqual(type.parameters.required, ['text'])
 })
+
+test('a dropdown can be chosen by the words that name it', async () => {
+  const { selectSpot } = await import('../read.js?v=1')
+  const expr = selectSpot('Seats', 'Two')
+  assert.equal(typeof expr, 'string')
+  assert.match(expr, /bestOf\('select'/)
+  assert.match(expr, /chose /)
+  /* Both the name and the option are data, never code. */
+  assert.ok(selectSpot("say \"hi\"", "it's").includes('say \\"hi\\"'))
+  const { sidecarTools } = await import('../tools.js?v=1')
+  const select = sidecarTools({ state: () => ({}) }, { last: undefined }).find((tool) => tool.name === 'sidecar_select')
+  assert.ok(select.parameters.properties.field !== undefined)
+  assert.deepEqual(select.parameters.required, ['value'])
+})

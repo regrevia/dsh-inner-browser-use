@@ -1,3 +1,10 @@
+## 0.21.0
+
+- **下拉框也能按名字选。** `sidecar_select` 以前只要编号；现在 `{field: "Seats", value: "Two"}` 就行——它在页面里找那个「叫这几个字」的下拉，选好选项，回一句 `chose Two in Seats`。选项对不上时把前 12 个选项念出来，不用再读一遍页面。
+- **同一个页面解析件，两处共用。** `labelSpot` 里那套「影子根、什么叫什么、打分」抽成 `NAME_PRELUDE`，`selectSpot` 直接复用；两处行为不会再各写一遍、各错一遍。
+- **报名字时优先屏幕上那句话。** 顺序改成 真 label → aria-labelledby → aria-label → placeholder → title → `label[for]` → 紧跟前面的文本 → 外层容器文字 → 最后才是 `name` 属性。`name="seats"` 不再把结果写成 `chose Two in seats`，而是用户看到的 `Seats`。
+- 测试：46 条单测（`selectSpot` 的接口与转义、`sidecar_select` 的 `field` 契约）；广度 47 条全真（新增 `select-by-words`：`/bare` 加了带 div 标签的 `select[name=seats]`，按词选中 Two，断言值变成 `2`）。
+
 ## 0.20.0
 
 - **`sidecar_type` 也能按名字找字段了。** 之前它只认编号（`ref`），而编号得先读一遍页面才有——为了打一行字先读整页，是最常见的几秒浪费。现在给 `field: "Work email"` 就行，它自己把词解析到能收文本的元素（同 0.19.0：真 label、aria、placeholder、name、前面的文本、只包一个输入的外层），点进去再打，结果里写清楚打进了哪个字段。

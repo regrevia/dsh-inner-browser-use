@@ -33,6 +33,7 @@ const PAGES = {
     <form onsubmit="event.preventDefault()">
     <div class="box" style="margin-bottom:16px"><div class="lbl">Work email</div><input name="wk"></div>
     <div class="box"><div class="lbl">Team name</div><input name="tm"></div>
+    <div class="box"><div class="lbl">Seats</div><select name="seats"><option value="1">One</option><option value="2">Two</option><option value="3">Three</option></select></div>
     <button type="submit">Send</button></form></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
@@ -245,6 +246,9 @@ try {
   const typeBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_type')
   const typed = String((await typeBare.execute({ field: 'Work email', text: 'z@z.z', clear: true })).text)
   line('type-by-words', (await js(page, 'document.querySelector("input[name=wk]").value')) === 'z@z.z' && typed.includes('typed into "Work email"'), typed.replace(/\n/g, ' / ').slice(0, 100))
+  const selectBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_select')
+  const picked = String((await selectBare.execute({ field: 'Seats', value: 'Two' })).text)
+  line('select-by-words', (await js(page, 'document.querySelector("select[name=seats]").value')) === '2' && picked.includes('chose Two in Seats'), picked.replace(/\n/g, ' / ').slice(0, 110))
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')

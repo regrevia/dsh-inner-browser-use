@@ -192,3 +192,10 @@ use when the caller knows the destination but not the number — the next place
 worth doing this is `sidecar_select` (choose an option by the field it belongs
 to), and after that the date/time case where the visible box is a div and the
 real input sits hidden beside it.
+
+## Phase 12 — the same words, the same place, 0.21.0
+
+`sidecar_select` joined `sidecar_type` and `sidecar_do` on the shared resolver.
+Left in this direction: the date/time case where the box the user sees is a div
+and the real input is hidden beside it, and `sidecar_click` on a control whose
+words are split across sibling nodes (`<span>Sign</span><span>in</span>`).

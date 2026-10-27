@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, REF_GONE } from './read.js?v=1'
 
 /** Where a screenshot from `sidecar_shot` lands, under the user's home. */
 export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
@@ -1181,9 +1181,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         type: 'object', // ui-copy-ignore
         properties: {
           ref: { type: 'integer', description: 'Number of the select control from sidecar_view.' },
+          field: { type: 'string', description: 'The dropdown is called this on screen, when you have no number for it.' },
           value: { type: 'string', description: 'Option label or value to choose.' },
         },
-        required: ['ref', 'value'], // ui-copy-ignore
+        required: ['value'], // ui-copy-ignore
         additionalProperties: false,
       },
       output: TEXT_OUTPUT, // ui-copy-ignore
@@ -1191,6 +1192,15 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
+        if (args?.ref === undefined) {
+          if (args?.field === undefined) return 'name the dropdown: pass its number from sidecar_view, or the words on screen that name it.' // ui-copy-ignore
+          const chosen = await evaluate(page, selectSpot(String(args.field), String(args?.value ?? '')))
+          const said = typeof chosen === 'string' ? chosen : chosen?.error === undefined ? '' : String(chosen.error)
+          if (said === '' || said.startsWith('no dropdown')) return said === '' ? 'the page did not answer; read it and try again.' : said // ui-copy-ignore
+          await settle(page, 3000)
+          if (args?.read === true) return `${said}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
+          return `${said} · ${await brief(page)}`
+        }
         const spot = await findAgain(page, Number(args?.ref))
         if (spot.gone === true) return REF_GONE
         const wanted = JSON.stringify(String(args?.value ?? ''))
