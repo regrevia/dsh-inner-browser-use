@@ -125,7 +125,12 @@ function snapshot(mode, budget, max) {
   const max = ${max}
   const name = (el) => {
     const label = el.labels && el.labels[0] ? String(el.labels[0].innerText ?? '') : ''
-    const own = el.getAttribute?.('aria-label') ?? el.getAttribute?.('title') ?? el.getAttribute?.('placeholder') ?? ''
+    const pointing = String(el.getAttribute?.('aria-labelledby') ?? '')
+    const named = pointing.split(/\s+/).filter(Boolean).map((id) => {
+      const other = el.ownerDocument.getElementById(id)
+      return other === null ? '' : String(other.innerText ?? other.textContent ?? '')
+    }).join(' ').replace(/\s+/g, ' ').trim()
+    const own = named || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.getAttribute?.('placeholder') || ''
     const text = String(el.innerText ?? '').replace(/\\s+/g, ' ').trim()
     const value = el.tagName === 'INPUT' && el.type !== 'password' ? String(el.value ?? '') : ''
     return String(label || own || text || value || el.getAttribute?.('alt') || el.getAttribute?.('name') || '').replace(/\\s+/g, ' ').trim().slice(0, 140)

@@ -24,6 +24,8 @@ const PAGES = {
   '/form': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <form action="/done"><label>Email <input name="email" type="email"></label>
     <label>Size <select name="size"><option>Small</option><option>Large</option></select></label>
+    <label for="nick">Nickname</label><input id="nick">
+    <span id="hint">Search the catalog</span><input aria-labelledby="hint">
     <label><input type="checkbox" name="agree"> I agree</label>
     <button type="submit">Send</button></form></body></html>`,
   '/dialog': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
@@ -143,6 +145,10 @@ try {
     line('form-select', selected === 'Large')
   }
   const after = await readPage(page, { mode: 'forms', maxChars: 1600 })
+  const nick = control(form, 'Nickname')
+  const hint = control(form, 'Search the catalog')
+  line('form-names', nick !== undefined && hint !== undefined, `${nick?.name ?? 'none'} | ${hint?.name ?? 'none'}`)
+
   const changed = diffRead(form, after, { maxChars: 2000 })
   const whole = renderPage(after, { mode: 'forms', maxChars: 1600 })
   line('changed-only', changed.includes('a@b.c') && changed.length < whole.length / 2, `${changed.length} chars vs ${whole.length}`)
