@@ -250,3 +250,14 @@ element, builds a list of candidate names from real labels, `aria-labelledby`,
 `aria-label`, `placeholder`, `title`, `name`, `label[for]`, the element right
 before it, and its wrapper's text — then scores exact (3) / contains (2) /
 reverse-contains (1).
+
+## Phase 10 — typing by name, 0.20.0
+
+| what the caller has | what it used to take | now |
+| --- | --- | --- |
+| a name for the field, no number | read the page, find the number, then type | one `sidecar_type` with `field`, one round trip |
+| the field's words live in a div | click landed on the div, text went wherever focus was | resolved to the field, `typed into "Work email"` |
+| a banner over the field | typed under the banner | banner cleared first, then typed |
+
+Breadth check `type-by-words` on the `/bare` form: value lands in
+`input[name=wk]`, the page does not move (no stray Enter).

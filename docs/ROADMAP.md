@@ -184,3 +184,11 @@ to the element that takes text, and says which one it used.
 Next in this direction: the same resolution for `sidecar_type` when the caller
 names a field by its words instead of a ref, and for date/time pickers where the
 visible box is a div and the real input is hidden beside it.
+
+## Phase 11 — say where, not which number, 0.20.0
+
+Typing by name is in. The same resolution is what other steps should be able to
+use when the caller knows the destination but not the number — the next place
+worth doing this is `sidecar_select` (choose an option by the field it belongs
+to), and after that the date/time case where the visible box is a div and the
+real input sits hidden beside it.

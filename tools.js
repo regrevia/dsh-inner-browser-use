@@ -445,6 +445,44 @@ async function fieldSpot(page, words) {
 }
 
 /**
+ * Where the field called these words is, clearing a banner over it first.
+ * @param {any} page - sidecar page.
+ * @param {string} words - what the field is called on screen.
+ * @returns {Promise<{x: number, y: number, name: string, lead: string}|null>} the click.
+ */
+async function fieldByName(page, words) {
+  const hit = await findWords(page, words)
+  const lead = hit === null ? '' : await coverLead(page, hit.ref)
+  if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
+    const spot = await locate(page, hit.ref)
+    if (spot.gone !== true) return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead }
+  }
+  const field = await fieldSpot(page, words)
+  if (field !== null) return { ...field, lead }
+  if (hit === null) return null
+  const spot = await locate(page, hit.ref)
+  if (spot.gone === true) return null
+  return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead }
+}
+
+/**
+ * Click a spot, type into it, and optionally clear it first.
+ * @param {any} page - sidecar page.
+ * @param {{x: number, y: number}} point - where to click.
+ * @param {string} text - what to type.
+ * @param {{clear?: boolean, submit?: boolean}} options - how.
+ */
+async function writeAt(page, point, text, options = {}) {
+  await page.mouse('mouseMoved', point)
+  await page.mouse('mousePressed', { ...point, clickCount: 1 })
+  await page.mouse('mouseReleased', { ...point, clickCount: 1 })
+  await wait(80)
+  if (options.clear === true) await clearFocus(page)
+  await page.insertText(text)
+  if (options.submit === true) await pressKey(page, 'Enter')
+}
+
+/**
  * Where the control behind a ref is now, following it across a re-render.
  * The module-level sibling of findAgain, for runStep, which has no closure.
  * @param {any} page - sidecar page.
@@ -502,41 +540,10 @@ async function runStep(page, step, known) {
   if (step.field !== undefined) {
     /* The words may sit on the field or in a div above a bare input. Only a
        click that lands on the field itself can be trusted with the typing. */
-    const hit = await findWords(page, String(step.field))
-    /* A banner over the words covers the field too; clear it on whichever
-       control carries the words, then look for the field again. */
-    const lead = hit === null ? '' : await coverLead(page, hit.ref)
-    let point = null
-    let called = ''
-    if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
-      const spot = await locate(page, hit.ref)
-      if (spot.gone !== true) {
-        point = { x: Number(spot.x), y: Number(spot.y) }
-        called = String(hit.name)
-      }
-    }
-    if (point === null) {
-      const field = await fieldSpot(page, String(step.field))
-      if (field !== null) {
-        point = { x: field.x, y: field.y }
-        called = field.name
-      }
-    }
-    if (point === null) {
-      if (hit === null) return `no control says ${JSON.stringify(String(step.field))}`
-      const spot = await locate(page, hit.ref)
-      if (spot.gone === true) return `ref ${String(hit.ref)}: ${REF_GONE}`
-      point = { x: Number(spot.x), y: Number(spot.y) }
-      called = String(hit.name)
-    }
-    await page.mouse('mouseMoved', point)
-    await page.mouse('mousePressed', { ...point, clickCount: 1 })
-    await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-    await wait(80)
-    if (step.clear === true) await clearFocus(page)
-    await page.insertText(String(step.text ?? ''))
-    if (step.submit === true) await pressKey(page, 'Enter')
-    return `${lead}typed into "${called.slice(0, 60)}"`
+    const target = await fieldByName(page, String(step.field))
+    if (target === null) return `${String(step.field)}: ${REF_GONE}`
+    await writeAt(page, { x: target.x, y: target.y }, String(step.text ?? ''), { clear: step.clear, submit: step.submit })
+    return `${target.lead}typed into "${target.name.slice(0, 60)}"`
   }
   if (step.tap !== undefined) {
     const [x, y] = String(step.tap).split(',').map(Number)
@@ -894,6 +901,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         properties: {
           text: { type: 'string', description: 'Text to type.' },
           ref: { type: 'integer', description: 'Control to click before typing.' },
+          field: { type: 'string', description: 'The field is called this on screen, when you have no number for it.' },
           submit: { type: 'boolean', description: 'Press Enter after typing.' },
           clear: { type: 'boolean', description: 'Select all and delete before typing.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
@@ -908,6 +916,15 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withPage(async (page) => {
         let cover = ''
         let followed = ''
+        if (args?.field !== undefined && args?.ref === undefined) {
+          const target = await fieldByName(page, String(args.field))
+          if (target === null) return `${String(args.field)}: ${REF_GONE}`
+          cover = target.lead
+          await writeAt(page, { x: target.x, y: target.y }, String(args?.text ?? ''), { clear: args?.clear, submit: args?.submit === true })
+          await settle(page)
+          const called = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')
+          return called + cover + ` (typed into "${target.name.slice(0, 50)}")` // ui-copy-ignore
+        }
         if (args?.ref !== undefined) {
           const gate = await clearCover(page, Number(args.ref))
           cover = gate.note

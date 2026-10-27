@@ -242,6 +242,9 @@ try {
   line('do-field-bare', bareValue === 'me@x.y' && teamValue === '', `${bareValue} | ${teamValue} | ${String(bareSaid.text).replace(/\n/g, ' / ').slice(0, 80)}`)
   const teamSaid = await bareDo.execute({ steps: [{ field: 'Team name', text: 'core' }], read: 'none' })
   line('do-field-bare-second', (await js(page, 'document.querySelector("input[name=tm]").value')) === 'core', String(teamSaid.text).slice(0, 80))
+  const typeBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_type')
+  const typed = String((await typeBare.execute({ field: 'Work email', text: 'z@z.z', clear: true })).text)
+  line('type-by-words', (await js(page, 'document.querySelector("input[name=wk]").value')) === 'z@z.z' && typed.includes('typed into "Work email"'), typed.replace(/\n/g, ' / ').slice(0, 100))
 
   await page.navigate(`${base}/login`)
   const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')

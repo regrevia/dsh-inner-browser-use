@@ -1,3 +1,10 @@
+## 0.20.0
+
+- **`sidecar_type` 也能按名字找字段了。** 之前它只认编号（`ref`），而编号得先读一遍页面才有——为了打一行字先读整页，是最常见的几秒浪费。现在给 `field: "Work email"` 就行，它自己把词解析到能收文本的元素（同 0.19.0：真 label、aria、placeholder、name、前面的文本、只包一个输入的外层），点进去再打，结果里写清楚打进了哪个字段。
+- **一份解析逻辑，两处用。** 写入这一步原来在 `sidecar_do` 里内联，现在抽成 `fieldByName`（找哪儿）+ `writeAt`（点、清、打、回车），`sidecar_do` 和 `sidecar_type` 共用；遮罩先清的规矩也就跟着统一了。
+- 一处顺手修掉的错：新分支最初把「回车」写成了 `submit !== true`，等于默认每次都在回车；改回 `=== true` 并由广度检查 `type-by-words` 守住（只打字不回车，值对、页面不动）。
+- 测试：45 条单测（新增 `sidecar_type` 的 `field` 参数契约）；广度 46 条全真（新增 `type-by-words`）。
+
 ## 0.19.0
 
 - **词在 div 里、输入框光秃秃的表单，现在能把字打进对的框。** 真实表单里 `<div class="label">Work email</div>` 底下跟一个没有任何 label / aria / placeholder 的 input，是极常见的一种写法（Ant Design、MUI、自绘表单都这样）。以前的 `{field: "Work email"}` 只会找「说这几个字的控件」，找到那个 div，点它——焦点没落到任何输入框，字就打在「原来有焦点的地方」，静默地错格。现在点之前先确认：命中控件本身能收文本就直接点；不能，就在页面里找这几个字真正对应的可编辑元素（真 label、aria-labelledby、aria-label、placeholder、name、紧跟在前面的文本、只包一个输入的父容器），滚到可见处再点。

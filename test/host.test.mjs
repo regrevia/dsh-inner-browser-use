@@ -406,3 +406,13 @@ test('a field with its words in a div above it can still be found', async () => 
   /* The words are data, never code: a quote in them must not break the probe. */
   assert.ok(labelSpot('say "hi"').includes('say \\"hi\\"'))
 })
+
+test('the typing tool can be told which field by its words', async () => {
+  const { sidecarTools } = await import('../tools.js?v=1')
+  const tools = sidecarTools({ state: () => ({}) }, { last: undefined })
+  const type = tools.find((tool) => tool.name === 'sidecar_type')
+  assert.ok(type !== undefined)
+  assert.ok(type.parameters.properties.field !== undefined)
+  assert.ok(type.parameters.properties.ref !== undefined)
+  assert.deepEqual(type.parameters.required, ['text'])
+})
