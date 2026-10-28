@@ -645,3 +645,22 @@ test('one chat never sees another chat in the call log', async () => {
   assert.equal(mineAgain.recent.some((entry) => entry.session === alpha), true, 'alpha sees its own call')
   assert.equal(mineAgain.recent.some((entry) => entry.session === beta), false, 'alpha sees no beta call')
 })
+
+test('a write that cannot name its chat is refused before it touches anything', async () => {
+  for (const path of ['/sidecar/input', '/sidecar/nav', '/sidecar/forget']) {
+    const refused = await call(path, { method: 'POST', body: JSON.stringify({ kind: 'text', text: 'x', op: 'reload' }) })
+    assert.equal(refused.status, 400, `${path} must ask which chat it is for`)
+    assert.equal((await refused.json()).text, 'which chat asked for it')
+  }
+})
+
+test('a chat that does not hold the mirror cannot close it or forget its ask', async () => {
+  /* The holder from the earlier route test still owns the mirror. */
+  const closed = await call('/sidecar/stop', { method: 'POST', body: JSON.stringify({ session: 'session-intruder' }) })
+  assert.equal(closed.status, 403, 'closing the browser is the holder\'s call')
+  const forgot = await call('/sidecar/forget', { method: 'POST', body: JSON.stringify({ session: 'session-intruder' }) })
+  assert.equal(forgot.status, 403, 'withdrawing an ask is the holder\'s call too')
+  const kept = await call('/sidecar/forget', { method: 'POST', body: JSON.stringify({ session: 'session-holder' }) })
+  assert.equal(kept.status, 200)
+  assert.equal((await kept.json()).ok, true)
+})

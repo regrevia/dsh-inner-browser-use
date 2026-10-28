@@ -255,6 +255,22 @@ export function apply(ctx) {
       json(403, { ok: false, text: 'this chat does not own the browser', owner: bridge.owner }) // ui-copy-ignore
       return true
     }
+    /* Every route that changes the page goes through one check: it must say
+       which chat it is for, and that chat must be the one holding the mirror.
+       Two rules in one place, so a new route cannot quietly skip one. */
+    /**
+     * @param {any} body - parsed request body, if any.
+     * @returns {string} the chat that may act, or '' when it was refused.
+     */
+    const acting = (body) => {
+      const who = String(body?.session ?? '') || sessionId
+      if (who === '') {
+        json(400, { ok: false, text: 'which chat asked for it' }) // ui-copy-ignore
+        return ''
+      }
+      if (held(who) && refuse()) return ''
+      return who
+    }
 
     if (path === '/sidecar/frames' && req.method === 'GET') {
       /* The column is global and only one chat may hold the mirror: a chat that
@@ -345,9 +361,11 @@ export function apply(ctx) {
         const address = String(body.url ?? '')
         /* The ask must name the chat it belongs to: a request that cannot say
            who it is for never gets the mirror. */
-        const who = String(body.session ?? '')
+        /* An open names its chat and then takes the mirror over: that is what
+           asking for it means, so another owner is not a refusal here. */
+        const who = String(body.session ?? '') || sessionId
         if (who === '') {
-          json(400, { ok: false, text: 'which chat asked for it' })
+          json(400, { ok: false, text: 'which chat asked for it' }) // ui-copy-ignore
           return
         }
         await sidecar.ensure({
@@ -375,9 +393,10 @@ export function apply(ctx) {
       }
       /* Input follows the owner: a chat that lost the mirror cannot act on the
          page from a stale tab either. */
-      if (held(String(body.session ?? '')) && refuse()) return
+      const actor = acting(body)
+      if (actor === '') return
       try {
-        const page = await sidecar.ensure({ session: String(body.session ?? '') })
+        const page = await sidecar.ensure({ session: actor })
         const kind = String(body.kind ?? '')
         const x = Number(body.x ?? 0)
         const y = Number(body.y ?? 0)
@@ -427,9 +446,10 @@ export function apply(ctx) {
         return
       }
       /* Navigation follows the owner too: a lost tab cannot steer the page. */
-      if (held(String(body.session ?? '')) && refuse()) return
+      const actor = acting(body)
+      if (actor === '') return
       try {
-        const page = await sidecar.ensure({ session: String(body.session ?? '') })
+        const page = await sidecar.ensure({ session: actor })
         const op = String(body.op ?? 'goto')
         if (op === 'reload') json(200, { ok: true, ...(await page.reload()) })
         else if (op === 'back') json(200, { ok: true, ...(await page.history(-1)) })
@@ -446,12 +466,21 @@ export function apply(ctx) {
     }
 
     if (path === '/sidecar/forget' && req.method === 'POST') {
-      /* Closing the tab is an answer: coming back should not reopen it. */
-      json(200, { ok: true, forgot: bridge.forget(sessionId) })
+      /* Closing the tab is an answer: coming back should not reopen it. Only the
+         chat that holds the mirror may withdraw its own ask. */
+      const body = await readBody(req).then((raw) => JSON.parse(raw || '{}')).catch(() => ({}))
+      const who = acting(body)
+      if (who === '') return
+      json(200, { ok: true, forgot: bridge.forget(who) })
       return
     }
 
     if (path === '/sidecar/stop' && req.method === 'POST') {
+      /* Closing the browser is a write as well: a chat that does not hold the
+         mirror cannot close another chat's page. */
+      const body = await readBody(req).then((raw) => JSON.parse(raw || '{}')).catch(() => ({}))
+      const who = String(body.session ?? '') || sessionId
+      if (who !== '' && held(who) && refuse()) return
       await sidecar.shutdown()
       json(200, { ok: true })
       return

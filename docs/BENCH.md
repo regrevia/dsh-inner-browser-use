@@ -1,3 +1,8 @@
+## Phase 34 — one gate in front of every write, 0.34.12
+
+- `acting()` 统一 400（未命名会话）与 403（非持有者）；实测匿名 `POST /sidecar/nav` → 400 `which chat asked for it`，非持有者 `POST /sidecar/stop` → 403，持有者 `forget` → 200。
+- 测试 90 → 92 条，全绿；文案与样式 lint 无 error。
+
 ## Phase 33 — a lost picture comes back in one click, 0.34.11
 
 - 实测「切走 / 重载后画面没了」的下一步：`/sidecar/state?session=…` 与画面流 hello 都给出 `chat.remembered`（该会话最后地址）。
