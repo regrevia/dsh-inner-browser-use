@@ -548,16 +548,11 @@ export class SidecarPage {
     this.targetId = String(
       await this.cdp.send('Target.getTargetInfo').then((info) => info?.targetInfo?.targetId ?? '').catch(() => ''),
     )
-    await this.cdp.send('Network.enable').catch(() => {})
     /* A click that downloads should leave a file, not nothing: point downloads
        at the profile so the driver can report where they went. */
     const folder = downloadsDir(profileDir(this.profile))
     mkdirSync(folder, { recursive: true })
     this.downloadsFolder = folder
-    await this.cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: folder }).catch(() => {})
-    /* Popups and out-of-process frames are separate targets. Attaching without
-       waiting keeps them usable, and lets the mirror follow a new tab. */
-    await this.cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }).catch(() => {})
     this.cdp.on((message) => {
       this.watch(message)
       if (message.method !== 'Page.screencastFrame') return
@@ -596,23 +591,39 @@ export class SidecarPage {
       }
       if (message.method === 'Page.loadEventFired') void this.readTitle()
     })
-    await this.cdp.send('Page.enable')
+    /* None of these settings depends on another: asking for all of them at
+       once is one round trip instead of four, and a cold start is where it
+       shows. */
+    await Promise.all([
+      this.cdp.send('Page.enable'),
+      this.cdp.send('Network.enable').catch(() => {}),
+      this.cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: folder }).catch(() => {}),
+      /* Popups and out-of-process frames are separate targets. Attaching without
+         waiting keeps them usable, and lets the mirror follow a new tab. */
+      this.cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }).catch(() => {}),
+    ])
     /* An instance left behind by a stopped app can still be sitting on a
        dialog; a paused renderer answers nothing, so clear it first. */
     await Promise.race([
       this.cdp.send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {}),
       new Promise((resolve) => setTimeout(resolve, 800)),
     ])
-    await this.cdp.send('Runtime.enable')
-    await this.cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: VIEW.width, // ui-copy-ignore
-      height: VIEW.height, // ui-copy-ignore
-      deviceScaleFactor: 1,
-      mobile: false, // ui-copy-ignore
-    })
+    /* The metrics and the version string are independent too: the UA override
+       only needs the version, not a turn of its own. */
+    const [, version] = await Promise.all([
+      this.cdp.send('Runtime.enable').then(() =>
+        this.cdp.send('Emulation.setDeviceMetricsOverride', {
+          width: VIEW.width, // ui-copy-ignore
+          height: VIEW.height, // ui-copy-ignore
+          deviceScaleFactor: 1,
+          mobile: false, // ui-copy-ignore
+        }),
+      ),
+      this.cdp.send('Browser.getVersion').catch(() => ({ product: '' })),
+    ])
     /* A headless build announces itself in the UA, and some sites refuse that
        string outright. The page is a normal Chrome here, so it says so. */
-    const { product } = await this.cdp.send('Browser.getVersion').catch(() => ({ product: '' }))
+    const product = String(version?.product ?? '')
     if (String(product).includes('HeadlessChrome')) {
       const version = String(product).replace(/.*HeadlessChrome\//, '')
       await this.cdp.send('Emulation.setUserAgentOverride', {
@@ -710,6 +721,14 @@ export class SidecarPage {
     this.touched = Date.now()
     this.lastUrl = String(url)
     await this.cdp.send('Page.navigate', { url })
+    /* A blank page is where the wait ends, not a place still to arrive: asking
+       for about:blank and then waiting for a non-blank address spent the whole
+       20 s budget, which is how a brand-new chat's first tab took forever. */
+    if (String(url) === '' || String(url) === 'about:blank') {
+      await wait(80)
+      await this.readTitle()
+      return { url: this.url, title: this.title }
+    }
     for (let i = 0; i < 200; i += 1) {
       await wait(100)
       await this.readTitle()

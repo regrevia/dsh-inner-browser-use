@@ -1,3 +1,14 @@
+## 0.34.8
+
+- A new chat's first tab opens in about 0.6 s instead of about 21 s. When the
+  driver navigated to `about:blank` it waited for a *non-blank* address to
+  appear, which can never happen on a blank page, so a fresh profile burned the
+  whole 20 s budget on every first open. A blank address now returns after the
+  navigation is acknowledged.
+- A cold start also asks the page for its settings in one round trip instead of
+  four (`Page`, `Network`, download behaviour and auto-attach together).
+- 87 unit tests pass (new: blank navigation returns quickly).
+
 ## 0.34.7
 
 - A session cookie kept for the next launch is no longer written over a cookie

@@ -1,3 +1,19 @@
+## Phase 30 — a brand-new chat's first tab, 0.34.8
+
+A fresh profile with no memory of a page means `openTab` asks for `about:blank`.
+`navigate` then polled for a non-blank address, which a blank page never becomes,
+and spent all 200 tries. Every first open of a new chat paid it.
+
+| cold start, fresh profile (`about:blank`) | before | now |
+|---|---|---|
+| round 1 | 21 322 ms | 817 ms |
+| round 2 | 20 882 ms | 607 ms |
+| round 3 | 20 900 ms | 516 ms |
+| page settings round trips | 4 | 1 |
+
+Measured with three launches of `Sidecar#ensure` against a throwaway profile;
+the first launch is now about 26× faster than before.
+
 ## Phase 29 — a stale session cookie is not written back, 0.34.7
 
 `restoreSessionCookies` replayed every kept session cookie on launch, including

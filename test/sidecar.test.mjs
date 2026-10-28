@@ -145,3 +145,18 @@ test('two calls that start together share one tab instead of opening a twin', as
   assert.deepEqual(went, ['https://example.com/next'], 'the later address is followed in the same tab')
   assert.equal(sidecar.opening.size, 0, 'the note is cleared once the tab exists')
 })
+
+test('asking for a blank page returns at once instead of waiting for a page to arrive', async () => {
+  const page = Object.create(SidecarPage.prototype)
+  const sent = []
+  page.cdp = { send: async (method) => { sent.push(method); return {} } }
+  page.url = 'about:blank'
+  page.title = ''
+  page.readTitle = async () => {}
+  const at = Date.now()
+  const where = await page.navigate('about:blank')
+  const took = Date.now() - at
+  assert.equal(where.url, 'about:blank')
+  assert.equal(sent[0], 'Page.navigate')
+  assert.ok(took < 2000, `blank navigation took ${took} ms`)
+})
