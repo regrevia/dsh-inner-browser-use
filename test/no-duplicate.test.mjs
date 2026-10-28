@@ -1,9 +1,10 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
-const ROOT = new URL('..', import.meta.url).pathname
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const FILES = ['index.js', 'sidecar.js', 'tools.js', 'read.js', 'review.js', 'client.js'].map((name) => join(ROOT, name))
 
 /** Top-level names only: a name reused inside a block is scoping, not a clash. */

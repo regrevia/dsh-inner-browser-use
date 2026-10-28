@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 process.env.DSH_INNER_BROWSER_STATE_DIR = mkdtempSync(join(tmpdir(), 'dshib-login-'))
-const { snapshotLogin, restoreLogin, loginBackupDir } = await import('/Users/apple/Desktop/DSH/dsh-inner-browser-use/sidecar.js')
+const { snapshotLogin, restoreLogin, loginBackupDir } = await import(new URL('../sidecar.js', import.meta.url).href)
 
 test('a working cookie store is kept and put back when the profile loses it', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dshib-prof-'))

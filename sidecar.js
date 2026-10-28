@@ -190,7 +190,10 @@ const COOKIE_FILES = ['Default/Cookies', 'Local State']
  * @returns {string} where its cookie snapshots live.
  */
 export function loginBackupDir(dir) {
-  return join(tabsDir, 'login', dir.split('/').filter(Boolean).pop() ?? 'default')
+  // A Windows profile path has no '/', so splitting on it returned the whole
+  // path and the backup landed at `.../login/C:\Users\…` — a mkdir that fails.
+  const last = dir.split(/[\\/]/u).filter(Boolean).pop() ?? 'default'
+  return join(tabsDir, 'login', last)
 }
 
 /**
@@ -1870,7 +1873,11 @@ export class Sidecar {
       /* no watcher yet, or one whose note is unreadable */
     }
     /* Detached and unref'd: the app must not wait for this, and it must outlive
-       the plugin instance it was started for. */
+       the plugin instance it was started for. Windows has no `/bin/sh`, so there
+       the lifetime rides on the browser itself: `taskkill /T` already ends the
+       whole tree when this process is gone, and spawning a POSIX watcher here
+       would only throw ENOENT and be swallowed. */
+    if (process.platform === 'win32') return
     try {
       const guard = spawn('/bin/sh', ['-c', `while kill -0 ${app} 2>/dev/null; do sleep 5; done; kill ${chrome} 2>/dev/null`], {
         detached: true,
