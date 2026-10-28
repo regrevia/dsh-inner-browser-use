@@ -676,10 +676,20 @@ test('only the owning chat picks a browser up on a state poll', async () => {
 })
 
 test('picking a surviving browser up names the chat, so that chat gets its own tab back', async () => {
-  const { adoptOptions } = await import('../index.js')
+  const { adoptOptions, needsTab } = await import('../index.js')
   assert.deepEqual(adoptOptions('session-1', 'https://example.com/a'), { session: 'session-1', url: 'https://example.com/a' })
   /* No remembered address still names the chat: the pane needs a tab, not a
      browser with nothing in it. */
   assert.deepEqual(adoptOptions('session-1', ''), { session: 'session-1' })
   assert.deepEqual(adoptOptions('session-1', undefined), { session: 'session-1' })
+})
+
+test('a running browser with no tab for this chat is a poll that reopens one', async () => {
+  const { needsTab } = await import('../index.js')
+  /* The browser is fine; this chat's tab is what went missing at a reload. */
+  assert.equal(needsTab({ alive: false }, 'session-a', 'session-a'), true)
+  assert.equal(needsTab({ alive: true }, 'session-a', 'session-a'), false)
+  /* Another chat's column and an unnamed poll are not this chat's to repair. */
+  assert.equal(needsTab({ alive: false }, 'session-a', 'session-b'), false)
+  assert.equal(needsTab({ alive: false }, '', 'session-a'), false)
 })

@@ -214,6 +214,19 @@ import { KEYS, sidecarTools, sessionScope } from './tools.js?v=1'
  * @param {string} remembered - where that chat left off, or ''.
  * @returns {{session: string, url?: string}} options for `ensure`.
  */
+/**
+ * Whether this chat's poll should put its tab back: the browser is running, the
+ * chat holds the mirror, and its tab is not there.
+ * @param {any} chatState - what `chatState(chat)` said.
+ * @param {string} chat - the chat that is polling.
+ * @param {string} owner - the chat that holds the mirror.
+ * @returns {boolean} true when a tab has to be opened for this chat.
+ */
+export function needsTab(chatState, chat, owner) {
+  if (String(chat ?? '') === '' || owner !== chat) return false
+  return chatState?.alive !== true
+}
+
 export function adoptOptions(chat, remembered) {
   const back = String(remembered ?? '')
   return back === '' ? { session: chat } : { session: chat, url: back }
@@ -373,6 +386,19 @@ export function apply(ctx) {
          calls, and one chat's browsing never explains another's. */
       const mine = chat === '' ? recent : recent.filter((entry) => entry.session === chat.slice(-8))
       let said = await sidecar.state()
+      /* The browser can be running and still have no tab for this chat: a reload
+         replaces the half that remembered which tab belonged to whom. The poll
+         is this chat asking, so it answers by putting that chat's tab back
+         before the column draws an empty picture — waiting for a claim first
+         left a blank frame in front of the person. */
+      let mineChat = chat === '' ? undefined : await sidecar.chatState(chat)
+      if (needsTab(mineChat, chat, bridge.owner)) {
+        try {
+          await sidecar.ensure(adoptOptions(chat, sidecar.rememberedTab?.(chat)))
+          said = await sidecar.state()
+          mineChat = await sidecar.chatState(chat)
+        } catch {}
+      }
       /* A plugin reload leaves the browser running and this half brand new, so
          the column's first poll would answer "nothing open" until somebody
          called open again: the mirror would come back empty in a chat that
@@ -384,7 +410,7 @@ export function apply(ctx) {
           said = await sidecar.state()
         } catch {}
       }
-      json(200, { ...said, ...(chat === '' ? {} : { chat: await sidecar.chatState(chat) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
+      json(200, { ...said, ...(chat === '' ? {} : { chat: mineChat ?? (await sidecar.chatState(chat)) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
       return
     }
 
