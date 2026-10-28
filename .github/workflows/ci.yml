@@ -1,0 +1,52 @@
+name: ci
+
+# One run per branch: a new push cancels the older run for that branch, so CI
+# minutes are never spent proving a commit that is already stale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main, 'win/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The suite launches no real browser, but it does exercise the code that finds
+      # one. A Windows runner has neither Chrome nor Edge in the place the plugin
+      # looks, so it is installed here: without it the find-the-browser path is the
+      # one thing CI could not prove on Windows.
+      - name: Install a Chromium browser on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+          if (Test-Path $setup) { Write-Host "Chrome already present"; exit 0 }
+          $url = 'https://dl.google.com/chrome/install/latest/chrome_installer.exe'
+          $installer = Join-Path $env:RUNNER_TEMP 'chrome_installer.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList '/silent', '/install' -Wait
+          if (-not (Test-Path $setup)) { throw "Chrome did not install to $setup" }
+
+      - run: npm install --no-audit --no-fund
+      - run: npm test
