@@ -1,3 +1,10 @@
+## 0.34.29
+
+- **操作可以选「像人一样」还是「走页面本身」。** `sidecar_click` / `sidecar_type` 多一个 `mode`：`human` 动真鼠标真按键，页面分辨不出是人；`dom` 在页面自己的控件上触发 click、设值并发 input/change 事件，被浮层盖住也点得到，也不会惊动只认按键的脚本。省略时用这个聊天上次 `sidecar_mode` 定下的方式，默认 human。
+- 差别是量出来的，不是说的：同一页上真人路径 11 个事件全部 `isTrusted: true`（3 个 keydown / 3 个 input）；`dom` 路径 0 个受信任事件、0 个 keydown、1 个 input，值照样写进输入框（`npm run modes`）。
+- **右栏自己回来了。** 进程重启后浏览器还在、但这个聊天没有新的画面流时，客户端会问一次 `/sidecar/state`：只有在自己仍持有这台浏览器时才把画面接回来，别人的栏不碰。之前那种「刚还在，突然白了」就是缺这一步。
+- Flash 有结论了：Chrome 里没有 Flash 插件（2021 年就移除了），Ruffle 能把 swf 交上去但 26 秒后仍然没有 canvas、没有 metadata，headless 里不成立，所以**不承诺能玩**，先让页面自己说出「这里需要 Flash」。
+
 ## 0.34.28
 
 - `npm run game <url>` 在真站上量三件事：页面自己数自己的帧、一张全屏图多贵、按住的键到没到页面。奥拉星 27 fps / 68 ms / 到了，4399 59.8 fps / 148 ms / 到了。

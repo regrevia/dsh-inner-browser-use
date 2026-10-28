@@ -298,6 +298,9 @@ The phases above were written one at a time as the work happened; the run from
 
 ## 页游这一档（2026-10-28 起）
 
+- 操作方式已分叉（0.34.29）：`sidecar_mode` 每个聊天记一种，`human` / `dom` 单次可覆盖。页游默认 human，登录/表单默认 dom 更省事。
+- Flash 判死：headless Chrome 里 Ruffle 交得上 swf 但起不了画面（26 秒，canvas 0、metadata 0），不承诺。真页游只能走站方 H5 / 微端 / 老 360 浏览器，页面上线前先用 `scripts/probe-flash.mjs` 问一句它要不要 Flash。
+
 输入这一层已经到位：按住键、组合键、按住鼠标，一项 300 ms 的按住整次调用 305 ms，事件由页面自己证实。实时画面沿用同一条 CDP 帧路（60 fps、镜像延迟中位数 8 ms）。
 
 还差的一层是「看」：4399 / 7k7k / 奥拉星这类页游把画面画在 canvas 上，文本树里没有可读的东西，判断走位、Boss 血条、按钮位置都要靠像素。本会话的模型没有视觉能力，所以这里的正确做法不是假装能玩，而是把可判读的信号做出来：canvas 局部像素采样、颜色/区域变化率、画面是否在动（`blind` 行已经在报 canvas 数量）。有视觉能力的模型接着用同一套帧路就能玩。

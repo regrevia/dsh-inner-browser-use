@@ -1,3 +1,16 @@
+## Phase 45 — 两种操作方式的实际差别，0.34.29
+
+同一张本地页（按钮 + 输入框，页面在捕获阶段记下每个事件的类型和 `isTrusted`），`npm run modes`：
+
+| 路径 | 受信任事件 | pointerdown | click | keydown | input | 写进值 |
+| --- | --- | --- | --- | --- | --- | --- |
+| human 点按钮 | 3 | 1 | 1 | – | – | – |
+| dom 点按钮 | 0 | 1 | 1 | – | – | – |
+| human 输入 abc | 11 | – | – | 3 | 3 | abc |
+| dom 输入 abc | 0 | – | – | 0 | 1 | abc |
+
+`trustedEvents` 是这张表里唯一真正的分界：真人路径全为 true，`dom` 路径全为 false。要过反自动化、要看指针轨迹、要按键有 `code` 的游戏，只有 human 能走；被浮层盖住、被脚本接管了按键的登录框，`dom` 一次就过。
+
 ## Phase 44 — 真站页游场地，0.34.28
 
 `node scripts/check-game.mjs <url>`，真 Chrome、自己的 profile、跑完自己关掉。两个真站：

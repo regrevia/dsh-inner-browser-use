@@ -227,7 +227,10 @@ window.__ModuleLoader__.load({
           const watchAsk = () => {
             try {
               if (typeof surface?.mounted?.subscribe === 'function') {
-                const off = surface.mounted.subscribe(syncAsk)
+                const off = surface.mounted.subscribe(() => {
+                  syncAsk()
+                  restore()
+                })
                 if (typeof off === 'function') return off
               }
             } catch {
@@ -236,10 +239,41 @@ window.__ModuleLoader__.load({
             return null
           }
           syncAsk()
+          /* An app restart leaves the browser alive but no ask on the wire, so
+             the column would come back empty in a chat that never closed it.
+             This chat asking for the state of the browser it still owns is what
+             puts the mirror back without anyone pressing anything. */
+          const restoreTimers = []
+          const restore = (tries = 0) => {
+            const who = mountedOf()
+            if (who === '') return
+            const again = () => {
+              if (tries >= 2) return
+              restoreTimers.push(setTimeout(() => restore(tries + 1), 1500))
+            }
+            try {
+              fetch(`${ROUTE}/sidecar/state?session=${encodeURIComponent(who)}`) // ui-copy-ignore
+                .then((said) => (said.ok === true ? said.json() : null))
+                .then((state) => {
+                  if (state?.owner !== who) return
+                  const live = state?.alive === true || state?.chat?.alive === true
+                  if (live !== true) {
+                    again()
+                    return
+                  }
+                  ask(who)
+                })
+                .catch(again)
+            } catch {
+              again()
+            }
+          }
+          restore()
           const offAsk = watchAsk()
           const pollAsk = setInterval(syncAsk, 1000)
           const stopAsk = () => {
             clearInterval(pollAsk)
+            for (const timer of restoreTimers) clearTimeout(timer)
             if (typeof offAsk === 'function') {
               try {
                 offAsk()

@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -24,6 +24,25 @@ export const sessionScope = new AsyncLocalStorage()
 /** @returns {string} the chat id of the running call. */
 function currentSession() {
   return String(sessionScope.getStore() ?? '')
+}
+
+/** How a call asked to act: real mouse and keys, or the page's own DOM. */
+const WAYS = new Set(['human', 'dom'])
+
+/** The way each chat said to act, until it says otherwise. */
+const chatWays = new Map()
+
+/**
+ * The way this call should act: what it asked for, else what its chat last set,
+ * else a real mouse and real keys, which no page can tell from a person.
+ * @param {any} args - the call's arguments.
+ * @returns {'human'|'dom'} which way.
+ */
+function wayOf(args) {
+  const said = String(args?.mode ?? '')
+  if (WAYS.has(said)) return /** @type {'human'|'dom'} */ (said)
+  const chat = currentSession()
+  return chatWays.get(chat) === 'dom' ? 'dom' : 'human'
 }
 
 /** Which project the running call belongs to, so its files stay together. */
@@ -538,6 +557,20 @@ async function evaluate(page, expression, route) {
 }
 
 /**
+ * The page's answer, as an object.
+ * @param {any} said - what evaluate returned.
+ * @returns {any} the answer, or null when the page did not answer.
+ */
+function asSpot(said) {
+  if (typeof said !== 'string') return null
+  try {
+    return JSON.parse(said)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Wait until the page has settled: loading finished and the address stopped
  * changing. Acting on a page mid-navigation is how a driver clicks the old page.
  * @param {any} page - sidecar page.
@@ -626,21 +659,21 @@ async function fieldSpot(page, words) {
  * Where the field called these words is, clearing a banner over it first.
  * @param {any} page - sidecar page.
  * @param {string} words - what the field is called on screen.
- * @returns {Promise<{x: number, y: number, name: string, lead: string}|null>} the click.
+ * @returns {Promise<{x: number, y: number, name: string, lead: string, ref?: number}|null>} the click.
  */
 async function fieldByName(page, words) {
   const hit = await findWords(page, words)
   const lead = hit === null ? '' : await coverLead(page, hit.ref)
   if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
     const spot = await locate(page, hit.ref)
-    if (spot.gone !== true) return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead }
+    if (spot.gone !== true) return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead, ref: Number(hit.ref) }
   }
   const field = await fieldSpot(page, words)
   if (field !== null) return { ...field, lead }
   if (hit === null) return null
   const spot = await locate(page, hit.ref)
   if (spot.gone === true) return null
-  return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead }
+  return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead, ref: Number(hit.ref) }
 }
 
 /**
@@ -1195,6 +1228,32 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       },
     },
     {
+      name: 'sidecar_mode', // ui-copy-ignore
+      description: 'Choose how this chat acts from now on. "human" moves the real mouse and presses real keys, which no page can tell from a person — games and pages that watch pointer movement need this. "dom" clicks and fills the controls the page registered, which reaches one that an overlay covers and leaves key handlers alone. A call can also pass its own mode, which wins for that call only.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          mode: { type: 'string', enum: ['human', 'dom'], description: 'Which way to act.' },
+        },
+        required: ['mode'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 10_000,
+      isConcurrencySafe: () => true,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} which way is set. */
+      execute: async (args) => {
+        const said = String(args?.mode ?? '')
+        if (!WAYS.has(said)) return 'Pass "human" or "dom".'
+        const chat = currentSession()
+        if (said === 'human') chatWays.delete(chat)
+        else chatWays.set(chat, said)
+        return said === 'human'
+          ? 'Real mouse and real keys from now on: pages cannot tell it from a person.'
+          : "The page's own controls from now on: clicks and typing go through its DOM, so an overlay cannot swallow them."
+      },
+    },
+    {
       name: 'sidecar_view', // ui-copy-ignore
       description: 'Read the sidecar browser: numbered controls and the words on screen. Numbers stay valid across reads and actions until the page navigates. Narrow it with mode (text, links, forms, full) and max_chars; ask for changed_only after an action to spend fewer tokens.',
       parameters: {
@@ -1251,6 +1310,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           double: { type: 'boolean', description: 'Double-click.' },
           right: { type: 'boolean', description: 'Right-click, opening a context menu.' },
           hold_ms: { type: 'integer', description: 'Keep the button down this long before releasing: a press-and-hold a game or a drag handle needs.' },
+          mode: { type: 'string', enum: ['human', 'dom'], description: '"human" moves the real mouse and is what a page cannot tell from a person; "dom" fires the page\'s own click on the numbered control, which reaches one an overlay covers. Omit to use what this chat set with sidecar_mode.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         additionalProperties: false,
@@ -1275,6 +1335,15 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           label = `"${hit.name.slice(0, 60)}"`
         }
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from sidecar_view, or both x and y.'
+        if (wayOf(args) === 'dom') {
+          if (args?.ref === undefined) return 'Acting on the page itself needs a number from sidecar_view: pass ref, or leave mode out to click like a person.'
+          const said = await evaluate(page, clickInDom(Number(args.ref), { double: args?.double === true, right: args?.right === true })).catch(() => undefined)
+          const hit = asSpot(said)
+          if (hit?.ok !== true) return REF_GONE
+          await settle(page)
+          const called = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label} on the page itself`)
+          return called + (followed === '' ? '' : ` (${followed})`)
+        }
         const button = args?.right === true ? 'right' : 'left'
         let cover = ''
         if (args?.ref !== undefined && button === 'left') {
@@ -1311,6 +1380,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           field: { type: 'string', description: 'The field is called this on screen, when you have no number for it.' },
           submit: { type: 'boolean', description: 'Press Enter after typing.' },
           clear: { type: 'boolean', description: 'Select all and delete before typing.' },
+          mode: { type: 'string', enum: ['human', 'dom'], description: '"human" presses real keys and is what a page cannot tell from a person; "dom" sets the field and fires its input events, which leaves key handlers untouched. Omit to use what this chat set with sidecar_mode.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         required: ['text'], // ui-copy-ignore
@@ -1323,6 +1393,23 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withPage(async (page) => {
         let cover = ''
         let followed = ''
+        if (wayOf(args) === 'dom') {
+          let target = Number.isInteger(args?.ref) ? Number(args.ref) : undefined
+          if (target === undefined && args?.field !== undefined) {
+            const found = await fieldByName(page, String(args.field))
+            if (found === null) return `${String(args.field)}: ${REF_GONE}`
+            if (!Number.isInteger(found.ref)) return `${String(args.field)}: read the page and pass its number, since a field found by its label has none.`
+            target = Number(found.ref)
+            cover = found.lead
+          }
+          if (target === undefined) return 'Acting on the page itself needs a number from sidecar_view: pass ref, or leave mode out to type like a person.'
+          const said = await evaluate(page, writeInDom(target, String(args?.text ?? ''), { clear: args?.clear === true, submit: args?.submit === true })).catch(() => undefined)
+          const wrote = asSpot(said)
+          if (wrote?.ok !== true) return REF_GONE
+          await settle(page)
+          const called = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type on the page itself')
+          return `${called} (field now "${String(wrote.value).slice(0, 40)}")` + cover
+        }
         if (args?.field !== undefined && args?.ref === undefined) {
           const target = await fieldByName(page, String(args.field))
           if (target === null) return `${String(args.field)}: ${REF_GONE}`

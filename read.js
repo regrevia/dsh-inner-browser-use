@@ -380,6 +380,80 @@ export function resolve(ref) {
 }
 
 /**
+ * Click the control the page itself registered, instead of moving the mouse to
+ * it. A page whose own handlers want a click, or a control an overlay covers,
+ * is reachable this way; a page that watches real pointer movement is not.
+ * @param {number} ref - ref from a read.
+ * @param {{double?: boolean, right?: boolean}} [options] - how to click.
+ * @returns {string} an expression that answers with what it hit.
+ */
+export function clickInDom(ref, options = {}) {
+  const double = options.double === true
+  const right = options.right === true
+  return `(() => {
+  const reg = window.${REGISTRY}
+  const hit = reg && reg.find(${Number(ref)})
+  if (!hit) return JSON.stringify({ ok: false, gone: true })
+  const el = hit.el
+  const name = String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 60)
+  try { el.scrollIntoView({ block: 'center', inline: 'center' }) } catch { /* a detached node has no place */ }
+  try { el.focus({ preventScroll: true }) } catch { /* not every node takes focus */ }
+  const send = (type, button) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button, buttons: type === 'mousedown' || type === 'pointerdown' ? (button === 2 ? 2 : 1) : 0 }))
+  if (${right}) {
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, button: 2 }))
+  } else {
+    send('pointerdown', 0)
+    send('mousedown', 0)
+    el.click ? el.click() : send('click', 0)
+    if (${double}) { el.click ? el.click() : send('click', 0) }
+    send('pointerup', 0)
+    send('mouseup', 0)
+  }
+  return JSON.stringify({ ok: true, name, tag: String(el.tagName).toLowerCase() })
+})()`
+}
+
+/**
+ * Put text into a control through the page's own value and input events, the
+ * way the page's own code would; no key is pressed and no pointer moves.
+ * @param {number} ref - ref from a read.
+ * @param {string} text - what to put in.
+ * @param {{clear?: boolean, submit?: boolean}} [options] - replace, and send it.
+ * @returns {string} an expression that answers with the field's new value.
+ */
+export function writeInDom(ref, text, options = {}) {
+  return `(() => {
+  const reg = window.${REGISTRY}
+  const hit = reg && reg.find(${Number(ref)})
+  if (!hit) return JSON.stringify({ ok: false, gone: true })
+  const el = hit.el
+  const whole = ${JSON.stringify(String(text))}
+  const clear = ${options.clear === true}
+  const submit = ${options.submit === true}
+  try { el.focus({ preventScroll: true }) } catch { /* a plain div takes no focus */ }
+  if (/^(input|textarea)$/i.test(el.tagName)) {
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    const set = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+    const next = clear ? whole : String(el.value ?? '') + whole
+    set === undefined ? (el.value = next) : set.call(el, next)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  } else if (el.isContentEditable) {
+    el.textContent = clear ? whole : String(el.textContent ?? '') + whole
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: whole, inputType: 'insertText' }))
+  } else {
+    return JSON.stringify({ ok: false, why: 'not a field' })
+  }
+  if (submit) {
+    const form = el.form ?? el.closest?.('form') ?? null
+    if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
+    else el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }))
+  }
+  return JSON.stringify({ ok: true, value: String(el.value ?? el.textContent ?? '').slice(0, 60) })
+})()`
+}
+
+/**
  * How big the control is and where it sits, so a picture can be of it alone.
  * @param {number} ref - ref from a read.
  * @returns {string} an expression that answers with the rectangle.

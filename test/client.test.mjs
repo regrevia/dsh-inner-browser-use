@@ -86,8 +86,13 @@ globalThis.EventSource = FakeEventSource
 
 /** @type {{url: string, body: any}[]} */
 const posts = []
+/** What the host says about the browser behind the column; a test may change it. */
+let stateReply = { owner: '', alive: false, chat: { alive: false } }
+
 globalThis.fetch = async (url, init) => {
-  posts.push({ url: String(url), body: init === undefined ? null : JSON.parse(init.body) })
+  const address = String(url)
+  posts.push({ url: address, body: init === undefined ? null : JSON.parse(init.body) })
+  if (address.includes('/sidecar/state')) return { ok: true, json: async () => stateReply }
   return { ok: true, json: async () => ({ ok: true, cursor: 'text' }) }
 }
 
@@ -105,7 +110,7 @@ new Script(clientSource).runInThisContext()
  * @param {{openTab?: string, openTabIn?: string, mounted?: string | (() => string)}} options
  *   `mounted` may be a function so a test can move the on-screen chat.
  */
-function scene({ openTab, openTabIn, mounted = '' } = {}) {
+function scene({ openTab, openTabIn, mounted = '', state = null } = {}) {
   const onScreen = () => (typeof mounted === 'function' ? mounted() : mounted)
   /** @type {any[]} */
   const opened = []
@@ -165,6 +170,7 @@ function scene({ openTab, openTabIn, mounted = '' } = {}) {
   }
   sources.length = 0
   posts.length = 0
+  stateReply = state === null ? { owner: '', alive: false, chat: { alive: false } } : state
   ticks.length = 0
   definition.apply(ctx)
   return { opened, injected, tabs, components, source: sources.at(-1), sources }
@@ -220,7 +226,24 @@ test('the ask stream follows the chat on screen, so a switch closes the old one'
   assert.deepEqual(moved.opened, [['session', 'chat-b', 'inner-browser-sidecar', {}]])
 })
 
-test('nothing opens the mirror by itself, not even when a sidecar is running', () => {
+test('the mirror comes back by itself in the chat that still owns the browser', async () => {
+  const owned = { owner: 'chat-shown', alive: true, chat: { alive: true } }
+  const back = scene({ mounted: 'chat-shown', state: owned })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(back.opened, [['session', 'chat-shown', 'inner-browser-sidecar', {}]])
+
+  /* A browser another chat owns is not this column's to reopen. */
+  const theirs = scene({ mounted: 'chat-shown', state: { ...owned, owner: 'chat-elsewhere' } })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(theirs.opened, [])
+
+  /* An empty column asks nobody and opens nothing. */
+  const unknown = scene({ state: owned })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(unknown.opened, [])
+})
+
+test('nothing opens the mirror on a frame that asks for nothing', () => {
   const quiet = scene({ mounted: 'chat-shown' })
   assert.deepEqual(quiet.opened, [])
   /* Only the frame a tool asks for opens anything. */
