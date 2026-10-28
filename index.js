@@ -346,7 +346,19 @@ export function apply(ctx) {
       /* Diagnostics belong to the chat that made them: a caller sees its own
          calls, and one chat's browsing never explains another's. */
       const mine = chat === '' ? recent : recent.filter((entry) => entry.session === chat.slice(-8))
-      json(200, { ...(await sidecar.state()), ...(chat === '' ? {} : { chat: await sidecar.chatState(chat) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
+      let said = await sidecar.state()
+      /* A plugin reload leaves the browser running and this half brand new, so
+         the column's first poll would answer "nothing open" until somebody
+         called open again: the mirror would come back empty in a chat that
+         never closed it. The chat that owned the browser asks for its state, so
+         answering honestly means picking the browser up first. */
+      if (said.alive === false && chat !== '' && bridge.owner === chat) {
+        try {
+          await sidecar.ensure({ url: sidecar.rememberedTab?.(chat) })
+          said = await sidecar.state()
+        } catch {}
+      }
+      json(200, { ...said, ...(chat === '' ? {} : { chat: await sidecar.chatState(chat) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
       return
     }
 

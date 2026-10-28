@@ -1,3 +1,15 @@
+## Phase 38 — a reload must not blank the mirror, 0.34.16
+
+`/sidecar/state` answered from the new plugin instance, which owns nothing until
+something calls `open`: after a reload the owning chat's own poll said
+`alive:false`, hence "no page open" in the column while Chrome was fine.
+
+- The owning chat's state poll adopts the running browser and the tab remembered
+  for it before answering.
+- Live: `/dsh-unlag/reload` 200 → state `alive True`, url `https://www.doubao.com/chat/`,
+  Chrome pid 12833 with 11 m uptime, i.e. attached rather than relaunched.
+- Non-owning chats and empty `session` polls still answer without spawning anything.
+
 ## Phase 37 — an observation that admits its blind spot, 0.34.15
 
 A text read and a screenshot claim to show the page. Both are lossy, and the loss

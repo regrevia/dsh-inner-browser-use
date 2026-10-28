@@ -1,3 +1,11 @@
+## 0.34.16
+
+The mirror no longer comes back empty after a reload.
+
+- A plugin reload left the browser running but the new half unconnected, so a chat that already had the mirror polled state and was told nothing was open — the mirror looked lost even though Chrome and its tab were untouched. The chat that owns the browser now picks it up on that first poll and the remembered address comes back with it.
+- Verified live: reload → state `alive True` with `https://www.doubao.com/chat/`, Chrome pid unchanged (no relaunch, no new login).
+- Part of the same honesty pass: reads report what text cannot show (0.34.15).
+
 ## 0.34.15
 
 Every observation now says what it could not see, instead of looking complete.
