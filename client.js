@@ -316,9 +316,9 @@ window.__ModuleLoader__.load({
         }
         const read = () => {
           const who = String(props.sessionId ?? '')
-          /* Naming the chat lets the host pick a browser that outlived a
-             reload up for us; an anonymous poll cannot, and the column would
-             sit on an empty stage with the browser running behind it. */
+          /* Naming the chat lets a browser that outlived a reload be picked
+             up for us; an anonymous poll cannot, and the column would sit on
+             an empty stage with the browser running behind it. */
           void fetch(`${ROUTE}/sidecar/state?session=${encodeURIComponent(who)}`, { cache: 'no-store' }) // ui-copy-ignore
             .then((reply) => (reply.ok === true ? reply.json() : null))
             .then((info) => {
