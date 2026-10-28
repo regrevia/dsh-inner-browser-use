@@ -1805,13 +1805,17 @@ export class Sidecar {
   /**
    * What the browser holds for one chat, when the caller names it.
    * @param {string} [session] - chat id.
-   * @returns {{url: string, title: string, viewers: number, alive: boolean}} its page.
+   * @returns {{url: string, title: string, viewers: number, alive: boolean, remembered: string}} its page.
    */
   async chatState(session = '') {
     const id = String(session ?? '')
+    /* A chat whose tab is gone still knows where it was: that address is what
+       the pane offers to bring back, so a lost picture is one click, not a
+       question about which site it used to be. */
+    const remembered = this.rememberedTab(id)
     const page = id === '' ? null : this.pageFor(id)
-    if (page === null || page === undefined) return { url: '', title: '', viewers: 0, alive: false } // ui-copy-ignore
-    return { url: String(page.url ?? ''), title: String(page.title ?? ''), viewers: page.frames?.size ?? 0, alive: true } // ui-copy-ignore
+    if (page === null || page === undefined) return { url: '', title: '', viewers: 0, alive: false, remembered } // ui-copy-ignore
+    return { url: String(page.url ?? ''), title: String(page.title ?? ''), viewers: page.frames?.size ?? 0, alive: true, remembered } // ui-copy-ignore
   }
 
   async state() {

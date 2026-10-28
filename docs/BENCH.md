@@ -1,3 +1,9 @@
+## Phase 33 — a lost picture comes back in one click, 0.34.11
+
+- 实测「切走 / 重载后画面没了」的下一步：`/sidecar/state?session=…` 与画面流 hello 都给出 `chat.remembered`（该会话最后地址）。
+- 右栏在没有画面且 `remembered` 有值时显示「恢复上次的页面」，点击 POST `/sidecar/open` 并重连画面流。
+- 同一会话第二次 open 命中已有标签页：107 ms（三次实测 2.08 s / 0.107 s / 0.108 s，首次含导航）。
+
 ## Phase 32 — a call log belongs to its chat, 0.34.10
 
 `GET /sidecar/state` returned the last 40 mirror calls of every chat, each with

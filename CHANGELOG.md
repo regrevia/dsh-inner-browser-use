@@ -1,3 +1,8 @@
+## 0.34.11
+
+- 右栏在页面丢失时给出「恢复上次的页面」：状态与画面流都带上该会话记住的地址，一键重开，不必回地址栏重打。
+- `chatState` 返回 `remembered`，测试新增 1 条（90 条通过）。
+
 ## 0.34.10
 
 - The call log a column reads back now only holds its own chat's calls. It used

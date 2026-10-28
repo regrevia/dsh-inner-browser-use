@@ -33,6 +33,7 @@ window.__ModuleLoader__.load({
       zh: {
         'side.label': '后台浏览器',
         'side.empty': '还没有打开的页面，在上方地址栏输入网址',
+        'side.restore': '恢复上次的页面',
         'side.connecting': '正在连接…',
         'side.failed': '画面没有连上',
         'side.foreign': '这个浏览器属于发起它的会话，回到那个会话继续。',
@@ -45,6 +46,7 @@ window.__ModuleLoader__.load({
       en: {
         'side.label': 'Background browser',
         'side.empty': 'No page open; type an address above',
+        'side.restore': 'Reopen the last page',
         'side.connecting': 'Connecting…',
         'side.failed': 'The picture did not connect',
         'side.foreign': 'This browser belongs to the chat that opened it.',
@@ -73,6 +75,8 @@ window.__ModuleLoader__.load({
          on screen at once, and moving the mouse never takes the arrow over. */
       '.dshib-side-ptr{position:absolute;width:20px;height:20px;pointer-events:none;z-index:2;transform:translate(-2px,-2px);transition:left 60ms linear,top 60ms linear;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}',
       '.dshib-side-note{font-size:12px;color:var(--dsw-alias-label-tertiary);padding:0 16px;text-align:center}',
+      '.dshib-side-back{border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}',
+      '.dshib-side-back:hover{background:var(--dsw-alias-bg-subtle)}',
     ].join('')
 
     return {
@@ -272,6 +276,9 @@ window.__ModuleLoader__.load({
       const [ptr, setPtr] = React.useState(null)
       const [phase, setPhase] = React.useState('connecting')
       const [note, setNote] = React.useState('')
+      /* The address this chat had before its tab went away: the pane reopens
+         that address, so a lost picture costs one click. */
+      const [back, setBack] = React.useState('')
       const [url, setUrl] = React.useState('')
       const [draft, setDraft] = React.useState('')
       const [editing, setEditing] = React.useState(false)
@@ -390,6 +397,7 @@ window.__ModuleLoader__.load({
             setPhase('live')
             drawnAt.current = Date.now()
             setUrl(String(message.url ?? ''))
+            setBack(String(message.chat?.remembered ?? ''))
           } else if (message.type === 'failed') {
             setPhase('failed')
             setNote(String(message.text ?? ''))
@@ -567,7 +575,24 @@ window.__ModuleLoader__.load({
           onWheel,
           onKeyDown,
         },
-          frame === null ? h('div', { className: 'dshib-side-note' }, noteText) : null,
+          frame === null && back !== '' && phase === 'live'
+            ? h('button', {
+              className: 'dshib-side-back',
+              type: 'button', // ui-copy-ignore
+              onClick: () => { // ui-copy-ignore
+                void fetch(`${ROUTE}/sidecar/open`, { // ui-copy-ignore
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ session: who, url: back }), // ui-copy-ignore
+                })
+                  .then((reply) => (reply.ok === true ? reply.json() : null))
+                  .then((info) => {
+                    if (info?.ok === true) setAttempt((n) => n + 1)
+                  })
+                  .catch(() => {})
+              },
+            }, L('side.restore'))
+            : frame === null ? h('div', { className: 'dshib-side-note' }, noteText) : null,
           h('textarea', {
             className: 'dshib-side-ime',
             ref: ime,

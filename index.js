@@ -284,7 +284,11 @@ export function apply(ctx) {
           res.write(`data: ${JSON.stringify(frame)}\n\n`)
         }, watching)
         const info = await sidecar.state()
-        res.write(`data: ${JSON.stringify({ type: 'hello', ...info })}\n\n`)
+        /* The pane needs one address to offer back when this chat's own page
+           went away; the state route answers the same question for the tab
+           header, so both carry it. */
+        const chat = watching === '' ? {} : { chat: await sidecar.chatState(watching) }
+        res.write(`data: ${JSON.stringify({ type: 'hello', ...info, ...chat })}\n\n`)
       } catch (error) {
         res.write(`data: ${JSON.stringify({ type: 'failed', text: String(error?.message ?? error) })}\n\n`)
       }

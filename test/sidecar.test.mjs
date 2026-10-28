@@ -116,6 +116,21 @@ test('a browser nobody has touched yet is free to act on', () => {
   assert.equal(sidecar.holding(), 0)
 })
 
+test('a chat whose tab is gone is told where it was, so the pane can offer it back', async () => {
+  const sidecar = Object.create(Sidecar.prototype)
+  sidecar.pages = new Map()
+  sidecar.rememberedTab = () => 'https://example.com/today'
+  const lost = await sidecar.chatState('session-a')
+  assert.equal(lost.alive, false, 'no tab means no picture')
+  assert.equal(lost.remembered, 'https://example.com/today', 'the address survives the tab')
+  const page = { url: 'https://example.com/now', title: 'now', frames: new Set() }
+  sidecar.pageFor = () => page
+  const there = await sidecar.chatState('session-a')
+  assert.equal(there.alive, true)
+  assert.equal(there.url, 'https://example.com/now')
+  assert.equal(there.remembered, 'https://example.com/today', 'a live tab still remembers where it came from')
+})
+
 test('two calls that start together share one tab instead of opening a twin', async () => {
   const sidecar = Object.create(Sidecar.prototype)
   sidecar.pages = new Map()
