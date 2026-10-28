@@ -329,6 +329,10 @@ window.__ModuleLoader__.load({
                  back instead of showing a note for a browser this column shows. */
               if (asked !== '' && next !== asked) reclaim()
               setOwner((prev) => (prev === next ? prev : next))
+              /* A browser that is gone still remembers where this chat was:
+                 keep the address so the pane can offer to reopen it. */
+              const was = String(info?.chat?.remembered ?? '')
+              if (was !== '') setBack((prev) => (prev === was ? prev : was))
               /* Another chat holds the browser now: this tab goes away instead
                  of sitting here as a note. */
               if (dropped !== true && next !== '' && next !== String(props.sessionId ?? '')) {
@@ -584,7 +588,7 @@ window.__ModuleLoader__.load({
           onWheel,
           onKeyDown,
         },
-          frame === null && back !== '' && phase === 'live'
+          frame === null && back !== ''
             ? h('button', {
               className: 'dshib-side-back',
               type: 'button', // ui-copy-ignore

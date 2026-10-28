@@ -266,3 +266,17 @@ test('hover carries the page cursor, and only a cursor the pane knows is applied
   assert.match(clientSource, /el\.style\.cursor = CURSORS\.includes\(name\) === true \? name : 'default'/)
   assert.match(clientSource, /kind: 'hover'/)
 })
+
+test('a pane with no picture still offers to reopen its last page, and asks as its chat', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The state poll names the chat: an anonymous poll cannot pick up a browser
+     that outlived a reload. */
+  assert.ok(source.includes('/sidecar/state?session='))
+  /* The reopen button is drawn whenever there is no picture, not only while a
+     stream is live: a dead browser is exactly the case it exists for. */
+  assert.ok(source.includes("frame === null && back !== ''"))
+  assert.ok(source.includes("frame === null && back !== '' && phase === 'live'") === false)
+  /* And the remembered address comes from the poll too, not only from a stream
+     hello that never arrives when the browser is gone. */
+  assert.ok(source.includes('info?.chat?.remembered'))
+})
