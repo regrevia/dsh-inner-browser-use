@@ -36,6 +36,20 @@ function page(name) {
     const body = Array.from({ length: 60 }, (_, i) => `<p>${i + 1}. ${paragraph}</p>`).join('')
     return `<!doctype html><html><head><title>text page</title></head><body><main><h1>Reading</h1>${body}</main>${ticker}</body></html>`
   }
+  if (name === 'game') {
+    return `<!doctype html><html><head><title>game page</title></head><body style="margin:0;background:#111">
+<canvas id="c" width="640" height="400"></canvas>
+<script>
+window.__log=[]
+const at=()=>Math.round(performance.now())
+addEventListener('keydown',(e)=>{window.__log.push({t:'down',k:e.key,c:at()})})
+addEventListener('keyup',(e)=>{window.__log.push({t:'up',k:e.key,c:at()})})
+addEventListener('pointerdown',(e)=>{window.__log.push({t:'pdown',c:at()})})
+addEventListener('pointerup',(e)=>{window.__log.push({t:'pup',c:at()})})
+const c=document.getElementById('c'),x=c.getContext('2d');let n=0
+;(function loop(){n+=1;x.fillStyle='#111';x.fillRect(0,0,640,400);x.fillStyle='#2bd';x.fillRect((n*3)%600,150,40,40);requestAnimationFrame(loop)})()
+</script></body></html>`
+  }
   if (name === 'light') {
     return `<!doctype html><html><head><title>light page</title></head><body><main><h1>Hello</h1><p>A short page.</p></main>${ticker}</body></html>`
   }
@@ -59,7 +73,7 @@ async function main() {
   const live = process.argv.includes('--live')
   /** @type {Record<string, {server: import('node:http').Server, url: string}>} */
   const servers = {}
-  for (const name of ['dense', 'text', 'light']) {
+  for (const name of ['dense', 'text', 'light', 'game']) {
     const html = page(name)
     const server = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -111,7 +125,7 @@ async function main() {
   delays.sort((left, right) => left - right)
   emit('mirror-delay', { samples: delays.length, medianMs: delays[Math.floor(delays.length / 2)] ?? -1, maxMs: delays.at(-1) ?? -1 })
 
-  for (const name of ['dense', 'text', 'light']) {
+  for (const name of ['dense', 'text', 'light', 'game']) {
     await sidecar.page.navigate(servers[name].url)
     await wait(300)
     for (const mode of name === 'dense' ? ['text', 'links', 'forms', 'full'] : ['text']) {
@@ -245,6 +259,64 @@ async function main() {
     const read = await readPage(sidecar.page)
     emit('live-read', { ms: Date.now() - at, title: read.title, tokens: Math.round(renderPage(read).length / 3.4) })
   }
+  /* A web game is the hardest input there is: a key that must stay down, two at
+     once for a diagonal, and a canvas that changes every frame. The page itself
+     records when each event arrived, so this measures delivery, not intent. */
+  await sidecar.page.navigate(servers.game.url)
+  await wait(300)
+  const readLog = async () => {
+    const reply = await sidecar.page.cdp.send('Runtime.evaluate', { expression: 'JSON.stringify(window.__log || [])', returnByValue: true })
+    return JSON.parse(String(reply?.result?.value ?? '[]'))
+  }
+  const keyTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_key')
+  const downAt = Date.now()
+  await keyTool.execute({ key: 'd', hold_ms: 300, read: false })
+  const delivered = Date.now() - downAt
+  const log = await readLog()
+  const went = log.filter((row) => row.t === 'down').map((row) => row.c)
+  const came = log.filter((row) => row.t === 'up').map((row) => row.c)
+  const heldFor = went.length > 0 && came.length > 0 ? came[0] - went[0] : 0
+  await keyTool.execute({ key: 'ArrowLeft+ArrowUp', hold_ms: 200, read: false })
+  const chordLog = await readLog()
+  const chordDown = chordLog.filter((row) => row.t === 'down').map((row) => row.k)
+  const chordUp = chordLog.filter((row) => row.t === 'up').map((row) => row.k)
+  const pointerTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
+  await pointerTool.execute({ x: 200, y: 200, hold_ms: 200, read: false })
+  const pointerLog = await readLog()
+  const pointerDown = pointerLog.find((row) => row.t === 'pdown')
+  const pointerUp = pointerLog.find((row) => row.t === 'pup')
+  emit('game-input', {
+    holdRoundTripMs: delivered,
+    pageSawDown: went.length > 0,
+    heldMs: heldFor,
+    chordTogether: chordDown.includes('ArrowLeft') && chordDown.includes('ArrowUp'),
+    chordReleased: chordUp.includes('ArrowLeft') && chordUp.includes('ArrowUp'),
+    pointerHeldMs: pointerDown !== undefined && pointerUp !== undefined ? pointerUp.c - pointerDown.c : -1,
+  })
+  /* A whole task, not one step: twenty click-then-look rounds on the same page,
+     counted the way a model pays for it — every character a tool hands back. */
+  await sidecar.page.navigate(servers.dense.url)
+  await wait(200)
+  const sessionTools = sidecarTools(sidecar, { last: undefined })
+  const viewTool = sessionTools.find((tool) => tool.name === 'sidecar_view')
+  const clickTool2 = sessionTools.find((tool) => tool.name === 'sidecar_click')
+  await viewTool.execute({ mode: 'text', max_chars: 800 })
+  let sessionMs = 0
+  let sessionChars = 0
+  for (let i = 1; i <= 20; i += 1) {
+    const at = Date.now()
+    const clicked = await clickTool2.execute({ text: `Item ${i}` })
+    const seen = await viewTool.execute({ changed_only: true })
+    sessionMs += Date.now() - at
+    sessionChars += String(clicked?.text ?? '').length + String(seen?.text ?? '').length
+  }
+  emit('do-session', {
+    steps: 20,
+    ms: sessionMs,
+    perStepMs: Math.round(sessionMs / 20),
+    chars: sessionChars,
+    tokens: Math.round(sessionChars / 3.4),
+  })
   /* A crash costs one detection window plus a fresh tab, measured through the
      tool path the model actually takes. */
   await sidecar.page.navigate(servers.dense.url)

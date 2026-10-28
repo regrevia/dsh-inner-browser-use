@@ -236,6 +236,18 @@ export const KEYS = {
   Space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
 }
 
+/* A game moves while a key is held, and the keys a game listens for are letters
+   and digits, not the ones a form needs. Each entry carries what a browser
+   reports: the `key` value, the physical `code`, and the legacy number old
+   engines still look at. */
+for (const letter of 'abcdefghijklmnopqrstuvwxyz') {
+  KEYS[letter] = { key: letter, code: `Key${letter.toUpperCase()}`, keyCode: letter.toUpperCase().charCodeAt(0), text: letter }
+  KEYS[letter.toUpperCase()] = KEYS[letter]
+}
+for (const digit of '0123456789') {
+  KEYS[digit] = { key: digit, code: `Digit${digit}`, keyCode: digit.charCodeAt(0), text: digit }
+}
+
 /**
  * Press a key: keyDown, then keyUp, with the character when the key types one.
  * @param {any} page - sidecar page.
@@ -243,12 +255,35 @@ export const KEYS = {
  * @param {number} [modifiers] - CDP modifier bits: Alt 1, Ctrl 2, Meta 4, Shift 8.
  * @returns {Promise<void>} done.
  */
-export async function pressKey(page, name, modifiers = 0) {
+export async function pressKey(page, name, modifiers = 0, holdMs = 0) {
   const key = KEYS[name] ?? KEYS[name.charAt(0).toUpperCase() + name.slice(1)]
   if (key === undefined) throw new Error(`sidecar: no such key ${name}`) // ui-copy-ignore
   const base = { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers }
   await page.key('keyDown', key.text === undefined ? base : { ...base, text: key.text })
+  /* A key held down is how a game moves: down, wait, up — not a tap. */
+  if (holdMs > 0) await new Promise((settle) => setTimeout(settle, holdMs))
   await page.key('keyUp', base)
+}
+
+/**
+ * Press several keys at once and hold them: the diagonal a game expects, and a
+ * chord such as Shift+ArrowLeft. Releasing in reverse order is what a pair of
+ * hands does, and some engines only notice the last key that went up.
+ * @param {any} page - sidecar page.
+ * @param {string[]} names - key names, for example ['ArrowLeft', 'ArrowUp'].
+ * @param {number} [modifiers] - CDP modifier bits.
+ * @param {number} [holdMs] - how long every key stays down.
+ * @returns {Promise<void>} done.
+ */
+export async function pressChord(page, names, modifiers = 0, holdMs = 0) {
+  const keys = names.map((name) => {
+    const key = KEYS[name] ?? KEYS[name.charAt(0).toUpperCase() + name.slice(1)]
+    if (key === undefined) throw new Error(`sidecar: no such key ${name}`) // ui-copy-ignore
+    return { key, base: { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers } }
+  })
+  for (const one of keys) await page.key('keyDown', one.key.text === undefined ? one.base : { ...one.base, text: one.key.text })
+  if (holdMs > 0) await new Promise((settle) => setTimeout(settle, holdMs))
+  for (const one of [...keys].reverse()) await page.key('keyUp', one.base)
 }
 
 /**
@@ -1126,6 +1161,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           y: { type: 'integer', description: 'Viewport y, when clicking a point.' },
           double: { type: 'boolean', description: 'Double-click.' },
           right: { type: 'boolean', description: 'Right-click, opening a context menu.' },
+          hold_ms: { type: 'integer', description: 'Keep the button down this long before releasing: a press-and-hold a game or a drag handle needs.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         additionalProperties: false,
@@ -1167,6 +1203,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         }
         await page.mouse('mouseMoved', point)
         await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
+        const hold = Math.max(0, Math.min(60_000, Number(args?.hold_ms ?? 0)))
+        if (hold > 0) await new Promise((settle) => setTimeout(settle, hold))
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await settle(page)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
@@ -1339,12 +1377,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'sidecar_key', // ui-copy-ignore
-      description: 'Press one key in the sidecar browser: Enter, Tab, Escape, Backspace, Delete, ArrowUp/ArrowDown/ArrowLeft/ArrowRight, Home, End, PageUp, PageDown, Space.',
+      description: 'Press one key in the sidecar browser: Enter, Tab, Escape, Backspace, Delete, arrows, Home, End, PageUp, PageDown, Space, letters and digits. Join keys with + to hold them together, and hold_ms to keep them down.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          key: { type: 'string', description: 'Key name.' },
+          key: { type: 'string', description: 'Key name, or several joined by + to hold them together (ArrowLeft+ArrowUp, Shift+ArrowLeft). Letters and digits work too.' },
           modifiers: { type: 'string', description: 'Held while pressing: Ctrl, Alt, Shift or Meta, joined by +.' },
+          hold_ms: { type: 'integer', description: 'Keep the key down this long before releasing. Games move while a key is held.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         required: ['key'], // ui-copy-ignore
@@ -1358,8 +1397,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const name = String(args?.key ?? 'Enter')
         const held = String(args?.modifiers ?? '')
         const mods = (held.includes('Alt') ? 1 : 0) + (held.includes('Ctrl') ? 2 : 0) + (held.includes('Meta') ? 4 : 0) + (held.includes('Shift') ? 8 : 0)
-        await pressKey(page, name, mods)
-        await settle(page, 3000)
+        const hold = Math.max(0, Math.min(60_000, Number(args?.hold_ms ?? 0)))
+        const names = name.split('+').map((one) => one.trim()).filter((one) => one !== '')
+        if (names.length > 1) await pressChord(page, names, mods, hold)
+        else await pressKey(page, name, mods, hold)
+        /* A held key is game input: waiting for the page to fall quiet after one
+           costs more than the frame it was meant to drive. */
+        if (hold === 0) await settle(page, 3000)
         return acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), `key ${name}`)
       }),
     },

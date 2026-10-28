@@ -1,3 +1,16 @@
+## Phase 43 — 页游级输入：按住、组合键、按住鼠标，0.34.26
+
+本地画布页（每帧重绘，页面自己记录 `keydown`/`keyup`/`pointerdown`/`pointerup` 时间戳），真 Chrome，`node scripts/bench.mjs`：
+
+| 项 | 数字 |
+| --- | --- |
+| `sidecar_key` 带 `hold_ms: 300` 整次调用 | **305 ms**（含 300 ms 按住，收尾 5 ms） |
+| 页面测到的按住时长 | **301 ms** |
+| `ArrowLeft+ArrowUp` | 两键都收到 `keydown`，都收到 `keyup`，顺序为倒序松开 |
+| `sidecar_click` 带 `hold_ms: 200` 页面测到 | **211 ms** |
+
+对照 0.34.25 之前：同样的按住被 `settle` 拖到 727 ms，等于 0.7 s 才走一步——页游里这就是掉帧。
+
 ## Phase 42 — the reload path, proved by two instances, 0.34.25
 
 `npm run adopt`（真 Chrome，临时 profile `adopt-check`，临时状态目录）：
