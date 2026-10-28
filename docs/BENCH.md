@@ -1,3 +1,17 @@
+## Phase 42 — the reload path, proved by two instances, 0.34.25
+
+`npm run adopt`（真 Chrome，临时 profile `adopt-check`，临时状态目录）：
+
+| 项 | 数字 |
+| --- | --- |
+| 第一个实例冷启动到页面可用 | 675 ms |
+| 第二个实例（模拟重载后的半边）接管 | 162 ms |
+| 第二个实例自己起的 Chrome | `null`（没有起第二个） |
+| 浏览器进程 | 同一个 pid，接管后仍活着 |
+| 页签与标题 | `title: "kept"`，内容原样 |
+
+这就是重载后「接回同一个浏览器、不重启、不丢页签和登录」的机器证据；之前只有手工重载才能走到这条路。
+
 ## Phase 41 — the read tool that had never run, 0.34.23
 
 `node scripts/bench.mjs`（本机 headless 页面，Chrome 复用 `bench` profile）：
