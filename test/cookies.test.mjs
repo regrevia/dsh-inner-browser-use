@@ -52,3 +52,23 @@ test('no sign-in cookies means no file to restore', async () => {
   assert.deepEqual(written, [])
   rmSync(dir, { recursive: true, force: true })
 })
+
+test('a cookie the browser already holds is never overwritten from the note', async () => {
+  rmSync(jar, { force: true })
+  const { sidecar, written } = stub([
+    { name: 'session', value: 'old', domain: '.example.com', path: '/', session: true, expires: -1 },
+  ])
+  await sidecar.saveSessionCookies()
+  assert.equal(existsSync(jar), true)
+  /* The browser has since rotated the session id: the note is older news. */
+  const live = [{ name: 'session', value: 'rotated', domain: '.example.com', path: '/', session: true, expires: -1 }]
+  sidecar.page = {
+    cookies: async () => live,
+    setCookie: async (cookie) => {
+      written.push(cookie)
+      return { ok: true }
+    },
+  }
+  await sidecar.restoreSessionCookies()
+  assert.equal(written.length, 0, 'nothing is put back over a cookie that is already there')
+})

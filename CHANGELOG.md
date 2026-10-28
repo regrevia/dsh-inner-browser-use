@@ -1,3 +1,13 @@
+## 0.34.7
+
+- A session cookie kept for the next launch is no longer written over a cookie
+  the browser already holds. Chrome's cookie store is the newer news: sites
+  rotate their session id, and replaying the old value at every launch made a
+  working sign-in look like it had been kicked out. This is the likely cause of
+  the repeated 「被踢出」 seen on Doubao: the note held a session id the site had
+  already retired, and every browser start handed it back.
+- 86 unit tests pass (new: a live cookie is never overwritten).
+
 ## 0.34.6
 
 - One tab per chat even when two calls start at the same instant: the second

@@ -1,3 +1,17 @@
+## Phase 29 — a stale session cookie is not written back, 0.34.7
+
+`restoreSessionCookies` replayed every kept session cookie on launch, including
+ones the browser already had. A rotated `sessionid` from the note would replace
+the current one, and the site answers a retired session with a sign-in page.
+
+| case | before | now |
+|---|---|---|
+| note holds sessionid, browser holds rotated one | old value written | nothing written |
+| note holds a cookie the browser lost | written | written |
+| cookie key | — | domain + path + name |
+
+86 tests complete the suite in about 2 s.
+
 ## Phase 28 — one chat, one tab, even in parallel, 0.34.6
 
 `tabFor` checked `pages`, then did async work, then wrote `pages`: two calls that

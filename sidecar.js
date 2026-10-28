@@ -1721,9 +1721,20 @@ export class Sidecar {
       return
     }
     if (!Array.isArray(jar)) return
+    /* A cookie the browser already holds is newer than the note: the site may
+       have rotated its session id since the note was written, and putting the
+       old value back is exactly how a working sign-in turns into a logout. */
+    let live = []
+    try {
+      live = await this.page.cookies()
+    } catch {
+      live = []
+    }
+    const held = new Set(live.map((c) => `${String(c.domain ?? '').replace(/^\./, '')}|${String(c.path ?? '/')}|${String(c.name ?? '')}`))
     for (const cookie of jar.slice(0, 200)) {
       const domain = String(cookie?.domain ?? '').replace(/^\./, '')
       if (domain === '') continue
+      if (held.has(`${domain}|${String(cookie?.path ?? '/')}|${String(cookie.name)}`)) continue
       try {
         await this.page.setCookie({
           name: String(cookie.name),
