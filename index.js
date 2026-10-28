@@ -195,7 +195,7 @@ export class Bridge {
 /** Page read: address, title, controls, then text, as JSON the Host parses. */ // ui-copy-ignore
 /* The read model and the tool surface live in their own files: this module is
    the Host half (routes, bridge, lifetimes), not the model's vocabulary. */ // ui-copy-ignore
-import { KEYS, sidecarTools, sessionScope } from './tools.js?v=1'
+import { KEYS, sidecarTools, sessionScope, workScope } from './tools.js?v=1'
 
 /**
  * A state poll may pick up a browser that outlived a reload, and only for the
@@ -222,6 +222,22 @@ import { KEYS, sidecarTools, sessionScope } from './tools.js?v=1'
  * @param {string} owner - the chat that holds the mirror.
  * @returns {boolean} true when a tab has to be opened for this chat.
  */
+/**
+ * The folder the calling session works in, wherever it is kept.
+ * @param {any} execution - tool execution context.
+ * @returns {string} absolute path, or empty when nothing was said.
+ */
+export function cwdOf(execution) {
+  try {
+    const agent = execution?.agent
+    const value = agent?.cwd ?? agent?.session?.header?.cwd ?? agent?.header?.cwd
+    if (typeof value === 'string' && value !== '') return value
+  } catch {
+    /* a context that cannot be read is a context without a folder */
+  }
+  return ''
+}
+
 export function needsTab(chatState, chat, owner) {
   if (String(chat ?? '') === '' || owner !== chat) return false
   return chatState?.alive !== true
@@ -633,7 +649,7 @@ export function apply(ctx) {
           ...definition,
           /* Every tool call runs inside the chat that made it, so the browser
              hands that chat its own tab and no other. */
-          execute: async (args, exec) => sessionScope.run(String(exec?.agent?.id ?? ''), () => run(args, exec)),
+          execute: async (args, exec) => sessionScope.run(String(exec?.agent?.id ?? ''), () => workScope.run(cwdOf(exec), () => run(args, exec))),
         }
         return scope.tools.register(scoped)
       } catch (error) {

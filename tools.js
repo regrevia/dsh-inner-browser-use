@@ -10,9 +10,10 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
 import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
@@ -25,8 +26,96 @@ function currentSession() {
   return String(sessionScope.getStore() ?? '')
 }
 
-/** Where a screenshot from `sidecar_shot` lands, under the user's home. */
-export const SHOT_DIR = join('.dsh-inner-browser-use', 'screenshots')
+/** Which project the running call belongs to, so its files stay together. */
+export const workScope = new AsyncLocalStorage()
+
+/** Where files a call produces land, under the user's home. */
+export const ARTIFACT_ROOT = String(process.env.DSH_INNER_BROWSER_ARTIFACTS ?? '') !== ''
+  ? String(process.env.DSH_INNER_BROWSER_ARTIFACTS)
+  : join(homedir(), '.dsh-inner-browser-use', 'artifacts')
+
+/** How many files one kind keeps per chat; older ones go. */
+export const ARTIFACT_KEEP = 40
+
+/** Project folder name: the folder's own name, plus a short hash of its path. */
+function projectKey() {
+  const cwd = String(workScope.getStore() ?? '')
+  if (cwd === '') return 'no-project'
+  const named = basename(cwd).toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/^-+|-+$/g, '')
+  return `${named === '' ? 'project' : named}-${createHash('sha1').update(cwd).digest('hex').slice(0, 6)}`
+}
+
+/** Chat folder name: the short id a person can match to the chat. */
+function sessionKey() {
+  const id = currentSession().replace(/^session-/, '').replace(/[^a-z0-9-]/gi, '')
+  return id === '' ? 'no-chat' : id.slice(0, 8)
+}
+
+/**
+ * Where one kind of file for this project and this chat goes.
+ * `~/.dsh-inner-browser-use/artifacts/<project>/<chat>/<kind>/`
+ * @param {string} kind - shots, pictures, pdf.
+ * @returns {string} absolute directory; not created yet.
+ */
+export function artifactDir(kind) {
+  return join(ARTIFACT_ROOT, projectKey(), sessionKey(), kind)
+}
+
+/**
+ * Write one file where the project and the chat expect it, and keep the folder
+ * from growing without a limit.
+ * @param {string} kind - shots, pictures, pdf.
+ * @param {string} body - base64 body.
+ * @param {{name?: string, ext?: string, prefix?: string}} [options] - file name.
+ * @returns {Promise<string>} absolute path.
+ */
+export async function saveArtifact(kind, body, options = {}) {
+  const dir = artifactDir(kind)
+  await mkdir(dir, { recursive: true })
+  const ext = String(options.ext ?? '.png')
+  /* A name is a name: no separators, no runs of dots that could read as a path
+     climb, and no leading dot to hide the file. */
+  const wanted = String(options.name ?? '').replace(/[^\w.-]/g, '').replace(/\.(png|jpe?g|webp|pdf)$/i, '').replace(/\.{2,}/g, '.').replace(/^\.+/, '')
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+  const prefix = String(options.prefix ?? kind)
+  const file = join(dir, `${wanted === '' ? `${prefix}-${stamp}` : wanted}${ext}`)
+  await writeFile(file, Buffer.from(body, 'base64'))
+  await pruneArtifacts(dir, ARTIFACT_KEEP)
+  return file
+}
+
+/**
+ * Keep the newest `keep` files in one folder: a browser session that runs all
+ * day does not leave a folder nobody can look through.
+ * @param {string} dir - folder to trim.
+ * @param {number} keep - how many files survive.
+ * @returns {Promise<void>} done.
+ */
+export async function pruneArtifacts(dir, keep) {
+  let names
+  try {
+    names = await readdir(dir)
+  } catch {
+    return
+  }
+  const listed = []
+  for (const name of names) {
+    try {
+      listed.push({ name, at: (await stat(join(dir, name))).mtimeMs })
+    } catch {
+      /* a file that vanished between listing and reading is already gone */
+    }
+  }
+  if (listed.length <= keep) return
+  listed.sort((left, right) => right.at - left.at)
+  for (const spare of listed.slice(keep)) {
+    try {
+      await unlink(join(dir, spare.name))
+    } catch {
+      /* best effort: a file in use stays */
+    }
+  }
+}
 
 /** How many times a call found a control again after the page redrew it. */
 const follows = { count: 0 }
@@ -1747,11 +1836,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           }
         }
         const data = await page.shot({ full: args?.full === true, rect: clip, scale })
-        const dir = join(homedir(), SHOT_DIR)
-        await mkdir(dir, { recursive: true })
-        const name = String(args?.name ?? '').replace(/[^\w.-]/g, '') || `sidecar-${Date.now()}`
-        const file = join(dir, name.endsWith('.png') ? name : `${name}.png`)
-        await writeFile(file, Buffer.from(data, 'base64'))
+        const file = await saveArtifact('shots', data, { name: args?.name, prefix: 'shot' })
         taken = { data, file }
         return file
         })
@@ -1794,9 +1879,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           found = { pictures: [] }
         }
         const rows = []
-        const dir = join(homedir(), SHOT_DIR)
-        await mkdir(dir, { recursive: true })
-        const base = String(args?.name ?? '').replace(/[^\w.-]/g, '') || `sidecar-picture-${Date.now()}`
+        const base = String(args?.name ?? '').replace(/[^\w.-]/g, '')
         const list = Array.isArray(found?.pictures) ? found.pictures : []
         for (let index = 0; index < list.length; index += 1) {
           const item = list[index]
@@ -1805,8 +1888,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           if (mark < 0) continue
           const type = String(item?.type ?? 'image/png')
           const ext = type.includes('jpeg') ? 'jpg' : type.includes('webp') ? 'webp' : type.includes('svg') ? 'svg' : 'png'
-          const file = join(dir, `${base}${list.length > 1 ? `-${index + 1}` : ''}.${ext}`)
-          await writeFile(file, Buffer.from(body.slice(mark + 1), 'base64'))
+          const file = await saveArtifact('pictures', body.slice(mark + 1), {
+            name: base === '' ? '' : `${base}${list.length > 1 ? `-${index + 1}` : ''}`,
+            ext: `.${ext}`,
+            prefix: 'picture',
+          })
           const size = `${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`
           /* Say what the picture looks like in words: a model that cannot open
              a file still needs to know a chart came back blank. */
@@ -2208,11 +2294,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @returns {Promise<{text: string}>} where the PDF is. */
       execute: async () => withRawPage(async (page) => {
         const data = await page.pdf()
-        const dir = join(homedir(), SHOT_DIR)
-        await mkdir(dir, { recursive: true })
-        const file = join(dir, `sidecar-${Date.now()}.pdf`)
-        await writeFile(file, Buffer.from(data, 'base64'))
-        return file
+        return saveArtifact('pdf', data, { ext: '.pdf', prefix: 'page' })
       }),
     },
   ]
