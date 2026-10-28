@@ -301,6 +301,7 @@ The phases above were written one at a time as the work happened; the run from
 - 操作方式已分叉（0.34.29）：`sidecar_mode` 每个聊天记一种，`human` / `dom` 单次可覆盖。页游默认 human，登录/表单默认 dom 更省事。
 - Flash 判死：headless Chrome 里 Ruffle 交得上 swf 但起不了画面（26 秒，canvas 0、metadata 0），不承诺。真页游只能走站方 H5 / 微端 / 老 360 浏览器，页面上线前先用 `scripts/probe-flash.mjs` 问一句它要不要 Flash。
 - 开玩前先体检：`sidecar_prepare` 一次调用给出输入面、帧率、按键是否真的到得了框架、以及 Flash 结论（0.34.30）。4399《怪物小汽车》实测页面 58 fps、框架 59 fps —— 不少「Flash 小游戏」其实已经是 H5，先体检再下结论；`npm run ready <url>` 可复现。
+- 空白画面的两种原因分开报（`viewers` / `listening chats` / `asks.log`），并在「浏览器在跑、没人画」时自己向所属会话补发一次开页签请求（0.34.31）。
 
 输入这一层已经到位：按住键、组合键、按住鼠标，一项 300 ms 的按住整次调用 305 ms，事件由页面自己证实。实时画面沿用同一条 CDP 帧路（60 fps、镜像延迟中位数 8 ms）。
 

@@ -20,7 +20,7 @@
  * learns no port and no secret. // ui-copy-ignore
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Sidecar } from './sidecar.js?v=1'
@@ -252,6 +252,19 @@ export function shouldAdoptOnState(said, chat, owner) {
   return said?.alive === false && chat !== '' && owner === chat
 }
 
+/**
+ * Whether a running browser still needs its column told to draw it.
+ * @param {{alive: boolean, owner: string, wanted: string, listeners: number}} what - current facts.
+ * @returns {boolean} true when the owner is known, the browser runs, and nothing listens.
+ */
+export function wantsMirrorAgain(what) {
+  if (what?.alive !== true) return false
+  const owner = String(what?.owner ?? '')
+  if (owner === '') return false
+  if (String(what?.wanted ?? '') !== owner) return false
+  return Number(what?.listeners ?? 0) <= 0
+}
+
 export const name = 'dsh-inner-browser-use'
 export const inject = ['webServer']
 
@@ -268,6 +281,27 @@ export function apply(ctx) {
   /** @type {{refs: any[], at: number, last?: any}} */
   const sidecarRefs = { refs: [], at: 0 }
   ctx.effect(() => () => bridge.dispose(), 'dsh-inner-browser-use: bridge lifetime')
+  /* A live picture that nobody is drawing is the one failure people notice
+     first: the browser is fine, the column just lost its pane. The chat that
+     owns the browser is asked again, on a slow beat, until the frames stream
+     has a listener — the client keeps the rule that only the mounted chat's
+     column may open. */
+  ctx.effect(() => {
+    let last = 0
+    const timer = setInterval(() => {
+      try {
+        const owner = bridge.owner
+        const listeners = sidecar.page?.frames?.size ?? 0
+        const again = wantsMirrorAgain({ alive: sidecar.page !== null && sidecar.page !== undefined, owner, wanted: bridge.wanted.session, listeners }) // ui-copy-ignore
+        if (again !== true || Date.now() - last < 10_000) return
+        last = Date.now()
+        bridge.want(owner)
+        appendFileSync(join(STATE_DIR, 'asks.log'), `${new Date().toISOString()} asked ${owner.slice(-8)} to draw the mirror again\n`)
+      } catch {}
+    }, 4000)
+    timer.unref?.()
+    return () => clearInterval(timer)
+  }, 'dsh-inner-browser-use: mirror keepalive')
   /* Closing the browser cleanly on quit is what keeps a sign-in alive: a
      killed Chrome never writes the cookies a page set this minute. */
   ctx.effect(() => {
@@ -285,6 +319,12 @@ export function apply(ctx) {
   /** @param {import('node:http').IncomingMessage} req - request. @param {import('node:http').ServerResponse} res - response. */
   /** @type {{at: number, path: string, session: string}[]} the last few calls the column made. */
   const recent = []
+  /* Whether the pane is asking at all is the difference between "the browser
+     stopped" and "nothing is drawing it": the poll is every 2.5 s, so a chat
+     that asks is a chat with a mounted pane. Kept on disk because the answer
+     has to survive a plugin reload, which is when the question is asked. */
+  /** @type {Map<string, number>} */
+  const lastAsk = new Map()
   const handler = async (req, res) => {
     const url = new URL(req.url ?? ROUTE, 'http://dsh.invalid')
     const path = url.pathname.slice(ROUTE.length) || '/'
@@ -425,6 +465,15 @@ export function apply(ctx) {
           await sidecar.ensure(adoptOptions(chat, sidecar.rememberedTab?.(chat)))
           said = await sidecar.state()
         } catch {}
+      }
+      if (chat !== '') {
+        const before = lastAsk.get(chat) ?? 0
+        if (Date.now() - before > 2000) {
+          lastAsk.set(chat, Date.now())
+          try {
+            appendFileSync(join(STATE_DIR, 'asks.log'), `${new Date().toISOString()} ${chat.slice(-8)} alive=${String(said?.alive === true)} viewers=${String(said?.viewers ?? 0)}\n`)
+          } catch {}
+        }
       }
       json(200, { ...said, ...(chat === '' ? {} : { chat: mineChat ?? (await sidecar.chatState(chat)) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
       return

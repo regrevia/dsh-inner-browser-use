@@ -677,6 +677,22 @@ test('only the owning chat picks a browser up on a state poll', async () => {
   assert.equal(shouldAdoptOnState({ alive: false }, '', 'session-a'), false)
 })
 
+test('a running browser that nobody is drawing asks its own chat to draw it again', async () => {
+  const { wantsMirrorAgain } = await import('../index.js')
+  const base = { alive: true, owner: 'session-a', wanted: 'session-a', listeners: 0 }
+  assert.equal(wantsMirrorAgain(base), true, 'these are the facts of an empty column')
+  /* A stream already open is a drawn picture: asking again would only churn. */
+  assert.equal(wantsMirrorAgain({ ...base, listeners: 1 }), false)
+  /* A stopped browser has nothing to show, and a chat that never asked has no
+     column to repair. */
+  assert.equal(wantsMirrorAgain({ ...base, alive: false }), false)
+  assert.equal(wantsMirrorAgain({ ...base, wanted: '' }), false)
+  assert.equal(wantsMirrorAgain({ ...base, wanted: 'session-b' }), false)
+  assert.equal(wantsMirrorAgain({ ...base, owner: '' }), false)
+  /* Owners and asks are session ids, never a truthy stand-in. */
+  assert.equal(wantsMirrorAgain({ ...base, wanted: 'session-ab' }), false)
+})
+
 test('picking a surviving browser up names the chat, so that chat gets its own tab back', async () => {
   const { adoptOptions, needsTab } = await import('../index.js')
   assert.deepEqual(adoptOptions('session-1', 'https://example.com/a'), { session: 'session-1', url: 'https://example.com/a' })
