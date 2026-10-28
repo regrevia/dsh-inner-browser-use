@@ -674,3 +674,12 @@ test('only the owning chat picks a browser up on a state poll', async () => {
   assert.equal(shouldAdoptOnState({ alive: true }, 'session-a', 'session-a'), false)
   assert.equal(shouldAdoptOnState({ alive: false }, '', 'session-a'), false)
 })
+
+test('picking a surviving browser up names the chat, so that chat gets its own tab back', async () => {
+  const { adoptOptions } = await import('../index.js')
+  assert.deepEqual(adoptOptions('session-1', 'https://example.com/a'), { session: 'session-1', url: 'https://example.com/a' })
+  /* No remembered address still names the chat: the pane needs a tab, not a
+     browser with nothing in it. */
+  assert.deepEqual(adoptOptions('session-1', ''), { session: 'session-1' })
+  assert.deepEqual(adoptOptions('session-1', undefined), { session: 'session-1' })
+})

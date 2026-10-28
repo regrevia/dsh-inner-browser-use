@@ -206,6 +206,19 @@ import { KEYS, sidecarTools, sessionScope } from './tools.js?v=1'
  * @param {string} owner - the chat that owns the mirror.
  * @returns {boolean} whether this poll should attach to a running browser.
  */
+/**
+ * What the state poll hands the browser half when it picks a surviving browser
+ * up: the chat's own tab, at the address that chat last had. Without the chat
+ * the browser comes back with no tab for anybody, and the column stays empty.
+ * @param {string} chat - the chat that is polling.
+ * @param {string} remembered - where that chat left off, or ''.
+ * @returns {{session: string, url?: string}} options for `ensure`.
+ */
+export function adoptOptions(chat, remembered) {
+  const back = String(remembered ?? '')
+  return back === '' ? { session: chat } : { session: chat, url: back }
+}
+
 export function shouldAdoptOnState(said, chat, owner) {
   return said?.alive === false && chat !== '' && owner === chat
 }
@@ -367,7 +380,7 @@ export function apply(ctx) {
          answering honestly means picking the browser up first. */
       if (shouldAdoptOnState(said, chat, bridge.owner)) {
         try {
-          await sidecar.ensure({ url: sidecar.rememberedTab?.(chat) })
+          await sidecar.ensure(adoptOptions(chat, sidecar.rememberedTab?.(chat)))
           said = await sidecar.state()
         } catch {}
       }
