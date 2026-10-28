@@ -148,6 +148,19 @@ function commandOf(pid) {
   }
 }
 
+/**
+ * Whether this run may arm the watcher at all: never on Windows, where the
+ * browser tree ends with the application through `taskkill /T`, and only inside
+ * the application itself, since a note keyed to anything else would close the
+ * shared browser on a plugin reload.
+ * @returns {boolean} true when `handoff()` can write a watcher note.
+ */
+export function canArmWatcher() {
+  if (process.platform === 'win32') return false
+  const app = appPid()
+  return app !== 0 && looksLikeApp(commandOf(app)) === true
+}
+
 /** The watcher that closes the browser when the app goes: one per app run. */
 function watcherFile(dir) {
   return join(dir, 'watcher.json')

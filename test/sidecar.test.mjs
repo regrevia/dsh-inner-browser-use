@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, deathNote, looksLikeApp, noteDeath } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, noteDeath } from '../sidecar.js'
 
 /** A CDP session that records what the page asked for and never answers with
  * anything of its own: these tests are about what the page tells its viewers. */
@@ -179,7 +179,8 @@ test('asking for a blank page returns at once instead of waiting for a page to a
   assert.ok(took < 2000, `blank navigation took ${took} ms`)
 })
 
-test('a plugin reload hands the browser on instead of closing it', async () => {
+test('a plugin reload hands the browser on instead of closing it', async (t) => {
+  if (!canArmWatcher()) return t.skip('a watcher only arms inside the application, and never on Windows')
   const sidecar = Object.create(Sidecar.prototype)
   const asked = []
   const closed = []
@@ -212,7 +213,8 @@ test('a plugin reload hands the browser on instead of closing it', async () => {
   }
 })
 
-test('a reload does not arm a second guard for one application run', async () => {
+test('a reload does not arm a second guard for one application run', async (t) => {
+  if (!canArmWatcher()) return t.skip('a watcher only arms inside the application, and never on Windows')
   const dir = mkdtempSync(join(tmpdir(), 'dshib-watch-'))
   const before = process.env.DSH_INNER_BROWSER_STATE_DIR
   process.env.DSH_INNER_BROWSER_STATE_DIR = dir
