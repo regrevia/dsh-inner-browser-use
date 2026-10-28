@@ -1,3 +1,12 @@
+## 0.34.5
+
+- One ownership gate for every acting route: `/sidecar/frames`, `/sidecar/input`
+  and `/sidecar/nav` all ask the same `held(session)` question and give the same
+  403 with the current owner, instead of three copies that a future route could
+  forget. A new host test drives the wire: a chat that does not hold the mirror
+  is refused on all three, and the holder is named back.
+- 84 unit tests pass.
+
 ## 0.34.4
 
 - An empty mirror says what to do instead of only that nothing is open:

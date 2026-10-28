@@ -245,16 +245,24 @@ export function apply(ctx) {
       res.end(JSON.stringify(value))
     }
 
+    /* One answer to one question: may this chat act on the mirror? A browser
+       nobody holds is anybody's to take; once a chat holds it, another chat is
+       refused here instead of being trusted to check itself. */
+    /** @param {string} session - the chat a request speaks for. */
+    const held = (session) => session !== '' && bridge.owner !== '' && session !== bridge.owner
+    /** @returns {boolean} true when the request was refused. */
+    const refuse = () => {
+      json(403, { ok: false, text: 'this chat does not own the browser', owner: bridge.owner }) // ui-copy-ignore
+      return true
+    }
+
     if (path === '/sidecar/frames' && req.method === 'GET') {
       /* The column is global and only one chat may hold the mirror: a chat that
          does not own it is refused here, so a stale tab cannot stream a picture
          of somebody else's browser. */
       const asked = String(url.searchParams.get('session') ?? '')
       const watching = asked !== '' ? asked : sessionId
-      if (watching !== '' && bridge.owner !== '' && watching !== bridge.owner) {
-        json(403, { ok: false, text: 'this chat does not own the browser', owner: bridge.owner })
-        return
-      }
+      if (held(watching) && refuse()) return
       res.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache, no-transform',
@@ -360,10 +368,7 @@ export function apply(ctx) {
       }
       /* Input follows the owner: a chat that lost the mirror cannot act on the
          page from a stale tab either. */
-      if (body.session !== undefined && String(body.session) !== '' && bridge.owner !== '' && String(body.session) !== bridge.owner) {
-        json(403, { ok: false, text: 'this chat does not own the browser', owner: bridge.owner })
-        return
-      }
+      if (held(String(body.session ?? '')) && refuse()) return
       try {
         const page = await sidecar.ensure({ session: String(body.session ?? '') })
         const kind = String(body.kind ?? '')
@@ -415,10 +420,7 @@ export function apply(ctx) {
         return
       }
       /* Navigation follows the owner too: a lost tab cannot steer the page. */
-      if (body.session !== undefined && String(body.session) !== '' && bridge.owner !== '' && String(body.session) !== bridge.owner) {
-        json(403, { ok: false, text: 'this chat does not own the browser', owner: bridge.owner })
-        return
-      }
+      if (held(String(body.session ?? '')) && refuse()) return
       try {
         const page = await sidecar.ensure({ session: String(body.session ?? '') })
         const op = String(body.op ?? 'goto')

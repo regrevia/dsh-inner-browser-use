@@ -616,3 +616,19 @@ test('the chat that owns the mirror keeps it across a reload', async () => {
   writeFileSync(join(dir, 'mirror.json'), JSON.stringify({ owner: 'chat-1', session: 'chat-1', at: 1 }))
   assert.equal(new Bridge({ persist: true }).owner, '', 'a stray note is ignored')
 })
+
+test('every acting route refuses a chat that does not hold the mirror', async () => {
+  const claimed = await call('/sidecar/claim', { method: 'POST', body: JSON.stringify({ session: 'session-holder' }) })
+  assert.equal(claimed.status, 200)
+  for (const path of ['/sidecar/input', '/sidecar/nav']) {
+    const refused = await call(path, {
+      method: 'POST',
+      body: JSON.stringify({ session: 'session-rival', kind: 'text', text: 'x', op: 'reload' }),
+    })
+    assert.equal(refused.status, 403, `${path} must answer the holder's chat only`)
+    assert.equal((await refused.json()).text, 'this chat does not own the browser')
+  }
+  const picture = await call('/sidecar/frames?session=session-rival')
+  assert.equal(picture.status, 403, 'a rival tab cannot stream the picture either')
+  assert.equal((await picture.json()).owner, 'session-holder')
+})

@@ -1,3 +1,18 @@
+## Phase 27 — one gate for the mirror, 0.34.5
+
+Three routes each carried their own copy of the ownership check. Copies drift:
+a route added later is exactly the one nobody remembers to guard.
+
+| case | result |
+|---|---|
+| rival chat → `/sidecar/input` | 403, owner named |
+| rival chat → `/sidecar/nav` | 403, owner named |
+| rival chat → `/sidecar/frames` | 403, no stream opened |
+| unit tests | 84 |
+
+The gate reads one function, so the question "may this chat act?" has one answer
+in one place.
+
 ## Phase 26 — a screenshot the model can see, 0.34.3
 
 Observation was structured text only: `sidecar_shot` wrote a PNG and returned
