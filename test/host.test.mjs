@@ -162,6 +162,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_network',
     'sidecar_open',
     'sidecar_pdf',
+    'sidecar_prepare',
     'sidecar_resume',
     'sidecar_review',
     'sidecar_review_verdict',

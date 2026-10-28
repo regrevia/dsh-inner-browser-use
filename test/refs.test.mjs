@@ -73,8 +73,13 @@ test('a read with nothing out of reach adds no line about it', () => {
 })
 
 test('frames the frame reader reached count even when the page cannot say', () => {
-  assert.deepEqual(blindSpots(undefined, 3), { pictures: 0, canvases: 0, videos: 0, frames: 3 })
-  assert.deepEqual(blindSpots({ frames: 1 }, 2), { pictures: 0, canvases: 0, videos: 0, frames: 1 })
+  assert.deepEqual(blindSpots(undefined, 3), { pictures: 0, canvases: 0, videos: 0, frames: 3, flash: 0 })
+  assert.deepEqual(blindSpots({ frames: 1 }, 2), { pictures: 0, canvases: 0, videos: 0, frames: 1, flash: 0 })
+})
+
+test('a page that needs Flash says so instead of looking blank', () => {
+  const read = { url: 'https://x.test/', title: '', text: 'hello', textChars: 5, controls: [], blind: blindSpots({ flash: 1 }, 0) }
+  assert.match(renderPage(read), /Flash movie\(s\) this browser cannot play/)
 })
 
 test('a browser error page reads as a page that never arrived', () => {

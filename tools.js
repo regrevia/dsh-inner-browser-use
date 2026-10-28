@@ -546,9 +546,14 @@ function wait(ms) {
 async function evaluate(page, expression, route) {
   const params = { expression, returnByValue: true, awaitPromise: true }
   if (route?.contextId !== undefined) params.contextId = route.contextId
+  /* A page that navigates mid-call destroys the context this ran in; the
+     rejection arrives after the race is already lost. Handled, so it cannot
+     take the whole process down with it. */
   const call = page.cdp.send('Runtime.evaluate', params, route?.sessionId)
+    .catch((error) => ({ threw: String(error?.message ?? error) }))
   const raced = await Promise.race([call, wait(2000).then(() => 'timeout')])
   if (raced === 'timeout') return undefined
+  if (raced?.threw !== undefined) return undefined
   const { result, exceptionDetails } = raced
   if (exceptionDetails !== undefined) {
     return { error: String(exceptionDetails.exception?.description ?? exceptionDetails.text ?? 'evaluate failed') }
@@ -1251,6 +1256,126 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         return said === 'human'
           ? 'Real mouse and real keys from now on: pages cannot tell it from a person.'
           : "The page's own controls from now on: clicks and typing go through its DOM, so an overlay cannot swallow them."
+      },
+    },
+    {
+      name: 'sidecar_prepare', // ui-copy-ignore
+      description: 'Get a game or a heavy app page ready to play, in one call: read what is on it, find the surface that takes input, say whether it needs a Flash player this browser does not have, measure its real frame rate, and test whether keys reach it. Ends with what to do next instead of a blank page and no explanation.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          seconds: { type: 'number', description: 'How long to count frames for. Default 1.2, at most 5.' },
+          focus: { type: 'boolean', description: 'Click the surface to put keyboard focus in it. Default true.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 45_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @param {any} exec - tool run. @returns {Promise<{text: string}>} what the page is ready for. */
+      execute: async (args, exec) => {
+        const who = String(exec?.agent?.id ?? '')
+        const page = await sidecar.ensure({ session: who })
+        await settle(page, 8000)
+        const seconds = Math.min(5, Math.max(0.5, Number(args?.seconds) || 1.2))
+        const ms = Math.round(seconds * 1000)
+        /* A page that never arrived is not a game that is not ready: say which. */
+        const dead = await unreachable(page)
+        if (dead !== '') return { text: dead }
+        const read = await readPage(page, { mode: 'text', maxChars: 1500 })
+        const said = asSpot(await evaluate(page, `(() => {
+          const box = (el) => { const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } }
+          const shown = (el) => {
+            const r = el.getBoundingClientRect()
+            const st = getComputedStyle(el)
+            return r.width >= 120 && r.height >= 80 && st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05
+          }
+          const spot = (el, tag) => {
+            const first = box(el)
+            const seen = first.y > 0 && first.y < innerHeight && first.x > 0 && first.x < innerWidth
+            if (!seen) {
+              /* A surface below the fold is not where the person is looking, and
+                 a click at its coordinate would land somewhere else. */
+              el.scrollIntoView({ block: 'center', inline: 'center' })
+              return { tag, src: String(el.getAttribute('src') ?? ''), ...box(el), scrolled: true }
+            }
+            return { tag, src: String(el.getAttribute('src') ?? ''), ...first }
+          }
+          const canvases = Array.from(document.querySelectorAll('canvas')).filter(shown).map((el) => spot(el, 'canvas'))
+          const frames = Array.from(document.querySelectorAll('iframe')).filter(shown).map((el) => spot(el, 'frame'))
+          const movies = document.querySelectorAll('embed, object').length
+          return JSON.stringify({ canvases, frames, movies })
+        })()`))
+        const surface = said?.canvases?.[0] ?? said?.frames?.[0] ?? null
+        /* Give a game the click a person gives it: some of them only start
+           listening for keys once the surface has been touched. */
+        let clicked = ''
+        if (args?.focus !== false && surface !== null) {
+          await page.mouse('mouseMoved', { x: surface.x - 6, y: surface.y - 4 }).catch(() => {})
+          await wait(40)
+          await page.mouse('mousePressed', { x: surface.x, y: surface.y, clickCount: 1 }).catch(() => {})
+          await wait(30)
+          await page.mouse('mouseReleased', { x: surface.x, y: surface.y, clickCount: 1 }).catch(() => {})
+          clicked = `clicked the ${surface.tag} at ${surface.x},${surface.y}`
+        }
+        /* Count the page's own frames and listen for a key, in the page and in
+           the biggest frame, because a game is usually not in the page itself. */
+        const frames = await page.frameList().catch(() => [])
+        const routeOfFrame = (frame) => {
+          if (frame === undefined) return null
+          const sessionId = frame.contextId === undefined && typeof page.childSession === 'function' ? page.childSession(frame.frameId) : undefined
+          if (frame.contextId === undefined && sessionId === undefined) return null
+          return { contextId: frame.contextId, sessionId }
+        }
+        const countFrames = `new Promise((done) => {
+          window.__dshKeys = 0
+          if (window.__dshKeyUp === undefined) {
+            window.__dshKeyUp = true
+            addEventListener('keydown', () => { window.__dshKeys += 1 }, true)
+          }
+          let n = 0
+          const t0 = performance.now()
+          const tick = () => { n += 1; if (performance.now() - t0 < ${ms}) requestAnimationFrame(tick) }
+          requestAnimationFrame(tick)
+          setTimeout(() => done(JSON.stringify({ fps: Math.round((n * 1000) / Math.max(1, performance.now() - t0)), keys: window.__dshKeys })), ${ms + 60})
+        })`
+        const mainRate = asSpot(await evaluate(page, countFrames))
+        let frameRate = null
+        const childFrames = frames.slice(1).filter((frame) => String(frame.url ?? '') !== 'chrome-error://chromewebdata/')
+        const biggest = childFrames[0]
+        const route = routeOfFrame(biggest)
+        if (route !== null) frameRate = asSpot(await evaluate(page, countFrames, route))
+        let keys = route === null ? 'none arrived — there is no frame to test' : 'none arrived in the frame'
+        const keyDown = { type: 'keyDown', key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16, nativeVirtualKeyCode: 16 }
+        await page.cdp.send('Input.dispatchKeyEvent', keyDown, route?.sessionId).catch(() => {})
+        await page.cdp.send('Input.dispatchKeyEvent', { ...keyDown, key: 'Shift', type: 'keyUp' }, route?.sessionId).catch(() => {})
+        await wait(80)
+        const after = asSpot(await evaluate(page, 'JSON.stringify({ keys: window.__dshKeys ?? 0 })', route))
+        const mainAfter = asSpot(await evaluate(page, 'JSON.stringify({ keys: window.__dshKeys ?? 0 })'))
+        const arrived = Number(after?.keys ?? 0) + Number(mainAfter?.keys ?? 0) - Number(frameRate?.keys ?? 0) - Number(mainRate?.keys ?? 0)
+        if (arrived > 0) keys = `arrived in the frame (${arrived} keydown event${arrived === 1 ? '' : 's'} from a real key)`
+        else if (route !== null) keys = 'not in the frame — click inside it once, or the game only listens after it starts'
+        const lines = []
+        lines.push(`page: ${read.title === '' ? read.url : read.title} — ${read.controls.length} control(s), ${read.textChars} character(s)`)
+        lines.push(surface === null ? 'surface: no canvas or frame takes the screen — the page itself takes input' : `surface: ${surface.tag} ${surface.w}x${surface.h} at ${surface.x},${surface.y}${surface.scrolled === true ? ' (scrolled it into view)' : ''}${clicked === '' ? '' : ` (${clicked})`}`)
+        if (read.blind?.flash > 0) lines.push(`flash: ${read.blind.flash} movie(s) found, and this browser has no Flash player — the site's own H5 or micro-client version is the only way to play it`)
+        else lines.push('flash: none found')
+        lines.push(`frames: ${Math.max(0, frames.length - 1)} (${childFrames.filter((frame) => String(frame.url ?? '') === 'about:blank').length} of them about:blank)`)
+        const rates = []
+        if (mainRate !== null) rates.push(`page ${mainRate.fps} fps`)
+        if (frameRate !== null) rates.push(`frame ${frameRate.fps} fps`)
+        lines.push(`frame rate: ${rates.length === 0 ? 'the page could not count' : rates.join(', ')} over ${ms} ms`)
+        lines.push(`keys: ${keys}`)
+        lines.push(`mode: human${surface === null ? '' : ' — a game watches the mouse and the keys, and only real ones arrive trusted'}`)
+        const trouble = read.blind?.flash > 0
+          ? "not playable here: it needs Flash"
+          : surface === null && Number(mainRate?.fps ?? 0) === 0
+            ? 'nothing on this page is animating — it may be waiting for a click, or the game is behind a login'
+            : surface === null
+              ? 'ready to read and act on, though there is no canvas or frame to watch'
+              : `ready: ${surface.tag} is live at ${mainRate?.fps ?? frameRate?.fps ?? 0} fps`
+        lines.push(trouble)
+        return { text: lines.join('\n') }
       },
     },
     {

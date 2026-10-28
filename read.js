@@ -310,7 +310,7 @@ function snapshot(mode, budget, max) {
   /* What no amount of text will tell the reader: the screen shows something
      that has no words in the tree. Counted here so every read can say it. */
   const blind = (() => {
-    const out = { pictures: 0, canvases: 0, videos: 0, frames: 0 }
+    const out = { pictures: 0, canvases: 0, videos: 0, frames: 0, flash: 0 }
     const speaks = (el) => {
       const said = String(el.getAttribute?.('alt') ?? '').trim() || String(el.getAttribute?.('aria-label') ?? '').trim() || String(el.getAttribute?.('title') ?? '').trim()
       if (said.length > 1) return true
@@ -337,6 +337,44 @@ function snapshot(mode, budget, max) {
     /* A tracking pixel of a frame is not something the reader is missing: only
        frames that occupy the screen are worth a sentence. */
     for (const el of document.querySelectorAll('iframe')) if (shows(el)) out.frames += 1
+    /* A movie this browser refuses to play is the worst kind of blank: the page
+       looks loaded and nothing says why nothing happens. Count it so the read
+       can say it out loud. */
+    for (const el of document.querySelectorAll('embed, object')) {
+      const said = String(el.getAttribute?.('type') ?? el.getAttribute?.('src') ?? el.getAttribute?.('data') ?? el.getAttribute?.('classid') ?? '')
+      if (!/shockwave|flash|application\/x-swf/i.test(said) && el.tagName !== 'EMBED') continue
+      if (el.tagName === 'EMBED' && !/shockwave|flash|swf/i.test(said)) continue
+      if (shows(el)) out.flash += 1
+    }
+    if (out.flash === 0) {
+      const asked = Array.from(document.querySelectorAll('a[href], iframe[src], script[src], link[href]'))
+        .map((el) => String(el.getAttribute?.('href') ?? el.getAttribute?.('src') ?? ''))
+        .filter((said) => /\.swf(\?|$)/i.test(said)).length
+      if (asked > 0) out.flash = asked
+    }
+    if (out.flash === 0) {
+      /* Many sites build the movie in a script or load it inside a frame, so
+         nothing in the tree names it. The scripts still do. */
+      const scripts = Array.from(document.scripts).map((el) => String(el.textContent ?? '')).join(' ')
+      const hits = scripts.match(/\.swf(\?|["'\\]|\s|$)/gi)
+      if (hits !== null && hits.length > 0) out.flash = Math.min(9, hits.length)
+    }
+    if (out.flash === 0) {
+      /* The player may be written into a same-origin frame that nothing in the
+         outer tree mentions. Same origin means this page can look inside. */
+      try {
+        for (const frame of document.querySelectorAll('iframe')) {
+          const inside = frame.contentDocument
+          if (inside === null || inside === undefined) continue
+          const movies = inside.querySelectorAll('embed, object').length
+          const inner = Array.from(inside.scripts ?? []).map((el) => String(el.textContent ?? '')).join(' ')
+          const found = inner.match(/\.swf(\?|["'\\]|\s|$)/gi)
+          out.flash = Math.min(9, out.flash + movies + (found === null ? 0 : found.length))
+        }
+      } catch {
+        /* a frame from elsewhere cannot be looked into, which is fine */
+      }
+    }
     return out
   })()
   return JSON.stringify({
@@ -740,15 +778,17 @@ function routeOf(page, frame, slot) {
  * @returns {Promise<{text: string, controls: any[], frames: number}>} what the frames add.
  */
 async function readFrames(page, mode, budget) {
-  if (typeof page.frameList !== 'function') return { text: '', controls: [], frames: 0 }
+  const none = { text: '', controls: [], frames: 0, blind: { pictures: 0, canvases: 0, videos: 0, frames: 0, flash: 0 } }
+  if (typeof page.frameList !== 'function') return none
   let frames = []
   try {
     frames = await page.frameList()
   } catch (error) {
-    return { text: '', controls: [], frames: 0 }
+    return none
   }
   const children = frames.slice(1)
   const controls = []
+  const blind = { ...none.blind }
   let text = ''
   for (let slot = 0; slot < children.length && slot < 8; slot += 1) {
     const route = routeOf(page, children[slot], slot + 1)
@@ -763,11 +803,14 @@ async function readFrames(page, mode, budget) {
         controls.push({ ...item, ref: tag + Number(item.ref), frame: slot + 1, x: Number(item.x ?? 0) + offset.x, y: Number(item.y ?? 0) + offset.y })
       }
       if (text.length < 400 && typeof inside.text === 'string' && inside.text !== '') text += `${text === '' ? '' : '\n'}${inside.text.slice(0, 400)}`
+      /* What is out of reach inside a frame is out of reach here too: a canvas
+         or a movie in a frame is exactly the blank the reader cannot explain. */
+      for (const key of Object.keys(blind)) blind[key] += Math.max(0, Math.round(Number(inside.blind?.[key] ?? 0)))
     } catch (error) {
       continue
     }
   }
-  return { text, controls, frames: children.length }
+  return { text, controls, frames: children.length, blind }
 }
 
 /** Decode a ref into the frame it lives in and the number that frame knows. */
@@ -824,7 +867,11 @@ export async function readPage(page, options = {}) {
     scroll: read?.scroll,
     focused: read?.focused ?? null,
     controls: Array.isArray(read?.controls) ? read.controls : [],
-    blind: blindSpots(read?.blind, framed.frames),
+    blind: (() => {
+      const own = blindSpots(read?.blind, framed.frames)
+      for (const key of Object.keys(own)) own[key] += Number(framed.blind?.[key] ?? 0)
+      return own
+    })(),
   }
 }
 
@@ -832,7 +879,7 @@ export async function readPage(page, options = {}) {
  * Merge what the page counted with what the frame reader managed to see.
  * @param {any} said - counts from the page.
  * @param {number} [read] - frames that answered.
- * @returns {{pictures: number, canvases: number, videos: number, frames: number}} what text cannot show.
+ * @returns {{pictures: number, canvases: number, videos: number, frames: number, flash: number}} what text cannot show.
  */
 export function blindSpots(said, read) {
   const n = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.round(Number(value))) : 0)
@@ -840,7 +887,7 @@ export function blindSpots(said, read) {
      many exist, tracking pixels included. The screen is what the reader is
      missing, so its count wins whenever the page could count at all. */
   const frames = said !== undefined && said !== null && said.frames !== undefined ? n(said.frames) : n(read)
-  return { pictures: n(said?.pictures), canvases: n(said?.canvases), videos: n(said?.videos), frames }
+  return { pictures: n(said?.pictures), canvases: n(said?.canvases), videos: n(said?.videos), frames, flash: n(said?.flash) }
 }
 
 /**
@@ -937,9 +984,15 @@ export function renderPage(read, options = {}) {
     if (read.blind.canvases > 0) bits.push(`${read.blind.canvases} drawing surface(s)`)
     if (read.blind.videos > 0) bits.push(`${read.blind.videos} video(s)`)
     if (read.blind.frames > 0) bits.push(`${read.blind.frames} embedded frame(s)`)
+    if (read.blind.flash > 0) bits.push(`${read.blind.flash} Flash movie(s) this browser cannot play — look for the site's own H5 or micro-client version`)
     /* Only when something is actually out of reach: a line saying "nothing is
        hidden" on every read is a line the reader learns to skip. */
     if (bits.length > 0) lines.push(`text cannot show: ${bits.join(', ')} — sidecar_grab takes the picture, sidecar_shot shows the screen`)
+    /* Almost no words but frames on screen is the shape of a plugin game. Saying
+       it here is the difference between "blank page" and "this needs Flash". */
+    if (read.blind.flash === 0 && read.blind.frames > 0 && Number(read.textChars ?? 0) < 400) {
+      lines.push(`${read.blind.frames} frame(s) and almost no text: the content is inside them — if it stays blank it may be a plugin game this browser cannot play; look for the site's H5 or micro-client version`)
+    }
   }
   if (read.picture && Array.isArray(read.picture.missing)) {
     /* Something was meant to be here and is not: say that instead of nothing. */
