@@ -74,7 +74,7 @@ test('a read with nothing out of reach adds no line about it', () => {
 
 test('frames the frame reader reached count even when the page cannot say', () => {
   assert.deepEqual(blindSpots(undefined, 3), { pictures: 0, canvases: 0, videos: 0, frames: 3 })
-  assert.deepEqual(blindSpots({ frames: 5 }, 2), { pictures: 0, canvases: 0, videos: 0, frames: 5 })
+  assert.deepEqual(blindSpots({ frames: 1 }, 2), { pictures: 0, canvases: 0, videos: 0, frames: 1 })
 })
 
 test('a browser error page reads as a page that never arrived', () => {

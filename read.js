@@ -334,7 +334,9 @@ function snapshot(mode, budget, max) {
     }
     for (const el of document.querySelectorAll('canvas')) if (shows(el)) out.canvases += 1
     for (const el of document.querySelectorAll('video')) if (shows(el)) out.videos += 1
-    out.frames = document.querySelectorAll('iframe').length
+    /* A tracking pixel of a frame is not something the reader is missing: only
+       frames that occupy the screen are worth a sentence. */
+    for (const el of document.querySelectorAll('iframe')) if (shows(el)) out.frames += 1
     return out
   })()
   return JSON.stringify({
@@ -760,7 +762,10 @@ export async function readPage(page, options = {}) {
  */
 export function blindSpots(said, read) {
   const n = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.round(Number(value))) : 0)
-  const frames = Math.max(n(said?.frames), n(read))
+  /* The page knows which frames take up the screen; the frame reader knows how
+     many exist, tracking pixels included. The screen is what the reader is
+     missing, so its count wins whenever the page could count at all. */
+  const frames = said !== undefined && said !== null && said.frames !== undefined ? n(said.frames) : n(read)
   return { pictures: n(said?.pictures), canvases: n(said?.canvases), videos: n(said?.videos), frames }
 }
 

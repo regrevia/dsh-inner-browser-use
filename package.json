@@ -1,6 +1,6 @@
 {
   "name": "dsh-inner-browser-use",
-  "version": "0.34.16",
+  "version": "0.34.17",
   "description": "An agent-owned Chromium sidecar mirrored into the DeepSeek Harness right column: the agent drives it, the person watches and can take the mouse, and logins survive restarts.",
   "type": "module",
   "main": "index.js",

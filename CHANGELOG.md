@@ -1,3 +1,8 @@
+## 0.34.17
+
+- The blind-spot frame count follows the screen, not the DOM: a 1x1 tracking frame no longer inflates it, and a read of a page with one visible frame reports one.
+- Live check on a data: page with a 400×300 and a 1×1 frame: `blind.frames` 1, one line in the read.
+
 ## 0.34.16
 
 The mirror no longer comes back empty after a reload.

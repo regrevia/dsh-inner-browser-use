@@ -1,3 +1,12 @@
+## Phase 39 — count what is on the screen, not what is in the DOM, 0.34.17
+
+`readFrames` counts child frames; the page's own count filters to frames that
+occupy the screen. Taking the larger made a hidden 1×1 frame claim a blind spot.
+
+- `blindSpots` now lets the page's visible count win; the reader's count is the
+  fallback for when the page could not count.
+- Live: two frames (400×300 and 1×1) → `blind.frames` 1, exactly one line.
+
 ## Phase 38 — a reload must not blank the mirror, 0.34.16
 
 `/sidecar/state` answered from the new plugin instance, which owns nothing until
