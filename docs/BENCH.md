@@ -1,3 +1,21 @@
+## Phase 26 — a screenshot the model can see, 0.34.3
+
+Observation was structured text only: `sidecar_shot` wrote a PNG and returned
+a path, which is a file name the model cannot look at. Codex and Claude Code
+both hand screenshots back as image content, and that is the difference
+between planning from the picture and guessing.
+
+| case | before | now |
+|---|---|---|
+| route with image input | path only | path + image block, same call |
+| route without image input | path | path, no image block, no error |
+| no attachment store | path | path |
+| read state across chats | one shared object | one per chat |
+| unit tests | 79 | 81 |
+
+Same-call cost: the PNG is already in memory for the file write, so the image
+block adds one attachment save, no extra round trip and no second screenshot.
+
 <!-- ui-copy-ignore -->
 # Measured, not claimed
 

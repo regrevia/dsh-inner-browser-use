@@ -476,6 +476,43 @@ export function apply(ctx) {
 
   ctx.inject(['tools'], (scope) => {
     const disposers = sidecarTools(sidecar, sidecarRefs, {
+      /* A screenshot the model can look at is the difference between planning
+         from the picture and guessing from a path. The store and the route that
+         can carry it are Harness services, so the tool asks here for it; when
+         either is missing the picture stays a file and the call still works. */
+      /**
+       * @param {string} data - base64 PNG.
+       * @param {string} name - file name for the attachment.
+       * @param {any} exec - the tool call's context.
+       * @returns {Promise<any>} the attachment value, or undefined to stay text-only.
+       */
+      async showShot(data, name, exec) {
+        try {
+          const attachments = ctx.get('attachments')
+          const llm = ctx.get('llm')
+          if (attachments === undefined || llm === undefined) return undefined
+          const route = exec?.agent?.session?.requestHeader?.()?.config
+          const provider = route?.provider ?? exec?.agent?.options?.provider
+          const model = route?.model ?? exec?.agent?.options?.model
+          if (provider === undefined || model === undefined) return undefined
+          const info = await llm.resolveModelInfo(provider, model, exec?.signal)
+          if (!Array.isArray(info?.inputModalities) || !info.inputModalities.includes('image')) return undefined
+          const bytes = Buffer.from(data, 'base64')
+          const cap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
+          if (!(bytes.length > 0) || bytes.length > cap) return undefined
+          const ref = await attachments.saveImage({ data: bytes, mediaType: 'image/png', name })
+          return {
+            attachmentId: ref.attachmentId,
+            mediaType: ref.mediaType,
+            bytes: ref.bytes,
+            width: ref.width,
+            height: ref.height,
+            ...(ref.name === undefined ? {} : { name: ref.name }),
+          }
+        } catch {
+          return undefined
+        }
+      },
       /* The mirror changes hands here: the calling chat owns it from now on,
          and every earlier owner loses it. */
       want: (sessionId) => {

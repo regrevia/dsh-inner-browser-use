@@ -1,3 +1,17 @@
+## 0.34.3
+
+- `sidecar_shot` now hands the picture to the model instead of only a path:
+  when the active route declares image input, the PNG is stored as an
+  attachment and returned as an image block beside the text. A captcha, a
+  chart, a canvas or a broken layout can be planned from what is on screen.
+  The tool still returns the path, and stays text-only when the route cannot
+  take images or no attachment store is mounted.
+- Read state is per chat: refs, the diff baseline and the last shape belong to
+  the chat that read the page. Before, chat B's read replaced chat A's
+  baseline, so A's `changed_only` diffed against a page it never saw and a ref
+  from A could be matched against B's control.
+- 81 unit tests pass (new: per-chat state, image block only when present).
+
 ## 0.34.2
 
 - **别的会话的页面不再被当成自己的弹窗接管。** 之前一次「找新开的弹窗」会在浏览器所有标签里挑一个不属于主标签的页，把它的地址当成本会话的弹窗，随后导航走；`adoptOpened` 还会把它关掉——一个会话的 `sidecar_open` 就可能把另一个会话正在看的页面拿走。现在每张页面知道自己的 target，浏览器把其它会话的 target 交给它作为 `siblings`，候选必须不是自己、也不在别人名下，否则一律不接管、不关闭（`isForeign`，单测覆盖「别的会话的标签 / 真正的新标签 / 自己 / 空」四种）。

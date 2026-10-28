@@ -35,6 +35,41 @@ const follows = { count: 0 }
 export const SIDECAR_OFF = 'The sidecar browser is not running. Call sidecar_open with the address first.'
 
 /** Output schema every tool returns. */
+/** The picture half of a screenshot result: shown only when the route can see it. */
+const SHOT_IMAGE = {
+  type: 'object', // ui-copy-ignore
+  properties: {
+    attachmentId: { type: 'string' },
+    mediaType: { type: 'string' },
+    bytes: { type: 'integer' },
+    width: { type: 'integer' },
+    height: { type: 'integer' },
+    name: { type: 'string' },
+  },
+  required: ['attachmentId', 'mediaType', 'bytes', 'width', 'height'],
+  additionalProperties: false,
+}
+
+/** A screenshot's path, plus the picture when this model can look at it. */
+export const SHOT_OUTPUT = {
+  schema: {
+    type: 'object', // ui-copy-ignore
+    properties: { text: { type: 'string' }, image: SHOT_IMAGE },
+    required: ['text'],
+    additionalProperties: false,
+  },
+  /**
+   * @param {unknown} _args - call arguments, unused.
+   * @param {any} value - tool value.
+   * @returns {any[]} the text, and the picture when there is one.
+   */
+  render(_args, value) {
+    const blocks = [{ type: 'text', text: String(value?.text ?? '') }]
+    if (value?.image !== undefined) blocks.push({ type: 'image', attachment: value.image })
+    return blocks
+  },
+}
+
 const TEXT_OUTPUT = {
   schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
   /**
@@ -539,6 +574,24 @@ async function followRef(page, ref, known) {
 }
 
 /**
+ * One read state per chat, created the first time that chat reads.
+ * @param {Map<string, any>} store - per-chat states.
+ * @param {string} id - chat id.
+ * @param {any} fallback - state for calls that name no chat.
+ * @returns {any} the state of that chat.
+ */
+export function readStateFor(store, id, fallback) {
+  const key = String(id ?? '')
+  const known = store.get(key)
+  if (known !== undefined) return known
+  /* The Host passes one object for the whole plugin; it belongs to the calls
+     that name no chat, so a named chat gets its own empty one. */
+  const fresh = key === '' ? fallback : { refs: [], at: 0 }
+  store.set(key, fresh)
+  return fresh
+}
+
+/**
  * A step that could not be carried out. The batch stops here: the next step was
  * written against a page that never arrived.
  * @param {string} text - what happened.
@@ -894,6 +947,17 @@ return `the answer came back in ${Math.round(took / 100) / 10}s:\n${words}`
 }
 
 export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
+  /* A ref belongs to the page it was read from, and two chats read two pages.
+     One shared read state meant chat B's read replaced chat A's baseline, so A's
+     next "what changed" was a diff against a page it never saw and a number from
+     A could be matched against B's control. Each chat now keeps its own. */
+  const byChat = new Map()
+  /**
+   * The read state of the chat this call speaks for.
+   * @param {string} [id] - chat id; the current one by default.
+   * @returns {{refs: any[], at: number, last?: any, lastShape?: string}} its state.
+   */
+  const refsFor = (id = currentSession()) => readStateFor(byChat, id, refs)
   /* Reading, clicking and typing on Chrome's own error page is not driving the
      site: the text there is Chrome talking, the buttons reload. Those calls are
      refused with the error code instead. The tools that report the browser
@@ -930,7 +994,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     return withRead(work)
   }
   const look = async (page, options) => {
-    const read = await remember(page, refs, options)
+    const read = await remember(page, refsFor(), options)
     const said = renderPage(read, options)
     return isCheckPage(read) ? `${said}\n${CHECK_NOTE}` : said
   }
@@ -951,7 +1015,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
    */
   const findAgain = async (page, ref) => {
     const spot = await locate(page, ref)
-    const known = (refs?.refs ?? []).find((control) => Number(control.ref) === Number(ref))
+    const known = (refsFor().refs ?? []).find((control) => Number(control.ref) === Number(ref))
     if (spot.gone !== true) {
       const drift = differs(known, spot)
       return drift === '' ? spot : { gone: true, why: drift }
@@ -1026,23 +1090,23 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const options = { mode: String(args?.mode ?? 'text'), maxChars: Number(args?.max_chars ?? 4600) }
         const read = await remember(page, refs, options)
         const note = isCheckPage(read) ? `\n${CHECK_NOTE}` : ''
-        if (args?.changed_only === true && refs.last !== undefined) {
+        if (args?.changed_only === true && state.last !== undefined) {
           /* The diff becomes the new baseline: a page that moved zero -> one
              should not report that move again on the next read. */
-          const text = diffRead(refs.last, read, options) + note
-          refs.last = read
-          refs.lastShape = JSON.stringify(options)
+          const text = diffRead(state.last, read, options) + note
+          state.last = read
+          state.lastShape = JSON.stringify(options)
           return text
         }
-        const before = refs.last
-        refs.last = read
+        const before = state.last
+        state.last = read
         /* Same page, same shape, same words: the numbers above still work, and
            repeating the page would only spend tokens. */
-        if (sameRead(before, read) && refs.lastShape === JSON.stringify(options)) {
+        if (sameRead(before, read) && state.lastShape === JSON.stringify(options)) {
           const moved = Number(before.scroll?.y ?? 0) !== Number(read.scroll?.y ?? 0) ? `, scrolled to ${Math.round(Number(read.scroll?.y ?? 0))}` : ''
           return `still at ${read.url}${moved} — nothing changed since the last read; the numbers above still work${note}`
         }
-        refs.lastShape = JSON.stringify(options)
+        state.lastShape = JSON.stringify(options)
         return renderPage(read, options) + note
       }),
     },
@@ -1379,7 +1443,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (steps.length === 0) return 'Give at least one step.'
         const report = []
         for (const [index, step] of steps.entries()) {
-          const said = await runStep(page, step ?? {}, refs?.refs)
+          const said = await runStep(page, step ?? {}, refsFor().refs)
           const text = typeof said === 'string' ? said : said.text
           report.push(`${index + 1}. ${text}`)
           /* A step that never landed makes every later step a guess, so the
@@ -1399,13 +1463,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const mode = String(args?.read ?? 'text')
         if (mode === 'none') return report.join('\n')
         const options = { mode: mode === 'changed' ? 'text' : mode, maxChars: Number(args?.max_chars ?? 3000) }
-        const read = await remember(page, refs, options)
-        if (mode === 'changed' && refs.last !== undefined) {
-          const diff = diffRead(refs.last, read, options)
-          refs.last = read
+        const state = refsFor()
+        const read = await remember(page, state, options)
+        if (mode === 'changed' && state.last !== undefined) {
+          const diff = diffRead(state.last, read, options)
+          state.last = read
           return `${report.join('\n')}\n${diff}`
         }
-        refs.last = read
+        state.last = read
         return `${report.join('\n')}\n\n${renderPage(read, options)}`
       }),
     },
@@ -1547,7 +1612,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'sidecar_shot', // ui-copy-ignore
-      description: 'Save a PNG of the sidecar browser into the session folder and return its absolute path. Default is the visible screen; full takes the whole page, ref takes one control.',
+      description: 'Save a PNG of the sidecar browser into the session folder and return its absolute path; when the current model accepts images the picture comes back in the same call, so a captcha, a chart or a broken layout can be looked at instead of guessed. Default is the visible screen; full takes the whole page, ref takes one control.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
@@ -1558,11 +1623,21 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         },
         additionalProperties: false,
       },
-      output: TEXT_OUTPUT, // ui-copy-ignore
+      output: SHOT_OUTPUT, // ui-copy-ignore
       timeoutMs: 40_000,
       isConcurrencySafe: () => false,
-      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the saved path. */
-      execute: async (args) => withRead(async (page) => {
+      /**
+       * A picture nobody can look at is only a file path: when the route declares
+       * image input, the same call carries the PNG as an attachment so the next
+       * step can be planned from what is actually on screen instead of guessing.
+       * @param {any} args - arguments.
+       * @param {any} [exec] - call context, for the route and its attachments.
+       * @returns {Promise<any>} the saved path, and the picture when available.
+       */
+      execute: async (args, exec) => {
+        /** @type {{data: string, file: string}|undefined} */
+        let taken
+        const said = await withRead(async (page) => {
         const scale = Math.max(1, Math.min(3, Number(args?.scale ?? 1)))
         let clip = undefined
         if (args?.ref !== undefined) {
@@ -1587,8 +1662,18 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const name = String(args?.name ?? '').replace(/[^\w.-]/g, '') || `sidecar-${Date.now()}`
         const file = join(dir, name.endsWith('.png') ? name : `${name}.png`)
         await writeFile(file, Buffer.from(data, 'base64'))
+        taken = { data, file }
         return file
-      }),
+        })
+        if (taken === undefined) return said
+        let image
+        try {
+          image = await host.showShot?.(taken.data, taken.file.split('/').pop() ?? 'shot.png', exec)
+        } catch {
+          image = undefined
+        }
+        return image === undefined ? said : { text: said.text, image }
+      },
     },
     {
       name: 'sidecar_grab', // ui-copy-ignore
