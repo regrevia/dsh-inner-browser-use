@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, deathNote, noteDeath } from '../sidecar.js'
 
 /** A CDP session that records what the page asked for and never answers with
  * anything of its own: these tests are about what the page tells its viewers. */
@@ -241,4 +241,21 @@ test('a reload does not arm a second guard for one application run', async () =>
       /* nothing to stop */
     }
   }
+})
+
+test('a browser that died by itself leaves one readable line, and one that was asked to stop leaves none', async () => {
+  const line = deathNote({ pid: 46590, code: null, signal: 'SIGKILL', profile: 'default' })
+  assert.match(line, /browser pid 46590 profile default/)
+  assert.match(line, /signal SIGKILL/)
+  assert.match(line, /exit code none/)
+
+  const dir = mkdtempSync(join(tmpdir(), 'dshib-death-'))
+  /* A stop the plugin asked for is not news. */
+  noteDeath({ pid: 1, code: 0, signal: null, profile: 'default', asked: true }, dir)
+  assert.throws(() => readFileSync(join(dir, 'browser.log'), 'utf8'))
+
+  /* This is the one nobody can see: it has to be written down. */
+  noteDeath({ pid: 42, code: 9, signal: null, profile: 'default' }, dir)
+  const text = readFileSync(join(dir, 'browser.log'), 'utf8')
+  assert.match(text, /browser pid 42 profile default exit code 9/)
 })

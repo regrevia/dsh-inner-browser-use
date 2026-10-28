@@ -6,7 +6,7 @@
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -105,6 +105,36 @@ function appPid() {
 /** The watcher that closes the browser when the app goes: one per app run. */
 function watcherFile(dir) {
   return join(dir, 'watcher.json')
+}
+
+/**
+ * One line describing a browser that went away by itself, so the next person to
+ * look knows whether it was asked to stop, crashed, or was killed from outside.
+ * @param {{pid?: number, code?: number|null, signal?: string|null, profile?: string}} gone - what the child reported.
+ * @returns {string} a line without a newline.
+ */
+export function deathNote(gone) {
+  const at = new Date().toISOString()
+  const code = gone.code === null || gone.code === undefined ? 'none' : String(gone.code)
+  return `${at} browser pid ${String(gone.pid ?? 0)} profile ${String(gone.profile ?? 'default')} exit code ${code} signal ${String(gone.signal ?? 'none')}`
+}
+
+/**
+ * Appends one line to the browser log and never troubles the caller, because a
+ * browser that died while nothing was watching should not also break the call
+ * that noticed.
+ * @param {{pid?: number, code?: number|null, signal?: string|null, profile?: string, asked?: boolean}} gone - what happened.
+ * @param {string} [dir] - where the log lives; the state directory by default.
+ * @returns {void}
+ */
+export function noteDeath(gone, dir = tabsDir) {
+  if (gone.asked === true) return
+  try {
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(join(dir, 'browser.log'), `${deathNote(gone)}\n`)
+  } catch {
+    /* a log is a convenience, not a promise */
+  }
 }
 
 const COOKIE_FILES = ['Default/Cookies', 'Local State']
@@ -1142,6 +1172,7 @@ export class Sidecar {
   constructor(options = {}) {
     this.logger = options.logger
     this.child = null
+    this.stopping = false
     this.cdp = null
     this.page = null
     /* One tab per chat: a second chat opening an address gets a tab of its
@@ -1537,7 +1568,11 @@ export class Sidecar {
     ]
     if (this.headless) args.unshift('--headless=new')
     const child = spawn(binary, args, { detached: false, stdio: 'ignore' })
-    child.on('exit', () => {
+    const born = Date.now()
+    child.on('exit', (code, signal) => {
+      /* A browser that ends without being asked is the one case nobody can see:
+         Chrome's own stderr goes nowhere, so leave a line behind. */
+      noteDeath({ pid: child.pid, code, signal, profile: this.profile, asked: this.stopping === true || Date.now() - born < 3000 })
       if (this.child === child) {
         this.child = null
         this.cdp?.close()
@@ -1740,6 +1775,7 @@ export class Sidecar {
    * @returns {Promise<void>} done, with the browser still up.
    */
   async handoff() {
+    this.stopping = true
     if (this.page !== null) await this.saveSessionCookies()
     if (this.backup !== undefined) clearInterval(this.backup)
     this.backup = undefined
