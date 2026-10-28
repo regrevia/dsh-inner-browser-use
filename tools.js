@@ -1714,7 +1714,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         } catch {
           image = undefined
         }
-        return image === undefined ? said : { text: said.text, image }
+        /* The route may not carry pictures at all: then the file path is all
+           this call can give, and saying so is better than a silent path the
+           next step assumes was looked at. */
+        if (image === undefined) return { text: `${said.text}\nno picture reached this result — sidecar_view reads the words here, sidecar_grab returns a picture as a file` }
+        return { text: said.text, image }
       },
     },
     {

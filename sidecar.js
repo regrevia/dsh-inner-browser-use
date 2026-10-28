@@ -763,7 +763,21 @@ export class SidecarPage {
       await this.readTitle()
       if (this.url !== '' && this.url !== 'about:blank') break
     }
-    return { url: this.url, title: this.title }
+    /* A brand-new browser sometimes answers the very first navigation with its
+       own error page: the network stack is still coming up. One reload of that
+       address is the difference between the chat seeing the site and the chat
+       seeing a browser error in the mirror. */
+    if (this.url.startsWith('chrome-error://')) {
+      await wait(300)
+      await this.cdp.send('Page.reload', {}).catch(() => {})
+      for (let i = 0; i < 80; i += 1) {
+        await wait(100)
+        await this.readTitle()
+        if (this.url !== '' && !this.url.startsWith('chrome-error://') && this.url !== 'about:blank') break
+      }
+    }
+    const bad = this.url.startsWith('chrome-error://') ? 'the page did not load' : ''
+    return bad === '' ? { url: this.url, title: this.title } : { url: this.url, title: this.title, bad }
   }
 
   /**

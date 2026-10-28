@@ -1,3 +1,16 @@
+## Phase 37 — an observation that admits its blind spot, 0.34.15
+
+A text read and a screenshot claim to show the page. Both are lossy, and the loss
+was silent: a chart wired as `<canvas>`, a generated image with no alt text, a
+video, a cross-origin frame — nothing in the text said "there is something here
+you cannot read". A model then planned as if the page were fully described.
+
+- `readPage` counts the unreadable visible things on the page and in frames, and `renderPage` prints exactly one line when the count is non-zero; zero adds no line (measured token cost of the feature is 0 on pages that have nothing to hide).
+- `chrome-error://` is no longer rendered as an empty page: it says the page did not load and names `sidecar_nav`.
+- `navigate` retries that error page once (300 ms + 8 s cap). Cold launch on a fresh profile: first navigation recovered on the retry; an unreachable host still returns `bad` in well under the cap.
+- `sidecar_shot` without an image channel appends what the result is missing and which tool fills it; file path alone is no longer the whole answer.
+- Suite: 101 tests, 0 failures.
+
 ## Phase 36 — a reload must not cost the browser, 0.34.14
 
 - 根因：交接看门狗 `while kill -0 ${process.pid}` 盯的是插件实例 pid，`dsh-unlag` 重载换 pid 后看门狗立刻 kill 共享 Chrome —— 镜像白屏、会话掉回 about:blank。

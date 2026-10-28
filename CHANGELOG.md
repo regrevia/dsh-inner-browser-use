@@ -1,3 +1,13 @@
+## 0.34.15
+
+Every observation now says what it could not see, instead of looking complete.
+
+- A read counts what has no words in the tree — pictures without alt text, drawing surfaces, videos, embedded frames — and prints one line about them, so a model that cannot open the picture still knows something is there and which tool takes it.
+- A browser error page reads as 「the page did not load」 with the next action, rather than as a site with nothing on it.
+- The first navigation of a brand-new browser is retried once when Chrome answers with its own error page while the network stack is still coming up; if it still fails the call returns `bad: the page did not load` instead of pretending it arrived.
+- `sidecar_shot` on a route that cannot carry pictures no longer returns a bare file path: it says no picture reached the result and which tool reads the words or grabs the element.
+- Tests 97 → 101.
+
 ## 0.34.14
 
 - 宿主重载不再关掉共享浏览器：交接看门狗改成盯着应用进程（沿 ppid 走到最顶层），而不是每次重载都会变的本进程 pid；同一应用运行只留一个看门狗，浏览器换了它才换。

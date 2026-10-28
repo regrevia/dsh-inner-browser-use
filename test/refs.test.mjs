@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readStateFor, SHOT_OUTPUT } from '../tools.js'
 import { readFileSync } from 'node:fs'
-import { differs } from '../read.js'
+import { blindSpots, differs, renderPage } from '../read.js'
 
 test('a number whose control says the same words is still good', () => {
   assert.equal(differs({ name: 'Send' }, { name: 'Send' }), '')
@@ -58,4 +58,26 @@ test('a screenshot carries the picture only when the model can look at it', () =
   assert.equal(seen.length, 2)
   assert.equal(seen[1].type, 'image')
   assert.equal(seen[1].attachment.attachmentId, 'att-1')
+})
+
+test('a read says what its text could not show', () => {
+  const read = { url: 'https://x.test/', title: '', text: '', textChars: 0, controls: [], blind: blindSpots({ pictures: 2, canvases: 1, videos: 0, frames: 1 }) }
+  const said = renderPage(read)
+  assert.match(said, /text cannot show: 2 picture\(s\) with no words, 1 drawing surface\(s\), 1 embedded frame\(s\)/)
+  assert.match(said, /sidecar_grab/)
+})
+
+test('a read with nothing out of reach adds no line about it', () => {
+  const read = { url: 'https://x.test/', title: '', text: 'hello', textChars: 5, controls: [], blind: blindSpots({}, 0) }
+  assert.doesNotMatch(renderPage(read), /text cannot show/)
+})
+
+test('frames the frame reader reached count even when the page cannot say', () => {
+  assert.deepEqual(blindSpots(undefined, 3), { pictures: 0, canvases: 0, videos: 0, frames: 3 })
+  assert.deepEqual(blindSpots({ frames: 5 }, 2), { pictures: 0, canvases: 0, videos: 0, frames: 5 })
+})
+
+test('a browser error page reads as a page that never arrived', () => {
+  const read = { url: 'chrome-error://chromewebdata/', title: '', text: '', textChars: 0, controls: [] }
+  assert.match(renderPage(read), /the page did not load — sidecar_nav/)
 })

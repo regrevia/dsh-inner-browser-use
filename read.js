@@ -307,6 +307,36 @@ function snapshot(mode, budget, max) {
     }
     return said
   })()
+  /* What no amount of text will tell the reader: the screen shows something
+     that has no words in the tree. Counted here so every read can say it. */
+  const blind = (() => {
+    const out = { pictures: 0, canvases: 0, videos: 0, frames: 0 }
+    const speaks = (el) => {
+      const said = String(el.getAttribute?.('alt') ?? '').trim() || String(el.getAttribute?.('aria-label') ?? '').trim() || String(el.getAttribute?.('title') ?? '').trim()
+      if (said.length > 1) return true
+      let near = el.closest?.('figure, picture')
+      if (near) {
+        const words = String(near.querySelector?.('figcaption')?.textContent ?? '').trim()
+        if (words.length > 1) return true
+      }
+      return false
+    }
+    const shows = (el) => {
+      const b = box(el)
+      if (b.width < 48 || b.height < 48) return false
+      if (!inView(b)) return false
+      const st = getComputedStyle(el)
+      return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05
+    }
+    for (const el of document.querySelectorAll('img')) {
+      if (!shows(el) || speaks(el)) continue
+      out.pictures += 1
+    }
+    for (const el of document.querySelectorAll('canvas')) if (shows(el)) out.canvases += 1
+    for (const el of document.querySelectorAll('video')) if (shows(el)) out.videos += 1
+    out.frames = document.querySelectorAll('iframe').length
+    return out
+  })()
   return JSON.stringify({
     url: location.href, // ui-copy-ignore
     title: document.title, // ui-copy-ignore
@@ -320,6 +350,7 @@ function snapshot(mode, budget, max) {
     })(),
     controls: picked,
     picture,
+    blind,
   })
 })()`
 }
@@ -630,15 +661,15 @@ function routeOf(page, frame, slot) {
  * @param {any} page - sidecar page.
  * @param {string} mode - read mode.
  * @param {number} budget - characters of text to keep.
- * @returns {Promise<{text: string, controls: any[]}>} what the frames add.
+ * @returns {Promise<{text: string, controls: any[], frames: number}>} what the frames add.
  */
 async function readFrames(page, mode, budget) {
-  if (typeof page.frameList !== 'function') return { text: '', controls: [] }
+  if (typeof page.frameList !== 'function') return { text: '', controls: [], frames: 0 }
   let frames = []
   try {
     frames = await page.frameList()
   } catch (error) {
-    return { text: '', controls: [] }
+    return { text: '', controls: [], frames: 0 }
   }
   const children = frames.slice(1)
   const controls = []
@@ -660,7 +691,7 @@ async function readFrames(page, mode, budget) {
       continue
     }
   }
-  return { text, controls }
+  return { text, controls, frames: children.length }
 }
 
 /** Decode a ref into the frame it lives in and the number that frame knows. */
@@ -717,7 +748,20 @@ export async function readPage(page, options = {}) {
     scroll: read?.scroll,
     focused: read?.focused ?? null,
     controls: Array.isArray(read?.controls) ? read.controls : [],
+    blind: blindSpots(read?.blind, framed.frames),
   }
+}
+
+/**
+ * Merge what the page counted with what the frame reader managed to see.
+ * @param {any} said - counts from the page.
+ * @param {number} [read] - frames that answered.
+ * @returns {{pictures: number, canvases: number, videos: number, frames: number}} what text cannot show.
+ */
+export function blindSpots(said, read) {
+  const n = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.round(Number(value))) : 0)
+  const frames = Math.max(n(said?.frames), n(read))
+  return { pictures: n(said?.pictures), canvases: n(said?.canvases), videos: n(said?.videos), frames }
 }
 
 /**
@@ -785,6 +829,10 @@ export function renderPage(read, options = {}) {
   const mode = String(options.mode ?? 'text')
   const maxChars = Number(options.maxChars ?? 6000)
   const lines = [read.url]
+  /* A browser error page is not a site with nothing on it: it is a site that
+     never arrived. Saying so is the only way the reader stops looking for the
+     content that would have been there. */
+  if (String(read.url).startsWith('chrome-error://')) lines.push('the page did not load — sidecar_nav to open the address again, or sidecar_open if the browser is gone')
   if (read.title !== '') lines.push(`# ${read.title}`)
   const shown = read.controls.filter((control) => control.view !== false || mode === 'full')
   const hidden = read.controls.length - shown.length
@@ -803,6 +851,16 @@ export function renderPage(read, options = {}) {
     lines.push('')
     lines.push(body)
     if (read.textChars > body.length) lines.push(`… ${read.textChars - body.length} more characters`)
+  }
+  if (read.blind !== undefined && read.blind !== null) {
+    const bits = []
+    if (read.blind.pictures > 0) bits.push(`${read.blind.pictures} picture(s) with no words`)
+    if (read.blind.canvases > 0) bits.push(`${read.blind.canvases} drawing surface(s)`)
+    if (read.blind.videos > 0) bits.push(`${read.blind.videos} video(s)`)
+    if (read.blind.frames > 0) bits.push(`${read.blind.frames} embedded frame(s)`)
+    /* Only when something is actually out of reach: a line saying "nothing is
+       hidden" on every read is a line the reader learns to skip. */
+    if (bits.length > 0) lines.push(`text cannot show: ${bits.join(', ')} — sidecar_grab takes the picture, sidecar_shot shows the screen`)
   }
   if (read.picture && Array.isArray(read.picture.missing)) {
     /* Something was meant to be here and is not: say that instead of nothing. */
