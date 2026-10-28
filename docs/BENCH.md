@@ -1,3 +1,21 @@
+## Phase 40 — the poll that names its chat, 0.34.19
+
+The adoption rule from 0.34.16 never fired for the column itself: the pane
+polled `/sidecar/state` without a session, the host treated that as anonymous,
+and a reload could still leave the mirror empty over a live browser. The pane now
+names its chat, and asks again the moment a claim succeeds.
+
+No performance change was expected; the full bench was re-run anyway so the
+numbers under it are current (commit 0.34.19, local pages):
+
+| Label | Value |
+| --- | --- |
+| launch → first frame | 1029 ms |
+| steady stream | 60 fps, 76 KB per frame |
+| mirror delay (12 samples) | median 9 ms, max 13 ms |
+| dense page, text | 6 ms, 1484 chars, ≈436 tokens |
+| dense page, forms | 2 ms, 432 chars, ≈127 tokens |
+
 ## Phase 39 — count what is on the screen, not what is in the DOM, 0.34.17
 
 `readFrames` counts child frames; the page's own count filters to frames that

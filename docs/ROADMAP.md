@@ -264,3 +264,53 @@ so the loop stops repeating advice.
 
 A page that never shipped an image still has a canvas or a video frame; take
 that surface as the picture when the page has no file to grab.
+
+## Phases 24–39, condensed
+
+The phases above were written one at a time as the work happened; the run from
+0.32 to 0.34.18 is dense enough that the per-phase prose lives in
+`docs/BENCH.md` and the changelog. What each one changed, in one line:
+
+| Version | Phase | What it moved |
+| --- | --- | --- |
+| 0.32.0 | 22 | the diff a review is about travels with the request |
+| 0.33.0 | 22b | the mirror outlives the visit: claim, takeover, remembered address |
+| 0.33.2 | 22c | a duplicate registration cannot take the pane down |
+| 0.34.0 | 23 | one tab per chat, a UA that does not say "headless", typing that looks like hands |
+| 0.34.1 | 24 | a ref is checked against what the control says before it is used |
+| 0.34.2 | 25 | one chat cannot take another chat's page; a password never comes back in a result |
+| 0.34.3 | 26 | a picture reaches the model as a picture; read state is per chat |
+| 0.34.4 | 27 | an empty mirror says what to do; remembering an address is written, not crashed |
+| 0.34.5 | 28 | one ownership gate for every acting route |
+| 0.34.6 | 29 | one tab per chat even when two calls race |
+| 0.34.7 | 30 | a live cookie is never overwritten by a stale copy |
+| 0.34.8 | 31 | a cold first tab in 0.6 s instead of 21 s |
+| 0.34.9 | 32 | a plugin reload no longer closes the browser |
+| 0.34.10 | 33 | a call log never shows another chat's calls |
+| 0.34.11 | 34 | the column offers "restore the last page" in one click |
+| 0.34.12 | 35 | every write needs the chat that asked for it |
+| 0.34.13 | 36 | a review round is verifiable: each point marked fixed / verified / invalid / open |
+| 0.34.14 | 36b | a reload must not cost the browser: the watchdog follows the application pid |
+| 0.34.15 | 37 | an observation admits its blind spot: pictures, canvases, videos, frames; an error page says so |
+| 0.34.16 | 38 | a reload does not blank the mirror: the owning chat's poll adopts the running browser |
+| 0.34.17 | 39 | the blind-spot frame count follows the screen, not the DOM |
+| 0.34.18 | — | the adoption rule is a named function with a test |
+
+## Where the next round should go
+
+Ranked by what a real task still loses:
+
+1. **End-to-end proof of the places unit tests cannot reach.** The restore-in-one-click
+   path (0.34.11) and the mirror coming back after a reload (0.34.16) were checked by
+   HTTP and by pid, not by a person clicking. A browser-level test that opens the
+   column, kills the driver, and clicks restore is the missing evidence.
+2. **One-click "open here" when this chat has no seat.** `state.chats` can lack this
+   chat, and the column then only tells the model to call `sidecar_open`. The button
+   belongs in the column.
+3. **Competitor behaviours still unmatched.** Playwright MCP's accessibility refs are
+   ours, and the blind line covers the vision-less read; Stagehand v4's
+   act/observe/extract split with cached selectors is only partly ours, and its
+   self-healing of a selector between rounds has no equivalent here.
+4. **Token numbers for a real session, not a synthetic page.** Reads are measured on
+   fixed pages; an actual 20-step task has never had its cumulative token cost
+   recorded.

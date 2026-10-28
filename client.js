@@ -305,12 +305,21 @@ window.__ModuleLoader__.load({
             .then((reply) => (reply.ok === true ? reply.json() : null))
             .then((info) => {
               if (alive !== true) return
-              if (info?.ok === true) setOwner(id)
+              if (info?.ok === true) {
+                setOwner(id)
+                /* The owner was just named, so the next poll may adopt the
+                   browser: ask now instead of up to a poll later. */
+                setTimeout(read, 0)
+              }
             })
             .catch(() => {})
         }
         const read = () => {
-          void fetch(`${ROUTE}/sidecar/state`, { cache: 'no-store' }) // ui-copy-ignore
+          const who = String(props.sessionId ?? '')
+          /* Naming the chat lets the host pick a browser that outlived a
+             reload up for us; an anonymous poll cannot, and the column would
+             sit on an empty stage with the browser running behind it. */
+          void fetch(`${ROUTE}/sidecar/state?session=${encodeURIComponent(who)}`, { cache: 'no-store' }) // ui-copy-ignore
             .then((reply) => (reply.ok === true ? reply.json() : null))
             .then((info) => {
               if (alive !== true) return

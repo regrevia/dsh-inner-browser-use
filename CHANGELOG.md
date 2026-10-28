@@ -1,3 +1,8 @@
+## 0.34.19
+
+- **右栏自己会把浏览器接回来。** 0.34.16 让「持有镜像的会话」在轮询状态时认领重载后仍活着的浏览器，但右栏的轮询没带会话名，服务端按匿名处理、不会认领——于是重载后浏览器明明在跑，栏里仍然可能停在空舞台。现在轮询带上会话名，认领成功后立刻再问一次，不用等下一轮 2.5 秒。
+- 基线复测：启动 1029 ms、稳态 60 fps / 76 KB 每帧、镜像延迟中位 9 ms、稠密页读取 6 ms / 1484 字符 / 约 436 token。
+
 ## 0.34.18
 
 - The rule that lets a state poll revive the mirror after a reload is now its own named function with a test: only the owning chat adopts, never a stranger, never an empty poll, never a browser that is already up.
