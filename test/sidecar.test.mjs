@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { Sidecar, SidecarPage, VIEW } from '../sidecar.js'
 
@@ -186,7 +189,56 @@ test('a plugin reload hands the browser on instead of closing it', async () => {
   sidecar.profile = 'unit-cookie'
   sidecar.backup = undefined
   sidecar.pages = new Map()
-  await sidecar.handoff()
+  /* The note and the watcher go to a scratch directory: a unit test must not
+     arm, or disarm, the guard that owns the real browser. */
+  const dir = mkdtempSync(join(tmpdir(), 'dshib-watch-'))
+  const before = process.env.DSH_INNER_BROWSER_STATE_DIR
+  process.env.DSH_INNER_BROWSER_STATE_DIR = dir
+  try {
+    await sidecar.handoff()
+  } finally {
+    if (before === undefined) delete process.env.DSH_INNER_BROWSER_STATE_DIR
+    else process.env.DSH_INNER_BROWSER_STATE_DIR = before
+  }
   assert.deepEqual(asked, [], 'the browser is not asked to close')
   assert.deepEqual(closed, [], 'neither driver nor browser is stopped')
+  const note = JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8'))
+  assert.equal(note.chrome, 999_999, 'the guard knows which browser it owns')
+  assert.ok(note.appPid > 1, 'it watches the application, not this instance')
+  try {
+    process.kill(Number(note.pid))
+  } catch {
+    /* it already left */
+  }
+})
+
+test('a reload does not arm a second guard for one application run', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dshib-watch-'))
+  const before = process.env.DSH_INNER_BROWSER_STATE_DIR
+  process.env.DSH_INNER_BROWSER_STATE_DIR = dir
+  const spawnOnce = async () => {
+    const sidecar = Object.create(Sidecar.prototype)
+    sidecar.page = { cookies: async () => [] }
+    sidecar.cdp = { send: async () => ({}), close: () => {} }
+    sidecar.child = { pid: 999_998, kill: () => {} }
+    sidecar.profile = 'unit-cookie'
+    sidecar.backup = undefined
+    sidecar.pages = new Map()
+    await sidecar.handoff()
+    return JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8'))
+  }
+  try {
+    const first = await spawnOnce()
+    const second = await spawnOnce()
+    assert.equal(second.pid, first.pid, 'one guard per run, not one per reload')
+  } finally {
+    if (before === undefined) delete process.env.DSH_INNER_BROWSER_STATE_DIR
+    else process.env.DSH_INNER_BROWSER_STATE_DIR = before
+    try {
+      const note = JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8'))
+      process.kill(Number(note.pid))
+    } catch {
+      /* nothing to stop */
+    }
+  }
 })

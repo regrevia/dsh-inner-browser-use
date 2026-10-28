@@ -1,4 +1,11 @@
-## Phase 35 — a review round that can be checked off, 0.34.13
+## Phase 36 — a reload must not cost the browser, 0.34.14
+
+- 根因：交接看门狗 `while kill -0 ${process.pid}` 盯的是插件实例 pid，`dsh-unlag` 重载换 pid 后看门狗立刻 kill 共享 Chrome —— 镜像白屏、会话掉回 about:blank。
+- 改为盯应用 pid（`ps -o ppid=` 向上走到顶）+ `watcher.json` 去重；实测 node 14185 的应用 pid 是 13663。
+- `ensure()` 无活页面时回落到 `rememberedTab(id)`，首开即回原地址。
+- 测试 97 条全绿。
+
+## Phase 35 — a review round that can be checked off, 0.34.13## Phase 35 — a review round that can be checked off, 0.34.13
 
 - `markRound()` 追加 verdict 行，`lastRound()` 折回 `marks`；`brief({already})` 只保留 open 条目，实测提问里出现「Already handled from your previous review」，已处理点不再重复。
 - 工具面新增 `sidecar_review_verdict`（`mark: [{point,status,evidence}]`，状态枚举 fixed/verified/invalid/open）；越界编号丢弃、未知状态记为 open。

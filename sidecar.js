@@ -5,7 +5,7 @@
  * and a page keeps working while the person looks somewhere else. The column
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -78,6 +78,35 @@ export function isForeign(targetId, mine, foreign = []) {
 /**
  * Where the cookies of a profile are kept in the browser's own storage.
  */
+/**
+ * The topmost process this plugin lives in: the application itself, not the
+ * node instance a reload replaces. A reload changes `process.pid`, so a watcher
+ * keyed to it kills the shared browser the moment the old instance goes — which
+ * is how the mirror went blank after a reload.
+ * @returns {number} the application pid, or 0 when it cannot be walked.
+ */
+function appPid() {
+  let pid = process.pid
+  let top = pid
+  for (let hop = 0; hop < 12; hop += 1) {
+    let parent = 0
+    try {
+      parent = Number(String(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' })).trim())
+    } catch {
+      break
+    }
+    if (!Number.isInteger(parent) || parent <= 1) break
+    top = parent
+    pid = parent
+  }
+  return top === process.pid ? 0 : top
+}
+
+/** The watcher that closes the browser when the app goes: one per app run. */
+function watcherFile(dir) {
+  return join(dir, 'watcher.json')
+}
+
 const COOKIE_FILES = ['Default/Cookies', 'Local State']
 
 /**
@@ -1321,9 +1350,11 @@ export class Sidecar {
         return mine
       }
       this.pages.delete(id)
-      return this.tabFor(id, options.url)
+      return this.tabFor(id, options.url === undefined || options.url === '' ? this.rememberedTab(id) : options.url)
     }
-    return this.tabFor(id, options.url)
+    /* A new tab for a chat that had one before opens where that chat was: a
+       blank mirror is not a place, and the first call should not land on one. */
+    return this.tabFor(id, options.url === undefined || options.url === '' ? this.rememberedTab(id) : options.url)
   }
 
   async ensurePage(options = {}) {
@@ -1705,13 +1736,46 @@ export class Sidecar {
     }
     const chrome = Number(this.child?.pid ?? 0)
     if (chrome === 0) return
+    /* One watcher per application run, watching the application rather than
+       this instance: a plugin reload is not the app closing. */
+    /* Read at call time, so a test can point the note somewhere harmless. */
+    const dir = process.env.DSH_INNER_BROWSER_STATE_DIR || tabsDir
+    const app = appPid()
+    try {
+      const said = JSON.parse(readFileSync(watcherFile(dir), 'utf8'))
+      const watching = Number(said?.appPid ?? 0)
+      const alive = (() => {
+        try {
+          process.kill(Number(said?.pid ?? 0), 0)
+          return true
+        } catch {
+          return false
+        }
+      })()
+      /* Same run and same browser: the watcher already covers it. A browser
+         that was restarted needs the note pointed at the new pid, or the app
+         going away would leave the new one running. */
+      if (alive && Number(said?.chrome ?? 0) === chrome && watching === Number(said?.appPid) && (app === 0 || watching === app)) return
+      if (alive) {
+        try {
+          process.kill(Number(said?.pid ?? 0))
+        } catch {
+          /* a watcher that already left needs no goodbye */
+        }
+      }
+    } catch {
+      /* no watcher yet, or one whose note is unreadable */
+    }
     /* Detached and unref'd: the app must not wait for this, and it must outlive
        the plugin instance it was started for. */
     try {
-      spawn('/bin/sh', ['-c', `while kill -0 ${process.pid} 2>/dev/null; do sleep 5; done; kill ${chrome} 2>/dev/null`], {
+      const guard = spawn('/bin/sh', ['-c', `while kill -0 ${app} 2>/dev/null; do sleep 5; done; kill ${chrome} 2>/dev/null`], {
         detached: true,
         stdio: 'ignore',
-      }).unref()
+      })
+      guard.unref()
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(watcherFile(dir), JSON.stringify({ appPid: app, pid: guard.pid ?? 0, chrome, at: Date.now() }))
     } catch {
       /* a watcher that cannot start only means the browser outlives the app */
     }
