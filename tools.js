@@ -41,10 +41,10 @@ const SHOT_IMAGE = {
   properties: {
     attachmentId: { type: 'string' },
     mediaType: { type: 'string' },
-    bytes: { type: 'integer' },
-    width: { type: 'integer' },
-    height: { type: 'integer' },
-    name: { type: 'string' },
+    bytes: { type: 'integer' }, // ui-copy-ignore
+    width: { type: 'integer' }, // ui-copy-ignore
+    height: { type: 'integer' }, // ui-copy-ignore
+    name: { type: 'string' }, // ui-copy-ignore
   },
   required: ['attachmentId', 'mediaType', 'bytes', 'width', 'height'],
   additionalProperties: false,
@@ -52,7 +52,7 @@ const SHOT_IMAGE = {
 
 /** A screenshot's path, plus the picture when this model can look at it. */
 export const SHOT_OUTPUT = {
-  schema: {
+  schema: { // ui-copy-ignore
     type: 'object', // ui-copy-ignore
     properties: { text: { type: 'string' }, image: SHOT_IMAGE },
     required: ['text'],
@@ -584,8 +584,8 @@ export function readStateFor(store, id, fallback) {
   const key = String(id ?? '')
   const known = store.get(key)
   if (known !== undefined) return known
-  /* The Host passes one object for the whole plugin; it belongs to the calls
-     that name no chat, so a named chat gets its own empty one. */
+  /* The one object the plugin was started with belongs to calls that name no
+     chat, so a chat that does name itself gets an empty one of its own. */
   const fresh = key === '' ? fallback : { refs: [], at: 0 }
   store.set(key, fresh)
   return fresh
@@ -1668,7 +1668,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (taken === undefined) return said
         let image
         try {
-          image = await host.showShot?.(taken.data, taken.file.split('/').pop() ?? 'shot.png', exec)
+          image = await host.showShot?.(taken.data, taken.file.split('/').pop() ?? 'shot.png', exec) // ui-copy-ignore
         } catch {
           image = undefined
         }

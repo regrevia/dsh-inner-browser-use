@@ -502,11 +502,11 @@ export function apply(ctx) {
           if (!(bytes.length > 0) || bytes.length > cap) return undefined
           const ref = await attachments.saveImage({ data: bytes, mediaType: 'image/png', name })
           return {
-            attachmentId: ref.attachmentId,
-            mediaType: ref.mediaType,
-            bytes: ref.bytes,
-            width: ref.width,
-            height: ref.height,
+            attachmentId: ref.attachmentId, // ui-copy-ignore
+            mediaType: ref.mediaType, // ui-copy-ignore
+            bytes: ref.bytes, // ui-copy-ignore
+            width: ref.width, // ui-copy-ignore
+            height: ref.height, // ui-copy-ignore
             ...(ref.name === undefined ? {} : { name: ref.name }),
           }
         } catch {

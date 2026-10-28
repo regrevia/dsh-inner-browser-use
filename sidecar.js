@@ -1176,7 +1176,9 @@ export class Sidecar {
   rememberTab(session, url) {
     const id = String(session ?? '')
     const address = String(url ?? '')
-    if (id === '' || address === '' || address === 'about:blank') return
+    /* Only chats, and only addresses: a stray key from a probe or an older run
+       must not sit in this file pretending to be a chat that can be restored. */
+    if (!/^session-/.test(id) || address === '' || address === 'about:blank') return
     let saved = {}
     try {
       saved = JSON.parse(readFileSync(tabsFile, 'utf8')) ?? {}
@@ -1198,9 +1200,11 @@ export class Sidecar {
    * @returns {string} the address that chat last had, or '' when it never had one.
    */
   rememberedTab(session) {
+    const id = String(session ?? '')
+    if (!/^session-/.test(id)) return ''
     try {
       const saved = JSON.parse(readFileSync(tabsFile, 'utf8'))
-      return String(saved?.[String(session ?? '')] ?? '')
+      return String(saved?.[id] ?? '')
     } catch {
       return ''
     }

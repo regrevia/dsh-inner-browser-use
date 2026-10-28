@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
     const DICT = {
       zh: {
         'side.label': '后台浏览器',
-        'side.empty': '还没有打开的页面',
+        'side.empty': '还没有打开的页面，在上方地址栏输入网址',
         'side.connecting': '正在连接…',
         'side.failed': '画面没有连上',
         'side.foreign': '这个浏览器属于发起它的会话，回到那个会话继续。',
@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
       },
       en: {
         'side.label': 'Background browser',
-        'side.empty': 'No page open',
+        'side.empty': 'No page open; type an address above',
         'side.connecting': 'Connecting…',
         'side.failed': 'The picture did not connect',
         'side.foreign': 'This browser belongs to the chat that opened it.',

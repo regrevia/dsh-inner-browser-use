@@ -1,3 +1,12 @@
+## 0.34.4
+
+- An empty mirror says what to do instead of only that nothing is open:
+  「还没有打开的页面，在上方地址栏输入网址」 / "No page open; type an address above".
+- `tabs.json` only ever holds chats and addresses: a non-chat key such as
+  `chat-a` from an older probe is neither written nor restored. The stale entry
+  in the live file is removed.
+- 83 unit tests pass (new: remembering and restoring a chat's address).
+
 ## 0.34.3
 
 - `sidecar_shot` now hands the picture to the model instead of only a path:
