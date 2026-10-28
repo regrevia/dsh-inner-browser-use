@@ -223,7 +223,7 @@ export function apply(ctx) {
     timer.unref?.()
     return () => {
       clearInterval(timer)
-      void sidecar.shutdown().catch(() => {})
+      void sidecar.handoff().catch(() => {})
     }
   }, 'dsh-inner-browser-use: sidecar lifetime')
 

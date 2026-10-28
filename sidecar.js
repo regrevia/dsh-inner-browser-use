@@ -1686,6 +1686,37 @@ export class Sidecar {
   }
 
   /** @returns {Promise<void>} resolves once Chrome is gone. */
+  /**
+   * Leaves the browser running for whoever loads this plugin next, and puts the
+   * sign-in on disk first. A plugin reload used to close Chrome, so the column
+   * lost the page and every sign-in paid for a fresh launch; the browser is
+   * meant to outlive the driver. A detached watcher closes the browser once
+   * this app is really gone, so nothing is left behind.
+   * @returns {Promise<void>} done, with the browser still up.
+   */
+  async handoff() {
+    if (this.page !== null) await this.saveSessionCookies()
+    if (this.backup !== undefined) clearInterval(this.backup)
+    this.backup = undefined
+    try {
+      snapshotLogin(profileDir(this.profile))
+    } catch {
+      /* a profile that cannot be copied is not a reason to drop the browser */
+    }
+    const chrome = Number(this.child?.pid ?? 0)
+    if (chrome === 0) return
+    /* Detached and unref'd: the app must not wait for this, and it must outlive
+       the plugin instance it was started for. */
+    try {
+      spawn('/bin/sh', ['-c', `while kill -0 ${process.pid} 2>/dev/null; do sleep 5; done; kill ${chrome} 2>/dev/null`], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref()
+    } catch {
+      /* a watcher that cannot start only means the browser outlives the app */
+    }
+  }
+
   async shutdown() {
     /* Ask Chrome to close first: a browser that is killed outright may lose the
        last minute of cookies, and keeping the person signed in is the point. */

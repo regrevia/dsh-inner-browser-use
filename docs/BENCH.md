@@ -1,3 +1,16 @@
+## Phase 31 — a reload keeps the mirror, 0.34.9
+
+`ctx.effect` cleanup ran `sidecar.shutdown()`, so each plugin reload closed
+Chrome. The page disappeared from the column and the next open was a cold
+start again. Cleanup now hands the browser to the next driver: cookies and a
+login snapshot hit disk, the browser keeps running, and a detached watcher
+closes it only after the app process is gone.
+
+| after a `dsh-unlag` reload | before | now |
+|---|---|---|
+| browser | closed, page lost | still running, page kept |
+| next interaction | cold launch (≈0.6 s, was 21 s) | attach, no launch |
+
 ## Phase 30 — a brand-new chat's first tab, 0.34.8
 
 A fresh profile with no memory of a page means `openTab` asks for `about:blank`.

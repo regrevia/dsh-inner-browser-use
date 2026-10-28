@@ -1,3 +1,14 @@
+## 0.34.9
+
+- A plugin reload no longer closes the browser. The lifetime cleanup called
+  `shutdown()`, so every `dsh-unlag` reload dropped the page in the column and
+  the next look paid for a cold launch; the comment above the driver already
+  said it outlives a reload. Cleanup now saves the cookies, snapshots the
+  login and leaves Chrome running for the next driver to attach to. A detached
+  watcher closes the browser once the app itself is gone, so nothing is left
+  running after a quit.
+- 88 unit tests pass (new: a handoff does not stop the driver or the browser).
+
 ## 0.34.8
 
 - A new chat's first tab opens in about 0.6 s instead of about 21 s. When the

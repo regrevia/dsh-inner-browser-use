@@ -160,3 +160,18 @@ test('asking for a blank page returns at once instead of waiting for a page to a
   assert.equal(sent[0], 'Page.navigate')
   assert.ok(took < 2000, `blank navigation took ${took} ms`)
 })
+
+test('a plugin reload hands the browser on instead of closing it', async () => {
+  const sidecar = Object.create(Sidecar.prototype)
+  const asked = []
+  const closed = []
+  sidecar.page = { cookies: async () => [] }
+  sidecar.cdp = { send: async (method) => { asked.push(method); return {} }, close: () => closed.push('cdp') }
+  sidecar.child = { pid: 999_999, kill: () => closed.push('child') }
+  sidecar.profile = 'unit-cookie'
+  sidecar.backup = undefined
+  sidecar.pages = new Map()
+  await sidecar.handoff()
+  assert.deepEqual(asked, [], 'the browser is not asked to close')
+  assert.deepEqual(closed, [], 'neither driver nor browser is stopped')
+})
