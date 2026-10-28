@@ -5,10 +5,28 @@
  * and a page keeps working while the person looks somewhere else. The column
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+/**
+ * Windows keeps a browser under Program Files (machine-wide) or LocalAppData
+ * (per-user), and Edge is Chromium too, so it speaks the same DevTools
+ * protocol. Chrome is still preferred: the list is read in order.
+ * @returns {string[]} candidates, most preferred first.
+ */
+function windowsBrowserCandidates() {
+  const roots = [
+    process.env['PROGRAMFILES'],
+    process.env['PROGRAMFILES(X86)'],
+    process.env['LOCALAPPDATA'],
+  ].filter((root) => typeof root === 'string' && root !== '')
+  const out = []
+  for (const root of roots) out.push(join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'))
+  for (const root of roots) out.push(join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
+  return out
+}
 
 /** Chrome builds this machine may have, most preferred first. */
 const CHROME_BINARIES = [
@@ -17,6 +35,7 @@ const CHROME_BINARIES = [
   '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
+  ...(process.platform === 'win32' ? windowsBrowserCandidates() : []),
 ]
 
 /** Viewport the screencast and the pointer share. Nothing here is a user-agent detail. */
@@ -1882,7 +1901,14 @@ export class Sidecar {
     this.cdp = null
     if (this.child !== null) {
       try {
-        this.child.kill('SIGTERM')
+        /* A browser on Windows is a process tree: terminating the launcher alone
+           leaves renderers and the profile lock behind. Browser.close above is
+           the graceful path; this is the one for a browser that ignored it. */
+        if (process.platform === 'win32' && Number.isInteger(this.child.pid)) {
+          spawnSync('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { stdio: 'ignore' })
+        } else {
+          this.child.kill('SIGTERM')
+        }
       } catch {
         /* already gone */
       }
