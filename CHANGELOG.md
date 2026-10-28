@@ -1,3 +1,10 @@
+## 0.34.10
+
+- The call log a column reads back now only holds its own chat's calls. It used
+  to ship the last 40 calls of every chat to whoever asked, so one conversation
+  could read where another had been browsing.
+- 89 unit tests pass (new: one chat's call log never shows another's).
+
 ## 0.34.9
 
 - A plugin reload no longer closes the browser. The lifetime cleanup called

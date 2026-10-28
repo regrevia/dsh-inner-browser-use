@@ -323,7 +323,10 @@ export function apply(ctx) {
       /* Which chats have a column open right now: 0 means nobody is watching,
          so an empty picture is the column's own problem, not the browser's. */
       const chat = String(url.searchParams.get('session') ?? '')
-      json(200, { ...(await sidecar.state()), ...(chat === '' ? {} : { chat: await sidecar.chatState(chat) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent })
+      /* Diagnostics belong to the chat that made them: a caller sees its own
+         calls, and one chat's browsing never explains another's. */
+      const mine = chat === '' ? recent : recent.filter((entry) => entry.session === chat.slice(-8))
+      json(200, { ...(await sidecar.state()), ...(chat === '' ? {} : { chat: await sidecar.chatState(chat) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
       return
     }
 

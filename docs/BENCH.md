@@ -1,3 +1,11 @@
+## Phase 32 — a call log belongs to its chat, 0.34.10
+
+`GET /sidecar/state` returned the last 40 mirror calls of every chat, each with
+an eight-character session id: one conversation could read where another had
+been browsing. The list is now filtered to the caller's own chat. The owner and
+the list of listening chats stay global, because those are what the column needs
+to claim the mirror.
+
 ## Phase 31 — a reload keeps the mirror, 0.34.9
 
 `ctx.effect` cleanup ran `sidecar.shutdown()`, so each plugin reload closed
