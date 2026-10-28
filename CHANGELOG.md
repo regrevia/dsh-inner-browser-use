@@ -1,3 +1,8 @@
+## 0.34.18
+
+- The rule that lets a state poll revive the mirror after a reload is now its own named function with a test: only the owning chat adopts, never a stranger, never an empty poll, never a browser that is already up.
+- Tests 101 → 102.
+
 ## 0.34.17
 
 - The blind-spot frame count follows the screen, not the DOM: a 1x1 tracking frame no longer inflates it, and a read of a page with one visible frame reports one.

@@ -665,3 +665,12 @@ test('a chat that does not hold the mirror cannot close it or forget its ask', a
   assert.equal(kept.status, 200)
   assert.equal((await kept.json()).ok, true)
 })
+
+test('only the owning chat picks a browser up on a state poll', async () => {
+  const { shouldAdoptOnState } = await import('../index.js')
+  assert.equal(shouldAdoptOnState({ alive: false }, 'session-a', 'session-a'), true)
+  assert.equal(shouldAdoptOnState({ alive: false }, 'session-b', 'session-a'), false)
+  assert.equal(shouldAdoptOnState({ alive: false }, 'session-a', ''), false)
+  assert.equal(shouldAdoptOnState({ alive: true }, 'session-a', 'session-a'), false)
+  assert.equal(shouldAdoptOnState({ alive: false }, '', 'session-a'), false)
+})

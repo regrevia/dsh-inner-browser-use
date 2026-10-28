@@ -197,6 +197,19 @@ export class Bridge {
    the Host half (routes, bridge, lifetimes), not the model's vocabulary. */ // ui-copy-ignore
 import { KEYS, sidecarTools, sessionScope } from './tools.js?v=1'
 
+/**
+ * A state poll may pick up a browser that outlived a reload, and only for the
+ * chat that owns it: any chat polling would otherwise start a browser nobody
+ * asked for, and a chat with no column would look like it had one.
+ * @param {{alive?: boolean}} said - what the browser half answered.
+ * @param {string} chat - the chat asking.
+ * @param {string} owner - the chat that owns the mirror.
+ * @returns {boolean} whether this poll should attach to a running browser.
+ */
+export function shouldAdoptOnState(said, chat, owner) {
+  return said?.alive === false && chat !== '' && owner === chat
+}
+
 export const name = 'dsh-inner-browser-use'
 export const inject = ['webServer']
 
@@ -352,7 +365,7 @@ export function apply(ctx) {
          called open again: the mirror would come back empty in a chat that
          never closed it. The chat that owned the browser asks for its state, so
          answering honestly means picking the browser up first. */
-      if (said.alive === false && chat !== '' && bridge.owner === chat) {
+      if (shouldAdoptOnState(said, chat, bridge.owner)) {
         try {
           await sidecar.ensure({ url: sidecar.rememberedTab?.(chat) })
           said = await sidecar.state()
