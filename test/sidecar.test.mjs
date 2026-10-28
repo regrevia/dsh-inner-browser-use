@@ -115,3 +115,33 @@ test('a browser nobody has touched yet is free to act on', () => {
   sidecar.release()
   assert.equal(sidecar.holding(), 0)
 })
+
+test('two calls that start together share one tab instead of opening a twin', async () => {
+  const sidecar = Object.create(Sidecar.prototype)
+  sidecar.pages = new Map()
+  sidecar.opening = new Map()
+  sidecar.page = null
+  /** @type {string[]} */
+  const went = []
+  let made = 0
+  sidecar.openTab = async () => {
+    made += 1
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    return {
+      id: made,
+      url: 'about:blank',
+      navigate: async (url) => {
+        went.push(url)
+        sidecar.pages.set('session-a', { id: made, url, navigate: async () => {} })
+      },
+    }
+  }
+  const [first, second] = await Promise.all([
+    sidecar.tabFor('session-a'),
+    sidecar.tabFor('session-a', 'https://example.com/next'),
+  ])
+  assert.equal(made, 1, 'one tab, not two')
+  assert.equal(first.id, second.id)
+  assert.deepEqual(went, ['https://example.com/next'], 'the later address is followed in the same tab')
+  assert.equal(sidecar.opening.size, 0, 'the note is cleared once the tab exists')
+})

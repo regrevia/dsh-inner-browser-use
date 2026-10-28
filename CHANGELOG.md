@@ -1,3 +1,12 @@
+## 0.34.6
+
+- One tab per chat even when two calls start at the same instant: the second
+  call for a chat waits for the tab already being opened and then follows its
+  own address in it, instead of opening a twin that nothing holds. Before, a
+  parallel `sidecar_view` + `sidecar_nav` could leave an orphan tab driving a
+  page the mirror never showed.
+- 85 unit tests pass (new: the concurrent-open case).
+
 ## 0.34.5
 
 - One ownership gate for every acting route: `/sidecar/frames`, `/sidecar/input`

@@ -1,3 +1,17 @@
+## Phase 28 — one chat, one tab, even in parallel, 0.34.6
+
+`tabFor` checked `pages`, then did async work, then wrote `pages`: two calls that
+started together both missed the map and both opened a tab. The orphan tab kept
+a live page nobody could see or stop.
+
+| case | before | now |
+|---|---|---|
+| two parallel calls, cold chat | 2 tabs, 1 orphan | 1 tab |
+| later call with another address | its own tab | same tab, navigated |
+| leftover pending note | — | cleared in `finally` |
+
+The fix is a per-chat promise in `opening`, joined by the second caller.
+
 ## Phase 27 — one gate for the mirror, 0.34.5
 
 Three routes each carried their own copy of the ownership check. Copies drift:

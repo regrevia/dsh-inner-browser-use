@@ -1085,6 +1085,9 @@ export class Sidecar {
     /* One tab per chat: a second chat opening an address gets a tab of its
        own, so neither can navigate the other's page away. */
     this.pages = new Map()
+    /* A tab being opened for a chat: a second call for the same chat waits for
+       it instead of opening a twin. */
+    this.opening = new Map()
     /* A measurement or a test may want a profile of its own; the person's
        browser keeps the default one. */
     this.profile = String(options.profile ?? 'default')
@@ -1219,6 +1222,33 @@ export class Sidecar {
    */
   async tabFor(session, url) {
     const id = String(session ?? '')
+    const had = this.pageFor(id)
+    if (had !== null) {
+      if (url !== undefined && url !== '') await had.navigate(url)
+      return had
+    }
+    /* Two calls that start together are one chat, and a chat has one tab: the
+       second waits for the first tab instead of opening a twin nobody holds. */
+    const underway = this.opening?.get(id)
+    if (underway !== undefined) {
+      const page = await underway
+      const want = String(url ?? '')
+      if (want !== '' && String(page.url ?? '') !== want) await page.navigate(want)
+      return page
+    }
+    const work = this.openTab(id, url).finally(() => {
+      this.opening?.delete(id)
+    })
+    this.opening?.set(id, work)
+    return work
+  }
+
+  /**
+   * @param {string} id - chat id.
+   * @param {string} [url] - address to open in it.
+   * @returns {Promise<SidecarPage>} a new tab for that chat.
+   */
+  async openTab(id, url) {
     const had = this.pageFor(id)
     if (had !== null) {
       if (url !== undefined && url !== '') await had.navigate(url)
