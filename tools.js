@@ -1088,7 +1088,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the read. */
       execute: async (args) => withRead(async (page) => {
         const options = { mode: String(args?.mode ?? 'text'), maxChars: Number(args?.max_chars ?? 4600) }
-        const read = await remember(page, refs, options)
+        /* Each chat keeps its own read state: a shared one let another chat's
+           read replace this chat's baseline, so its numbers and its "what
+           changed" answered about a page it never saw. */
+        const state = refsFor()
+        const read = await remember(page, state, options)
         const note = isCheckPage(read) ? `\n${CHECK_NOTE}` : ''
         if (args?.changed_only === true && state.last !== undefined) {
           /* The diff becomes the new baseline: a page that moved zero -> one

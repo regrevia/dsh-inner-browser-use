@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, deathNote, noteDeath } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, deathNote, looksLikeApp, noteDeath } from '../sidecar.js'
 
 /** A CDP session that records what the page asked for and never answers with
  * anything of its own: these tests are about what the page tells its viewers. */
@@ -258,4 +258,16 @@ test('a browser that died by itself leaves one readable line, and one that was a
   noteDeath({ pid: 42, code: 9, signal: null, profile: 'default' }, dir)
   const text = readFileSync(join(dir, 'browser.log'), 'utf8')
   assert.match(text, /browser pid 42 profile default exit code 9/)
+})
+
+test('only the application is worth watching, never the node instance a reload replaces', () => {
+  assert.equal(looksLikeApp('/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'), true)
+  /* The node instance a reload replaces: watching it closes the browser at the
+     reload, which is what put an empty column in front of the person. */
+  assert.equal(
+    looksLikeApp('/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --expose-internals /Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/index.js'),
+    false,
+  )
+  assert.equal(looksLikeApp('/usr/local/bin/node scripts/bench.mjs'), false)
+  assert.equal(looksLikeApp(''), false)
 })

@@ -81,3 +81,14 @@ test('a browser error page reads as a page that never arrived', () => {
   const read = { url: 'chrome-error://chromewebdata/', title: '', text: '', textChars: 0, controls: [] }
   assert.match(renderPage(read), /the page did not load — sidecar_nav/)
 })
+
+test('every read that changes a baseline changes this chat\'s own baseline', () => {
+  /* A tool that hands the shared `refs` object to `remember` writes another
+     chat's baseline: its numbers then point at controls this chat never read.
+     The one place that did it answered with a ReferenceError the first time it
+     was used, which is how this test came about. */
+  const source = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('await remember(page, refs,'), false)
+  assert.ok(source.includes('remember(page, state, options)'))
+  assert.ok(source.includes('remember(page, refsFor(), options)'))
+})

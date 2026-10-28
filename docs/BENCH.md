@@ -1,3 +1,24 @@
+## Phase 41 — the read tool that had never run, 0.34.23
+
+`node scripts/bench.mjs`（本机 headless 页面，Chrome 复用 `bench` profile）：
+
+| 项 | 数字 |
+| --- | --- |
+| 首次画面（复用已在跑的浏览器） | 133 ms |
+| 首帧字节 | 76 KB |
+| 帧率 | 60 fps |
+| 镜像延迟 | 中位 8 ms / 最大 8 ms |
+| 遮挡检测 | 中位 3 ms / 最大 15 ms |
+| 点一下（普通页 / 有遮罩，含读回） | 439 / 590 ms，遮罩那次 `cleared: true` |
+| 一步 `sidecar_do` | 440 / 590 ms |
+| 截图 | 73 ms / 115 KB |
+| 读 dense 页 text 档 | 6 ms / 1484 字 / ≈436 token |
+| 读 dense 页 forms 档 | 1 ms / 432 字 / ≈127 token |
+| 再读同一页 | 1–2 ms，给出「没有变化」一行 |
+| `changed_only` | 58 字 / ≈17 token（整页 1505 字） |
+
+这轮 bench 的作用不是数字，而是**它第一次跑到 `sidecar_view` 就报 `ReferenceError` 退出**：那个工具在真实会话里同样会失败，而单测只测了它的纯函数部分。修完之后 bench 一次性跑完，数字在上面。
+
 ## Phase 40 — the poll that names its chat, 0.34.19
 
 The adoption rule from 0.34.16 never fired for the column itself: the pane

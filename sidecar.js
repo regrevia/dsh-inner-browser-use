@@ -102,6 +102,33 @@ function appPid() {
   return top === process.pid ? 0 : top
 }
 
+/**
+ * Whether a process command line is the application itself, rather than the node
+ * instance a reload replaces. A watcher keyed to the node instance would kill
+ * the shared browser on every reload, which is exactly what made the column go
+ * blank; a command line with `--expose-internals` is that instance.
+ * @param {string} command - what `ps -o command=` said.
+ * @returns {boolean} true for the app binary itself.
+ */
+export function looksLikeApp(command) {
+  const line = String(command ?? '')
+  if (line.includes('--expose-internals')) return false
+  return line.includes('.app/Contents/MacOS/')
+}
+
+/**
+ * @param {number} pid - a process.
+ * @returns {string} its command line, or '' when it is gone.
+ */
+function commandOf(pid) {
+  if (!Number.isInteger(pid) || pid <= 1) return ''
+  try {
+    return String(execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })).trim()
+  } catch {
+    return ''
+  }
+}
+
 /** The watcher that closes the browser when the app goes: one per app run. */
 function watcherFile(dir) {
   return join(dir, 'watcher.json')
@@ -1567,6 +1594,9 @@ export class Sidecar {
       'about:blank',
     ]
     if (this.headless) args.unshift('--headless=new')
+    /* A browser started again after a stop is a new one: its death is news
+       again, and the flag left behind by the stop must not silence it. */
+    this.stopping = false
     const child = spawn(binary, args, { detached: false, stdio: 'ignore' })
     const born = Date.now()
     child.on('exit', (code, signal) => {
@@ -1791,6 +1821,10 @@ export class Sidecar {
     /* Read at call time, so a test can point the note somewhere harmless. */
     const dir = process.env.DSH_INNER_BROWSER_STATE_DIR || tabsDir
     const app = appPid()
+    /* A watcher may only watch the application: one keyed to the node instance
+       a reload replaces closes the browser at that reload. When the walk cannot
+       name the app, no watcher is armed at all rather than a wrong one. */
+    if (app === 0 || looksLikeApp(commandOf(app)) === false) return
     try {
       const said = JSON.parse(readFileSync(watcherFile(dir), 'utf8'))
       const watching = Number(said?.appPid ?? 0)
