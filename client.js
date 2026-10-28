@@ -195,7 +195,10 @@ window.__ModuleLoader__.load({
           }
           const syncAsk = () => {
             const who = mountedOf()
-            if (who === askWho) return
+            /* A stream the browser gave up on keeps its address here, so the
+               next tick has to notice it is dead and open a fresh one, or this
+               chat never hears an ask again. */
+            if (who === askWho && askSource !== null && Number(askSource.readyState) !== 2) return
             closeAsk()
             if (who === '') return
             try {
@@ -281,12 +284,34 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         let alive = true
         let dropped = false
+        /* The tab is still in this chat's column, so this chat may say the
+           mirror is its own: a reload forgets the owner, and a pane that only
+           waited would stay dark until some tool ran. */
+        const reclaim = () => {
+          const id = String(props.sessionId ?? '')
+          if (id === '') return
+          void fetch(`${ROUTE}/sidecar/claim`, { // ui-copy-ignore
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ session: id }),
+          })
+            .then((reply) => (reply.ok === true ? reply.json() : null))
+            .then((info) => {
+              if (alive !== true) return
+              if (info?.ok === true) setOwner(id)
+            })
+            .catch(() => {})
+        }
         const read = () => {
           void fetch(`${ROUTE}/sidecar/state`, { cache: 'no-store' }) // ui-copy-ignore
             .then((reply) => (reply.ok === true ? reply.json() : null))
             .then((info) => {
               if (alive !== true) return
               const next = String(info?.owner ?? '')
+              const asked = String(props.sessionId ?? '')
+              /* Nobody owns it, or this chat does but the note was lost: ask
+                 back instead of showing a note for a browser this column shows. */
+              if (asked !== '' && next !== asked) reclaim()
               setOwner((prev) => (prev === next ? prev : next))
               /* Another chat holds the browser now: this tab goes away instead
                  of sitting here as a note. */
@@ -315,9 +340,15 @@ window.__ModuleLoader__.load({
          this chat keeps only a note. // ui-copy-ignore */
       const unknown = owner === null
       const mine = unknown !== true && owner === asked
+      /* A picture that stops arriving has to come back by itself: the pane
+         re-opens its stream instead of sitting on an empty stage until the
+         person reloads the page. */
+      const [attempt, setAttempt] = React.useState(0)
+      const drawnAt = React.useRef(0)
 
       React.useEffect(() => {
         if (mine !== true) return undefined
+        drawnAt.current = Date.now()
         const who = encodeURIComponent(String(props.sessionId ?? ''))
         const source = new EventSource(`${ROUTE}/sidecar/frames?session=${who}`)
         /* Bursts arrive faster than a picture can decode: only the newest frame
@@ -334,6 +365,7 @@ window.__ModuleLoader__.load({
           setFrame(message)
           setPtr(message.pointer ?? null)
           setPhase('live')
+          drawnAt.current = Date.now()
           if (typeof message.url === 'string' && message.url !== '') setUrl(message.url)
         }
         const draw = (message) => {
@@ -342,6 +374,11 @@ window.__ModuleLoader__.load({
           if (typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(paint)
           else paint()
         }
+        const stuck = setInterval(() => {
+          /* Hello alone is not a picture: six quiet seconds means the stream is
+             dead, so ask for a new one. */
+          if (Date.now() - drawnAt.current > 6000) setAttempt((n) => n + 1)
+        }, 3000)
         source.onmessage = (event) => {
           let message
           try {
@@ -351,6 +388,7 @@ window.__ModuleLoader__.load({
           }
           if (message.type === 'hello') {
             setPhase('live')
+            drawnAt.current = Date.now()
             setUrl(String(message.url ?? ''))
           } else if (message.type === 'failed') {
             setPhase('failed')
@@ -365,10 +403,11 @@ window.__ModuleLoader__.load({
         }
         source.onerror = () => setPhase('lost')
         return () => {
+          clearInterval(stuck)
           if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
           source.close()
         }
-      }, [props.sessionId, mine])
+      }, [props.sessionId, mine, attempt])
 
       /* The address field follows the page except while the person is editing it. */
       React.useEffect(() => {

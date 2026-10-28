@@ -726,6 +726,26 @@ export async function readPage(page, options = {}) {
  * @param {number} ref - ref from a read.
  * @returns {Promise<{gone: boolean, x?: number, y?: number, name?: string, kind?: string, off?: boolean, hidden?: boolean, disabled?: boolean}>} where it is now.
  */
+/**
+ * Whether a number still means what it meant when it was read.
+ *
+ * A page can keep the same element and change its words: "Send" becomes
+ * "Stop", a row is reused for another order. Pressing the old number then
+ * does something the person never asked for.
+ * @param {any} known - the control the read handed out.
+ * @param {any} spot - what the number resolves to now.
+ * @returns {string} what changed, or '' when it is the same control.
+ */
+export function differs(known, spot) {
+  if (known === undefined || known === null || spot === undefined || spot === null) return ''
+  const before = String(known.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+  const now = String(spot.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+  if (before === '' || now === '' || before === now) return ''
+  const head = Math.min(12, before.length, now.length)
+  if (head >= 4 && (before.slice(0, head) === now.slice(0, head) || before.includes(now.slice(0, head)) || now.includes(before.slice(0, head)))) return ''
+  return `that number now points at "${now}" instead of "${before}" — read the page again and use the new number.`
+}
+
 export async function locate(page, ref) {
   const split = splitFrameRef(ref)
   let route = null

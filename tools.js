@@ -14,7 +14,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -55,18 +55,21 @@ const TEXT_OUTPUT = {
  * @param {any} page - sidecar page.
  * @returns {Promise<string>} address, title, focus and any open dialog.
  */
+export const BRIEF_JS = `(() => {
+    const a = document.activeElement
+    const secret = a !== null && typeof a === 'object' && (String(a.type ?? '') === 'password' || String(a.getAttribute === undefined ? '' : a.getAttribute('type') ?? '') === 'password')
+    const focus = a !== null && a !== document.body && a !== document.documentElement
+      ? { name: String(a.getAttribute('aria-label') || a.getAttribute('placeholder') || (a.labels && a.labels[0] && a.labels[0].innerText) || a.innerText || a.name || a.tagName).trim().slice(0, 60), value: secret ? '' : String(a.value === undefined ? '' : a.value).slice(0, 60) }
+      : null
+    return { url: location.href, title: document.title.slice(0, 80), focus }
+  })()`
+
 async function brief(page) {
   const dialog = page.dialog
   if (dialog !== null && dialog !== undefined) {
     return `${String(page.url ?? '')} · dialog ${String(dialog.type ?? '')}: ${String(dialog.message ?? '')}`
   }
-  const info = await evaluate(page, `(() => {
-    const a = document.activeElement
-    const focus = a !== null && a !== document.body && a !== document.documentElement
-      ? { name: String(a.getAttribute('aria-label') || a.getAttribute('placeholder') || (a.labels && a.labels[0] && a.labels[0].innerText) || a.innerText || a.name || a.tagName).trim().slice(0, 60), value: String(a.value === undefined ? '' : a.value).slice(0, 60) }
-      : null
-    return { url: location.href, title: document.title.slice(0, 80), focus }
-  })()`)
+  const info = await evaluate(page, BRIEF_JS)
   const bits = [String(info?.url ?? '')]
   if (String(info?.title ?? '') !== '') bits.push(String(info.title))
   if (info?.focus) bits.push(`focus ${info.focus.name}${info.focus.value === '' ? '' : ` = ${info.focus.value}`}`)
@@ -518,8 +521,11 @@ async function writeAt(page, point, text, options = {}) {
  */
 async function followRef(page, ref, known) {
   const spot = await locate(page, ref)
-  if (spot.gone !== true) return spot
   const was = Array.isArray(known) ? known.find((control) => Number(control.ref) === Number(ref)) : undefined
+  if (spot.gone !== true) {
+    const drift = differs(was, spot)
+    return drift === '' ? spot : { gone: true, why: drift }
+  }
   if (was === undefined) return spot
   const want = identityOf(was)
   if (want.name === '') return spot
@@ -532,12 +538,22 @@ async function followRef(page, ref, known) {
   return { ...next, followed: true, was: want.name }
 }
 
+/**
+ * A step that could not be carried out. The batch stops here: the next step was
+ * written against a page that never arrived.
+ * @param {string} text - what happened.
+ * @returns {{text: string, blocked: boolean}} the step result.
+ */
+function stuck(text) {
+  return { text, blocked: true }
+}
+
 async function runStep(page, step, known) {
   if (step.ref !== undefined) {
     if (step.tap !== undefined || step.text !== undefined) {
       const lead = await coverLead(page, Number(step.ref))
       const spot = await followRef(page, Number(step.ref), known)
-      if (spot.gone === true) return `ref ${String(step.ref)}: ${REF_GONE}`
+      if (spot.gone === true) return stuck(`ref ${String(step.ref)}: ${REF_GONE}`)
       const after = spot.followed === true ? ` (it was redrawn under a new number, used where it is now)` : ''
       const point = { x: Number(spot.x), y: Number(spot.y) }
       await page.mouse('mouseMoved', point)
@@ -553,10 +569,10 @@ async function runStep(page, step, known) {
   }
   if (step.tap !== undefined && !/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(step.tap))) {
     const hit = await findWords(page, String(step.tap))
-    if (hit === null) return `no control says ${JSON.stringify(String(step.tap))}`
+    if (hit === null) return stuck(`no control says ${JSON.stringify(String(step.tap))}`)
     const lead = await coverLead(page, hit.ref)
     const spot = await locate(page, hit.ref)
-    if (spot.gone === true) return `ref ${String(hit.ref)}: ${REF_GONE}`
+    if (spot.gone === true) return stuck(`ref ${String(hit.ref)}: ${REF_GONE}`)
     const point = { x: Number(spot.x), y: Number(spot.y) }
     await page.mouse('mouseMoved', point)
     await page.mouse('mousePressed', { ...point, clickCount: 1 })
@@ -567,7 +583,7 @@ async function runStep(page, step, known) {
     /* The words may sit on the field or in a div above a bare input. Only a
        click that lands on the field itself can be trusted with the typing. */
     const target = await fieldByName(page, String(step.field))
-    if (target === null) return `${String(step.field)}: ${REF_GONE}`
+    if (target === null) return stuck(`${String(step.field)}: ${REF_GONE}`)
     await writeAt(page, { x: target.x, y: target.y }, String(step.text ?? ''), { clear: step.clear, submit: step.submit })
     return `${target.lead}typed into "${target.name.slice(0, 60)}"`
   }
@@ -597,17 +613,17 @@ async function runStep(page, step, known) {
   if (step.wait_text !== undefined) {
     const needle = JSON.stringify(String(step.wait_text))
     const ok = await until(page, `document.body ? document.body.innerText.includes(${needle}) : false`, Number(step.timeout ?? 8000))
-    return ok ? `saw ${String(step.wait_text)}` : `did not see ${String(step.wait_text)}`
+    return ok ? `saw ${String(step.wait_text)}` : stuck(`did not see ${String(step.wait_text)}`)
   }
   if (step.wait_gone !== undefined) {
     const needle = JSON.stringify(String(step.wait_gone))
     const ok = await until(page, `document.body ? !document.body.innerText.includes(${needle}) : true`, Number(step.timeout ?? 8000))
-    return ok ? `${String(step.wait_gone)} went away` : `${String(step.wait_gone)} stayed`
+    return ok ? `${String(step.wait_gone)} went away` : stuck(`${String(step.wait_gone)} stayed`)
   }
   if (step.wait_url !== undefined) {
     const needle = JSON.stringify(String(step.wait_url))
     const ok = await until(page, `location.href.includes(${needle})`, Number(step.timeout ?? 8000))
-    return ok ? `at ${String(step.wait_url)}` : `still at a different address`
+    return ok ? `at ${String(step.wait_url)}` : stuck(`still at a different address`)
   }
   if (step.open !== undefined) {
     const landed = await page.navigate(String(step.open))
@@ -783,15 +799,23 @@ async function boxHolds(page, words) {
   return held === true
 }
 
-async function askInPage(page, args) {
+/**
+ * Sends a line to whatever chat the page holds and waits for the answer to stop
+ * growing. The ref is followed the same way a click follows it, so a reply box
+ * that was redrawn since the read still gets the text.
+ * @param {any} page - sidecar page.
+ * @param {any} args - text, optional ref, optional timeout.
+ * @returns {Promise<string>} the answer.
+ */
+export async function askInPage(page, args) {
 const said = String(args?.text ?? '').trim()
 if (said === '') return 'Give me something to say.'
 const budget = Math.max(3000, Math.min(180_000, Math.trunc(Number(args?.timeout_ms ?? 60_000)) || 60_000))
 const before = await readPage(page, { mode: 'text', maxChars: 4000 })
 let point = null
 if (args?.ref !== undefined) {
-  const spot = await findAgain(page, Number(args.ref))
-  if (spot.gone === true) return REF_GONE
+  const spot = await followRef(page, Number(args.ref))
+  if (spot.gone === true) return spot.why ?? REF_GONE
   point = { x: Number(spot.x), y: Number(spot.y) }
 } else {
   const at = await evaluate(page, `(() => {
@@ -883,7 +907,16 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   }
   /** Looking is still useful while the person has the page. */
   const withRead = async (work) => {
-    if (!sidecar.alive) return { text: SIDECAR_OFF }
+    /* A plugin reload makes a new driver while the browser it started keeps
+       running. Refusing every read until someone opens a page again would throw
+       away a browser that is still there: attach to it instead. */
+    if (!sidecar.alive) {
+      try {
+        await sidecar.ensure({ session: currentSession() })
+      } catch {
+        return { text: SIDECAR_OFF }
+      }
+    }
     const page = await sidecar.ensure({ session: currentSession() })
     const dead = await unreachable(page)
     if (dead !== '') return { text: dead + personNote(sidecar) }
@@ -918,8 +951,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
    */
   const findAgain = async (page, ref) => {
     const spot = await locate(page, ref)
-    if (spot.gone !== true) return spot
     const known = (refs?.refs ?? []).find((control) => Number(control.ref) === Number(ref))
+    if (spot.gone !== true) {
+      const drift = differs(known, spot)
+      return drift === '' ? spot : { gone: true, why: drift }
+    }
     if (known === undefined) return spot
     const want = identityOf(known)
     if (want.name === '') return spot
@@ -990,7 +1026,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const options = { mode: String(args?.mode ?? 'text'), maxChars: Number(args?.max_chars ?? 4600) }
         const read = await remember(page, refs, options)
         const note = isCheckPage(read) ? `\n${CHECK_NOTE}` : ''
-        if (args?.changed_only === true && refs.last !== undefined) return diffRead(refs.last, read, options) + note
+        if (args?.changed_only === true && refs.last !== undefined) {
+          /* The diff becomes the new baseline: a page that moved zero -> one
+             should not report that move again on the next read. */
+          const text = diffRead(refs.last, read, options) + note
+          refs.last = read
+          refs.lastShape = JSON.stringify(options)
+          return text
+        }
         const before = refs.last
         refs.last = read
         /* Same page, same shape, same words: the numbers above still work, and
@@ -1029,7 +1072,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         let followed = ''
         if (args?.ref !== undefined) {
           const spot = await findAgain(page, Number(args.ref))
-          if (spot.gone === true) return REF_GONE
+          if (spot.gone === true) return spot.why ?? REF_GONE
           if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — used where it is now`
           point = { x: Number(spot.x), y: Number(spot.y) }
         } else if (String(args?.text ?? '') !== '') {
@@ -1044,6 +1087,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (args?.ref !== undefined && button === 'left') {
           const gate = await clearCover(page, Number(args.ref))
           cover = gate.note
+          /* An overlay that would not go away leaves the control underneath:
+             the click would land on the overlay, so it is not sent. */
+          if (gate.cleared !== true) {
+            return `${cover.trim()}\nNot clicked: the control is still covered. Call sidecar_view and handle the overlay first.`
+          }
           if (gate.cleared && cover !== '') {
             const again = await locate(page, Number(args.ref))
             if (again.gone !== true) point = { x: Number(again.x), y: Number(again.y) }
@@ -1092,8 +1140,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (args?.ref !== undefined) {
           const gate = await clearCover(page, Number(args.ref))
           cover = gate.note
+          if (gate.cleared !== true) {
+            return `${cover.trim()}\nNot typed into: the field is still covered. Call sidecar_view and handle the overlay first.`
+          }
           const spot = await findAgain(page, Number(args.ref))
-          if (spot.gone === true) return REF_GONE + cover
+          if (spot.gone === true) return spot.why ?? REF_GONE + cover
           if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — typed where it is now`
           const point = { x: Number(spot.x), y: Number(spot.y) }
           await page.mouse('mouseMoved', point)
@@ -1244,7 +1295,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
         const spot = await findAgain(page, Number(args?.ref))
-        if (spot.gone === true) return REF_GONE
+        if (spot.gone === true) return spot.why ?? REF_GONE
         const cursor = await page.hover({ x: Number(spot.x), y: Number(spot.y) })
         await wait(400)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2500 }), `hover ${String(args?.ref)} · ${cursor}`)
@@ -1329,8 +1380,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const report = []
         for (const [index, step] of steps.entries()) {
           const said = await runStep(page, step ?? {}, refs?.refs)
-          report.push(`${index + 1}. ${said}`)
-          if (/^ref \d+: That control is gone/.test(said)) return `${report.join('\n')}\nStopped: the page changed. Call sidecar_view and use the new numbers.`
+          const text = typeof said === 'string' ? said : said.text
+          report.push(`${index + 1}. ${text}`)
+          /* A step that never landed makes every later step a guess, so the
+             batch ends here instead of typing into a page that is not there. */
+          if (typeof said !== 'string' && said.blocked === true) {
+            return `${report.join('\n')}\nStopped after step ${index + 1}. Call sidecar_view and plan again from what the page shows now.`
+          }
           /* A step can navigate straight onto Chrome's error page — a mistyped
              address, or a site that does not answer. The rest of the batch
              would then type into "This site can't be reached", so it stops
@@ -1433,7 +1489,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           return `${said} · ${await brief(page)}`
         }
         const spot = await findAgain(page, Number(args?.ref))
-        if (spot.gone === true) return REF_GONE
+        if (spot.gone === true) return spot.why ?? REF_GONE
         const wanted = JSON.stringify(String(args?.value ?? ''))
         const route = await contextFor(page, Number(args?.ref))
         const local = route?.local ?? Number(args?.ref)
@@ -1480,7 +1536,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (route?.contextId !== undefined) uploadParams.contextId = route.contextId
         const handle = await page.cdp.send('Runtime.evaluate', uploadParams, route?.sessionId)
         const objectId = handle.result?.objectId
-        if (objectId === undefined) return REF_GONE
+        if (objectId === undefined) return spot.why ?? REF_GONE
         const node = await page.cdp.send('DOM.describeNode', { objectId }, route?.sessionId)
         const backendNodeId = node?.node?.backendNodeId
         if (backendNodeId === undefined) return 'That control cannot take a file.'
@@ -1511,12 +1567,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         let clip = undefined
         if (args?.ref !== undefined) {
           const spot = await findAgain(page, Number(args.ref))
-          if (spot.gone === true) return REF_GONE
+          if (spot.gone === true) return spot.why ?? REF_GONE
           /* The picture is of the control, not of a guess around its middle:
              a canvas can be most of the page, a checkbox a few pixels. */
           const box = await evaluate(page, bounds(Number(args.ref)))
           const rect = typeof box === 'string' ? JSON.parse(box) : box
-          if (rect?.gone === true) return REF_GONE
+          if (rect?.gone === true) return spot.why ?? REF_GONE
           const pad = 8
           clip = {
             x: Math.max(0, Math.round(Number(rect.x) - pad)),
@@ -1597,13 +1653,23 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async () => {
         const state = await sidecar.state()
         const owner = String(host.owner?.() ?? '') // ui-copy-ignore
+        const session = currentSession()
+        const seats = String(host.seats?.() ?? '?') // ui-copy-ignore
+        const mine = sidecar.pageFor(session)
         const rows = [
           state.alive ? 'running' : 'stopped',
+          `chat ${session === '' ? '(no chat id)' : session}`,
+          `this chat's tab ${mine === null ? 'none' : String(mine.url)}`, // ui-copy-ignore
+          `tabs in the browser ${String(sidecar.pages.size)}`,
+          `tab list ${[...sidecar.pages.entries()].map(([key, each]) => `${key.slice(-8)}=${String(each.url)}=${each.cdp?.closed === true ? 'closed' : 'open'}`).join(' | ')}`, // ui-copy-ignore
+          `default tab ${String(sidecar.page?.url)}`, // ui-copy-ignore
           state.headless === false ? 'showing a window' : 'no window',
           `profile ${String(state.profile)}`,
           `url ${String(state.url)}`,
           `title ${String(state.title)}`,
           `viewers ${String(state.viewers)}`,
+          `listening chats ${seats}`, // ui-copy-ignore
+          `mirror owner ${owner === '' ? 'none' : owner}`, // ui-copy-ignore
           owner === '' ? 'no owner' : `owner ${owner}`,
           `refs followed ${String(follows.count)}`,
           holdText(sidecar) === '' ? 'person free' : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
@@ -1665,7 +1731,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         let start = { x: Number(args?.x ?? NaN), y: Number(args?.y ?? NaN) }
         if (args?.from !== undefined) {
           const spot = await findAgain(page, Number(args.from))
-          if (spot.gone === true) return REF_GONE
+          if (spot.gone === true) return spot.why ?? REF_GONE
           start = { x: Number(spot.x), y: Number(spot.y) }
         }
         const end = { x: Number(args?.to_x ?? NaN), y: Number(args?.to_y ?? NaN) }
@@ -1710,11 +1776,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (checkRoute?.contextId !== undefined) checkParams.contextId = checkRoute.contextId
         const probe = await page.cdp.send('Runtime.evaluate', checkParams, checkRoute?.sessionId)
         const now = probe.result?.value
-        if (now === null || now === undefined) return REF_GONE
+        if (now === null || now === undefined) return spot.why ?? REF_GONE
         const want = args?.checked === undefined ? !Boolean(now.checked) : args.checked === true
         if (Boolean(now.checked) !== want) {
           const spot = await findAgain(page, Number(args.ref))
-          if (spot.gone === true) return REF_GONE
+          if (spot.gone === true) return spot.why ?? REF_GONE
           await page.mouse('mouseMoved', { x: Number(spot.x), y: Number(spot.y) })
           await page.mouse('mousePressed', { x: Number(spot.x), y: Number(spot.y) })
           await page.mouse('mouseReleased', { x: Number(spot.x), y: Number(spot.y) })

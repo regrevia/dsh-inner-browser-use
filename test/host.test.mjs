@@ -23,6 +23,8 @@ const prompts = []
 let server
 let origin
 
+/* A fresh state directory: the mirror's note must never leak between runs. */
+process.env.DSH_INNER_BROWSER_STATE_DIR = join(tmpdir(), `dshib-host-${process.pid}-${Date.now()}`)
 const { Bridge, ROUTE, apply } = await import('../index.js')
 
 /**
@@ -601,4 +603,16 @@ test('a review round says what it asked, and keeps the list it got back', async 
   assert.equal(lastPoints({ dir }).length, 2)
   rmSync(dir, { recursive: true, force: true })
   assert.equal(lastRound({ dir }), null)
+})
+
+test('the chat that owns the mirror keeps it across a reload', async () => {
+  const { writeFileSync } = await import('node:fs')
+  const dir = process.env.DSH_INNER_BROWSER_STATE_DIR
+  const first = new Bridge({ persist: true })
+  first.want('session-keep')
+  const again = new Bridge({ persist: true })
+  assert.equal(again.owner, 'session-keep', 'a reloaded host hands the mirror back to the same chat')
+  /* A note left by anything that is not a chat must not take the mirror. */
+  writeFileSync(join(dir, 'mirror.json'), JSON.stringify({ owner: 'chat-1', session: 'chat-1', at: 1 }))
+  assert.equal(new Bridge({ persist: true }).owner, '', 'a stray note is ignored')
 })

@@ -1,3 +1,24 @@
+## 0.34.2
+
+- **别的会话的页面不再被当成自己的弹窗接管。** 之前一次「找新开的弹窗」会在浏览器所有标签里挑一个不属于主标签的页，把它的地址当成本会话的弹窗，随后导航走；`adoptOpened` 还会把它关掉——一个会话的 `sidecar_open` 就可能把另一个会话正在看的页面拿走。现在每张页面知道自己的 target，浏览器把其它会话的 target 交给它作为 `siblings`，候选必须不是自己、也不在别人名下，否则一律不接管、不关闭（`isForeign`，单测覆盖「别的会话的标签 / 真正的新标签 / 自己 / 空」四种）。
+- **密码不再出现在工具结果里。** `brief()` 读聚焦控件的 `.value`，登录页一聚焦密码框，结果行就把密码原样回显（实测复现 `DUMMY_SECRET_123`）。现在 `type=password` 的框只报名字、值恒为空；这条读法被抽成 `BRIEF_JS`，单测用假 DOM 直接跑它，防止再退回去。
+- **批量动作真的失败即停。** `sidecar_do` 之前只在「编号失效」这一种文字出现时停，`did not see`、`still at a different address`、找不到按钮都算成功继续跑，后面的步骤就打进一个根本没到的页面。现在步骤自己返回 `blocked`，批处理看到就停在当步，并说明从当前页面重新规划。
+- **遮罩没关掉时不硬点。** 检测到遮罩、点了「Accept」它还在，以前照样按原坐标点下去（点中的是遮罩），现在回一句「仍被遮住，未点击/未输入」，让人先处理它。
+- **`changed_only` 之后基线前进。** 以前只做 diff、不更新上一次读取，同一段变化会每读一次再说一遍；现在 diff 完就把它当新基线。
+- **`GET /sidecar/state?session=` 报本会话的页面。** 顶层 `url` 是浏览器第一张标签（可能是别人的），本会话自己的地址/标题/观看者数在 `chat` 里（豆包页实测：`chat.url=https://www.doubao.com/chat/`、`title=豆包 …`、`viewers=1`，而顶层仍是别人的 `about:blank`）。
+- 单测 77 → 79（新增 `test/isolation.test.mjs`、`test/leak.test.mjs`；`test/refs.test.mjs` 的「借用必须 import」检查不再给全大写常量开例外——`KEYS` 正是从这个缺口漏过去的）。
+
+## 0.34.1
+
+- A tool the Host half borrowed from the tool surface was used before it was
+  imported, so after a hot reload every sidecar call answered
+  `sessionScope is not defined`. The import is there now, and a test reads the
+  Host half and refuses a borrowed name that was not imported.
+- A number from a read is checked against what the control says before it is
+  pressed: if "Send" turned into "Stop", the call is refused with the two
+  words instead of pressing it. Taken from Oxrail's rule that a ref is bound
+  to a revision and re-verified before an action.
+
 ## 0.34.0
 
 - **每个会话一个标签页，谁也拿不走谁的页面。** 之前浏览器是单例、只有一张页面：另一个会话随手 `sidecar_open` 就把你正在看的页面导航走了（这次就发生了——豆包页被换成了本地 `assets/pet/index.html`）。现在按会话分标签页：同一个无窗口 Chrome、同一个 profile（登录照旧共享），每个会话第一次要页面时开自己的标签，`sidecar_open`、输入、读取、页签切换、关闭页签都只作用于自己那一张；`GET /sidecar/frames?session=` 也只推该会话的标签。会话 A 导航到 `example.com` 后，会话 B 的地址、会话 A 最早的那张标签都不动（真机实测：boot 725 ms，两页互不影响）。

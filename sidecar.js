@@ -6,7 +6,7 @@
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -47,11 +47,86 @@ function firstBinary() {
   return CHROME_BINARIES.find((path) => existsSync(path))
 }
 
+/* A chat's tab address outlives a plugin reload: the browser is still running
+   with that tab, and the chat that returns should get its page back, not a
+   blank one. */
+const tabsDir = process.env.DSH_INNER_BROWSER_STATE_DIR || join(homedir(), '.dsh', 'inner-browser-use')
+const tabsFile = join(tabsDir, 'tabs.json')
+
 /** Root of everything this plugin keeps for the sidecar. */
 function rootDir() {
   const dir = join(homedir(), '.dsh', 'inner-browser-use', 'chrome')
   mkdirSync(dir, { recursive: true })
   return dir
+}
+
+/**
+ * Whether a target is not this page's to take: its own tab or one another chat
+ * is driving.
+ * @param {string} targetId - candidate target.
+ * @param {string} mine - the asking page's own target.
+ * @param {string[]} [foreign] - targets other chats drive.
+ * @returns {boolean} true when the candidate must be left alone.
+ */
+export function isForeign(targetId, mine, foreign = []) {
+  const id = String(targetId ?? '')
+  if (id === '') return true
+  if (id === String(mine ?? '')) return true
+  return foreign.map(String).includes(id)
+}
+
+/**
+ * Where the cookies of a profile are kept in the browser's own storage.
+ */
+const COOKIE_FILES = ['Default/Cookies', 'Local State']
+
+/**
+ * @param {string} dir - a profile directory.
+ * @returns {string} where its cookie snapshots live.
+ */
+export function loginBackupDir(dir) {
+  return join(tabsDir, 'login', dir.split('/').filter(Boolean).pop() ?? 'default')
+}
+
+/**
+ * Copies the cookie store aside while it is still good, so a profile that loses
+ * its cookies another way can be handed the ones that were working.
+ * @param {string} dir - a profile directory.
+ * @returns {number} how many snapshots are kept.
+ */
+export function snapshotLogin(dir) {
+  const files = COOKIE_FILES.map((name) => ({ name, from: join(dir, name) })).filter((row) => existsSync(row.from))
+  if (files.length === 0) return 0
+  const to = loginBackupDir(dir)
+  mkdirSync(to, { recursive: true })
+  const stamp = String(Date.now())
+  for (const row of files) copyFileSync(row.from, join(to, `${stamp}-${row.name.replace(/\//g, '_')}`))
+  const mine = readdirSync(to).filter((name) => name.startsWith(`${stamp}-`))
+  const older = readdirSync(to).filter((name) => !mine.includes(name)).sort()
+  const generations = 5
+  const keep = older.slice(-generations * files.length)
+  for (const name of older) if (!keep.includes(name)) rmSync(join(to, name), { force: true })
+  return older.length + mine.length
+}
+
+/**
+ * Puts the newest snapshot back when the profile has no cookie store at all.
+ * @param {string} dir - a profile directory.
+ * @returns {boolean} whether anything was restored.
+ */
+export function restoreLogin(dir) {
+  const cookie = join(dir, 'Default/Cookies')
+  if (existsSync(cookie) && statSync(cookie).size > 1000) return false
+  const from = loginBackupDir(dir)
+  if (!existsSync(from)) return false
+  const names = readdirSync(from).sort()
+  const newest = names.filter((name) => name.includes('-Default_Cookies')).slice(-1)[0]
+  const state = names.filter((name) => name.includes('-Local_State')).slice(-1)[0]
+  if (newest === undefined) return false
+  mkdirSync(join(dir, 'Default'), { recursive: true })
+  copyFileSync(join(from, newest), cookie)
+  if (state !== undefined) copyFileSync(join(from, state), join(dir, 'Local State'))
+  return true
 }
 
 /** @param {string} name - profile name. @returns {string} its directory. */
@@ -159,6 +234,7 @@ export class SidecarPage {
     this.pointerSinks = new Set()
     this.latest = ''
     this.seq = 0
+    this.lastFrameAt = 0
     /* Total JPEG bytes seen, for the bench and for noticing when a page got
        expensive to watch. */
     this.bytes = 0
@@ -188,6 +264,11 @@ export class SidecarPage {
        follows it, because a person looking at the column expects that too. */
     this.children = new Map()
     this.opened = null
+    /* The tab this page drives, and the tabs other chats drive. A tab another
+       chat owns is never a popup of this one: closing it, or navigating this
+       page to its address, would take a page away from somebody else. */
+    this.targetId = ''
+    this.siblings = () => []
     this.port = Number(port ?? 0) // ui-copy-ignore
   }
 
@@ -310,13 +391,15 @@ export class SidecarPage {
    * one exists and where it went.
    * @returns {Promise<{targetId: string, url: string}|null>} the popup.
    */
-  async findPopup() {
+  async findPopup(foreign = []) {
     if (this.port <= 0) return null // ui-copy-ignore
-    const main = await this.cdp.send('Target.getTargetInfo').then((info) => String(info?.targetInfo?.targetId ?? '')).catch(() => '')
+    const mine = await this.cdp.send('Target.getTargetInfo').then((info) => String(info?.targetInfo?.targetId ?? '')).catch(() => '')
+    const main = mine !== '' ? mine : this.targetId
+    const theirs = new Set(foreign.map(String))
     const list = await fetch(`http://127.0.0.1:${this.port}/json/list`, { signal: AbortSignal.timeout(1200) }) // ui-copy-ignore
       .then((response) => (response.ok ? response.json() : []))
       .catch(() => [])
-    const pages = (Array.isArray(list) ? list : []).filter((item) => item.type === 'page' && String(item.id ?? '') !== main)
+    const pages = (Array.isArray(list) ? list : []).filter((item) => item.type === 'page' && String(item.id ?? '') !== main && !theirs.has(String(item.id ?? '')))
     const popup = pages.find((item) => /^https?:|^file:/.test(String(item.url ?? '')))
     if (popup !== undefined) return { targetId: String(popup.id), url: String(popup.url) }
     const blank = pages[0]
@@ -346,14 +429,17 @@ export class SidecarPage {
    * @returns {Promise<string>} what happened, for the tool result.
    */
   async adoptOpened() {
+    const foreign = typeof this.siblings === 'function' ? this.siblings().map(String) : []
+    const theirs = new Set(foreign)
     let target = this.opened === null || this.opened === undefined ? null : { targetId: this.opened.targetId, url: this.opened.url }
     this.opened = null
+    if (target !== null && isForeign(target.targetId, this.targetId, foreign)) target = null
     if (target === null) {
       /* The target list is written before the popup finished loading, so give a
          click that opens one a moment to say where it is going. */
       for (let attempt = 0; attempt < 3 && target === null; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 150))
-        const found = await this.findPopup()
+        const found = await this.findPopup(foreign)
         if (found !== null && found.url !== '') target = found
         else if (found !== null && attempt === 2) target = found
       }
@@ -459,6 +545,9 @@ export class SidecarPage {
 
   /** Keep one listener that fans frames out to every viewer. */
   async start() {
+    this.targetId = String(
+      await this.cdp.send('Target.getTargetInfo').then((info) => info?.targetInfo?.targetId ?? '').catch(() => ''),
+    )
     await this.cdp.send('Network.enable').catch(() => {})
     /* A click that downloads should leave a file, not nothing: point downloads
        at the profile so the driver can report where they went. */
@@ -476,6 +565,7 @@ export class SidecarPage {
       void this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
       if (typeof data !== 'string' || data === '') return
       this.latest = data
+      this.lastFrameAt = Date.now()
       this.seq += 1
       this.bytes += data.length
       if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
@@ -553,7 +643,12 @@ export class SidecarPage {
 
   /** @returns {Promise<void>} resolves once the page is casting. */
   async cast() {
-    if (this.casting) return
+    if (this.casting) {
+      /* A page nobody repaints still owes the pane a picture, so silence for a
+         few seconds means the cast died rather than being idle. */
+      if (Date.now() - this.lastFrameAt < 3000) return
+      this.casting = false
+    }
     this.casting = true
     /* Full-resolution mirror at a quality that keeps small text readable;
        `optimizeForSpeed` keeps the encoder from adding to the round trip. */
@@ -567,6 +662,38 @@ export class SidecarPage {
     }).catch(() => {
       this.casting = false
     })
+    void this.still()
+  }
+
+  /** Sends one full-frame picture now: a mirror that waits for motion shows an empty pane on a page that is not moving. */
+  async still() {
+    let data = ''
+    try {
+      const shot = await this.cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 72, fromSurface: true })
+      data = String(shot?.data ?? '')
+    } catch {
+      return
+    }
+    if (data === '' || this.frames.size === 0) return
+    this.latest = data
+    this.lastFrameAt = Date.now()
+    this.seq += 1
+    const frame = {
+      seq: this.seq, // ui-copy-ignore
+      w: VIEW.width, // ui-copy-ignore
+      h: VIEW.height, // ui-copy-ignore
+      jpeg: data, // ui-copy-ignore
+      url: this.url, // ui-copy-ignore
+      title: this.title, // ui-copy-ignore
+      pointer: this.pointer, // ui-copy-ignore
+    }
+    for (const sink of this.frames) {
+      try {
+        sink(frame)
+      } catch {
+        /* a closed viewer is dropped by its own stream handler */
+      }
+    }
   }
 
   async stopCast() {
@@ -1042,6 +1169,44 @@ export class Sidecar {
   }
 
   /**
+   * Keep a chat's tab address on disk, so a reload can bring the page back.
+   * @param {string} session - chat id.
+   * @param {string} url - address that chat's tab is showing.
+   */
+  rememberTab(session, url) {
+    const id = String(session ?? '')
+    const address = String(url ?? '')
+    if (id === '' || address === '' || address === 'about:blank') return
+    let saved = {}
+    try {
+      saved = JSON.parse(readFileSync(tabsFile, 'utf8')) ?? {}
+    } catch {
+      saved = {}
+    }
+    if (saved[id] === address) return
+    saved[id] = address
+    try {
+      mkdirSync(tabsDir, { recursive: true })
+      writeFileSync(tabsFile, JSON.stringify(saved))
+    } catch {
+      /* a browser that cannot write its note still works */
+    }
+  }
+
+  /**
+   * @param {string} session - a chat id.
+   * @returns {string} the address that chat last had, or '' when it never had one.
+   */
+  rememberedTab(session) {
+    try {
+      const saved = JSON.parse(readFileSync(tabsFile, 'utf8'))
+      return String(saved?.[String(session ?? '')] ?? '')
+    } catch {
+      return ''
+    }
+  }
+
+  /**
    * Give a chat its own tab, on the same browser: logins are shared, addresses
    * are not.
    * @param {string} session - chat id.
@@ -1058,16 +1223,20 @@ export class Sidecar {
     if (this.page === null) await this.ensure()
     const port = this.page?.port ?? 0 // ui-copy-ignore
     if (port === 0) throw new Error('sidecar: no browser to open a tab in') // ui-copy-ignore
-    const address = url === undefined || url === '' ? 'about:blank' : String(url)
+    /* A chat that was given a tab without an address keeps looking at what the
+       browser was already showing, rather than at a blank page nobody asked for. */
+    const remembered = this.rememberedTab(id)
+    const address = url === undefined || url === '' ? String(remembered !== '' ? remembered : this.page?.lastUrl ?? this.lastUrl ?? 'about:blank') : String(url)
     const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
     if (!created.ok) throw new Error('sidecar: could not open a tab')
     const target = await created.json()
     if (typeof target.webSocketDebuggerUrl !== 'string') throw new Error('sidecar: new tab has no socket')
     const cdp = new Cdp(target.webSocketDebuggerUrl)
     await cdp.ready
-    const page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
+    const page = await this.bind(await new SidecarPage(cdp, this.profile, port).start()) // ui-copy-ignore
     this.pages.set(id, page)
     this.touch()
+    this.rememberTab(id, address)
     return page
   }
 
@@ -1076,6 +1245,35 @@ export class Sidecar {
    * @returns {Promise<SidecarPage>} the page being driven.
    */
   async ensure(options = {}) {
+    const page = await this.ensurePage(options)
+    const id = String(options.session ?? '')
+    if (id === '') return page
+    const mine = this.pageFor(id)
+    if (mine !== null) {
+      /* A chat's tab can die on its own: a crash, a browser another call
+         restarted, a tab closed by hand. Handing that corpse back leaves the
+         mirror on a blank picture forever, so it has to answer before it is
+         trusted again. */
+      const alive = await mine.ping()
+      if (alive.ok) {
+        /* A blank tab after a restart is not where this chat was: the address it
+           last had is on disk, and that is the one worth returning to. */
+        if (String(mine.url ?? '') === 'about:blank') {
+          const back = this.rememberedTab(id)
+          if (back !== '') await mine.navigate(back)
+        }
+        const wanted = String(options.url ?? '')
+        if (wanted !== '' && String(mine.url) !== wanted) await mine.navigate(wanted)
+        this.rememberTab(id, String(mine.url ?? wanted))
+        return mine
+      }
+      this.pages.delete(id)
+      return this.tabFor(id, options.url)
+    }
+    return this.tabFor(id, options.url)
+  }
+
+  async ensurePage(options = {}) {
     if (options.profile !== undefined) this.profile = options.profile
     const wanted = options.headless === undefined ? this.headless : options.headless !== false
     const modeChanged = wanted !== this.headless
@@ -1145,18 +1343,28 @@ export class Sidecar {
   /** @param {string | undefined} url - first address. @returns {Promise<SidecarPage>} the page. */
   async launch(url) {
     const dir = profileDir(this.profile)
+    /* A profile whose cookie store went missing would look signed out at the
+       next step even though the person never signed out, so the working copy
+       is put back before the browser is asked to read it. */
+    restoreLogin(dir)
     let port = await this.runningPort(dir) // ui-copy-ignore
     if (port === 0) port = await this.spawnChrome(dir) // ui-copy-ignore
     const ws = await this.pageSocket(port) // ui-copy-ignore
     const cdp = new Cdp(ws)
     await cdp.ready
     this.cdp = cdp
-    this.page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
+    this.page = await this.bind(await new SidecarPage(cdp, this.profile, port).start()) // ui-copy-ignore
     if (url !== undefined && url !== '') this.lastUrl = String(url)
     await this.restoreSessionCookies()
     await this.page.cast()
     if (url !== undefined && url !== '') await this.page.navigate(url)
     this.touch()
+    /* Sign-ins outlive this browser: what works now is worth a copy, taken
+       while the cookies are known good rather than after they are lost. */
+    snapshotLogin(dir)
+    this.backup?.()
+    this.backup = setInterval(() => snapshotLogin(dir), 10 * 60_000)
+    this.backup.unref?.()
     this.logger?.info?.('dsh-inner-browser-use: sidecar up on port %s (%s)', port, this.headless ? 'headless' : 'windowed') // ui-copy-ignore
     return this.page
   }
@@ -1273,6 +1481,21 @@ export class Sidecar {
    * @param {number} index - a row from `tabs()`.
    * @returns {Promise<SidecarPage>} the page now being driven.
    */
+  /**
+   * Tells a page which targets belong to other chats, so a popup lookup cannot
+   * pick somebody else's tab.
+   * @param {SidecarPage} page - a page this browser drives.
+   * @returns {SidecarPage} the same page.
+   */
+  bind(page) {
+    page.siblings = () =>
+      [...this.pages.values(), this.page]
+        .filter((other) => other !== null && other !== undefined && other !== page)
+        .map((other) => String(other.targetId ?? ''))
+        .filter((id) => id !== '')
+    return page
+  }
+
   async useTab(index, session = '') {
     const list = await this.tabs(session)
     const tab = list[Number(index)]
@@ -1288,7 +1511,7 @@ export class Sidecar {
     if (mine !== null) {
       const cdp = new Cdp(tab.webSocketUrl)
       await cdp.ready
-      const page = await new SidecarPage(cdp, this.profile, mine.port).start() // ui-copy-ignore
+      const page = await this.bind(await new SidecarPage(cdp, this.profile, mine.port).start()) // ui-copy-ignore
       this.pages.set(String(session), page)
       mine.cdp.send('Page.stopScreencast').catch(() => {})
       mine.cdp.close()
@@ -1298,7 +1521,7 @@ export class Sidecar {
     }
     const cdp = new Cdp(tab.webSocketUrl)
     await cdp.ready
-    const page = await new SidecarPage(cdp, this.profile, was.port).start() // ui-copy-ignore
+    const page = await this.bind(await new SidecarPage(cdp, this.profile, was.port).start()) // ui-copy-ignore
     this.cdp = cdp
     this.page = page
     this.lastUrl = tab.url
@@ -1349,7 +1572,7 @@ export class Sidecar {
     const cdp = new Cdp(target.webSocketDebuggerUrl)
     await cdp.ready
     this.cdp = cdp
-    this.page = await new SidecarPage(cdp, this.profile, port).start() // ui-copy-ignore
+    this.page = await this.bind(await new SidecarPage(cdp, this.profile, port).start()) // ui-copy-ignore
     await this.page.cast()
     this.touch()
     return this.page
@@ -1414,6 +1637,9 @@ export class Sidecar {
     /* Ask Chrome to close first: a browser that is killed outright may lose the
        last minute of cookies, and keeping the person signed in is the point. */
     if (this.page !== null) await this.saveSessionCookies()
+    if (this.backup !== undefined) clearInterval(this.backup)
+    this.backup = undefined
+    snapshotLogin(profileDir(this.profile))
     if (this.cdp !== null) {
       await this.cdp.send('Browser.close').catch(() => {})
       await new Promise((resolve) => setTimeout(resolve, 400))
@@ -1481,6 +1707,18 @@ export class Sidecar {
   }
 
   /** @returns {Promise<Record<string, unknown>>} what the sidecar is doing. */
+  /**
+   * What the browser holds for one chat, when the caller names it.
+   * @param {string} [session] - chat id.
+   * @returns {{url: string, title: string, viewers: number, alive: boolean}} its page.
+   */
+  async chatState(session = '') {
+    const id = String(session ?? '')
+    const page = id === '' ? null : this.pageFor(id)
+    if (page === null || page === undefined) return { url: '', title: '', viewers: 0, alive: false } // ui-copy-ignore
+    return { url: String(page.url ?? ''), title: String(page.title ?? ''), viewers: page.frames?.size ?? 0, alive: true } // ui-copy-ignore
+  }
+
   async state() {
     const profiles = (() => {
       try {
@@ -1497,6 +1735,9 @@ export class Sidecar {
       pages: this.pages.size,
       title: this.page?.title ?? '',
       viewers: this.page?.frames.size ?? 0,
+      /* Everyone watching any chat's picture: the pane in the right column is
+         one of these, so 0 means no column is attached right now. */
+      watchers: [...this.pages.values()].reduce((sum, page) => sum + (page.frames?.size ?? 0), 0),
       frames: this.page?.seq ?? 0,
       crashed: this.page?.crashed === true,
       pointer: this.page?.pointer ?? null,

@@ -20,7 +20,35 @@
  * learns no port and no secret. // ui-copy-ignore
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { Sidecar } from './sidecar.js?v=1'
+
+/** Where the mirror's owner is remembered across a reload: the column should not go dark because the code reloaded. */
+/** Where the mirror's note lives; a test points this elsewhere so it never reads a real chat. */
+const STATE_DIR = process.env.DSH_INNER_BROWSER_STATE_DIR || join(homedir(), '.dsh', 'inner-browser-use')
+const MIRROR_FILE = join(STATE_DIR, 'mirror.json')
+
+/** @returns {{owner: string, session: string, at: number}} the last owner a chat asked to keep. */
+function readMirror() {
+  try {
+    const saved = JSON.parse(readFileSync(MIRROR_FILE, 'utf8'))
+    return { owner: String(saved?.owner ?? ''), session: String(saved?.session ?? ''), at: Number(saved?.at ?? 0) }
+  } catch {
+    return { owner: '', session: '', at: 0 }
+  }
+}
+
+/** @param {{owner: string, session: string, at: number}} value - what to keep. */
+function writeMirror(value) {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true })
+    writeFileSync(MIRROR_FILE, JSON.stringify(value))
+  } catch {
+    /* an unwritable note must not take the mirror down */
+  }
+}
 
 /** Route prefix owned by this plugin. Never under `/api`, which is the Host's own channel. */ // ui-copy-ignore
 export const ROUTE = '/dsh-inner-browser-use'
@@ -57,7 +85,8 @@ function readBody(req) {
  * Nothing else lives here; the browser itself is the Host's. // ui-copy-ignore
  */
 export class Bridge {
-  constructor() {
+  /** @param {{persist?: boolean}} [options] - persist the owner across reloads. */
+  constructor(options = {}) {
     /** @type {Map<string, import('node:http').ServerResponse>} */
     this.seats = new Map()
     /* The one chat that owns the mirror. The column is global, so the picture
@@ -67,6 +96,14 @@ export class Bridge {
        is not on screen has no stream, so a push at ask time is lost; remembering
        the ask is what makes the mirror appear when the person returns. */
     this.wanted = { session: '', at: 0 }
+    /* A running plugin keeps the note; a bare Bridge in a test does not. */
+    this.persist = options.persist === true
+    const kept = this.persist ? readMirror() : { owner: '', session: '', at: 0 }
+    /* Only a real chat id is restored: a stray note must not hand the mirror to
+       a chat that no longer exists. */
+    if (/^session-/.test(kept.owner) !== true) kept.owner = ''
+    this.owner = kept.owner
+    this.wanted = { session: kept.session, at: kept.at }
   }
 
   /**
@@ -74,7 +111,9 @@ export class Bridge {
    * @param {string} sessionId - chat that asked for it.
    */
   claim(sessionId) {
-    if (sessionId !== '') this.owner = sessionId
+    if (sessionId === '') return
+    this.owner = sessionId
+    if (this.persist === true) writeMirror({ owner: this.owner, session: this.wanted.session, at: this.wanted.at })
   }
 
   /**
@@ -87,6 +126,7 @@ export class Bridge {
     if (sessionId === '') return false
     this.claim(sessionId)
     this.wanted = { session: sessionId, at }
+    if (this.persist === true) writeMirror({ owner: this.owner, session: sessionId, at })
     return this.push(sessionId, { type: 'sidecar-wanted', session: sessionId, at })
   }
 
@@ -155,7 +195,7 @@ export class Bridge {
 /** Page read: address, title, controls, then text, as JSON the Host parses. */ // ui-copy-ignore
 /* The read model and the tool surface live in their own files: this module is
    the Host half (routes, bridge, lifetimes), not the model's vocabulary. */ // ui-copy-ignore
-import { sidecarTools } from './tools.js?v=1'
+import { KEYS, sidecarTools, sessionScope } from './tools.js?v=1'
 
 export const name = 'dsh-inner-browser-use'
 export const inject = ['webServer']
@@ -165,7 +205,7 @@ export const inject = ['webServer']
  * @param {any} ctx - plugin context.
  */
 export function apply(ctx) {
-  const bridge = new Bridge()
+  const bridge = new Bridge({ persist: true })
   /* The sidecar is a browser the Host owns outright: a real Chrome with its own // ui-copy-ignore
      profile, shown in the column as a screencast. It outlives a plugin reload,
      and it does not need the chat to be on screen to do work. */
@@ -188,10 +228,16 @@ export function apply(ctx) {
   }, 'dsh-inner-browser-use: sidecar lifetime')
 
   /** @param {import('node:http').IncomingMessage} req - request. @param {import('node:http').ServerResponse} res - response. */
+  /** @type {{at: number, path: string, session: string}[]} the last few calls the column made. */
+  const recent = []
   const handler = async (req, res) => {
     const url = new URL(req.url ?? ROUTE, 'http://dsh.invalid')
     const path = url.pathname.slice(ROUTE.length) || '/'
     const sessionId = url.searchParams.get('session') ?? ''
+    /* Who came in and when: an empty picture has two very different causes, and
+       this is what tells a column that never connected from a page that is gone. */
+    recent.push({ at: Date.now(), path, session: sessionId.slice(-8) })
+    if (recent.length > 40) recent.splice(0, recent.length - 40)
 
     /** @param {number} code - status. @param {unknown} value - body. */
     const json = (code, value) => {
@@ -240,8 +286,36 @@ export function apply(ctx) {
       return
     }
 
+    if (path === '/sidecar/claim' && req.method === 'POST') {
+      /* The pane itself asks back what it was showing: after a reload the
+         forgot who owned the mirror, and the chat that still has the tab open is
+         the only one allowed to say so. A different owner is refused. */
+      let body
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        json(400, { ok: false, text: 'bad frame' })
+        return
+      }
+      const id = String(body.session ?? '')
+      if (id === '') {
+        json(400, { ok: false, text: 'no chat' })
+        return
+      }
+      if (bridge.owner !== '' && bridge.owner !== id) {
+        json(409, { ok: false, owner: bridge.owner })
+        return
+      }
+      bridge.claim(id)
+      json(200, { ok: true, owner: bridge.owner })
+      return
+    }
+
     if (path === '/sidecar/state' && req.method === 'GET') {
-      json(200, { ...(await sidecar.state()), owner: bridge.owner })
+      /* Which chats have a column open right now: 0 means nobody is watching,
+         so an empty picture is the column's own problem, not the browser's. */
+      const chat = String(url.searchParams.get('session') ?? '')
+      json(200, { ...(await sidecar.state()), ...(chat === '' ? {} : { chat: await sidecar.chatState(chat) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent })
       return
     }
 
@@ -291,7 +365,7 @@ export function apply(ctx) {
         return
       }
       try {
-        const page = await sidecar.ensure()
+        const page = await sidecar.ensure({ session: String(body.session ?? '') })
         const kind = String(body.kind ?? '')
         const x = Number(body.x ?? 0)
         const y = Number(body.y ?? 0)
@@ -346,7 +420,7 @@ export function apply(ctx) {
         return
       }
       try {
-        const page = await sidecar.ensure()
+        const page = await sidecar.ensure({ session: String(body.session ?? '') })
         const op = String(body.op ?? 'goto')
         if (op === 'reload') json(200, { ok: true, ...(await page.reload()) })
         else if (op === 'back') json(200, { ok: true, ...(await page.history(-1)) })
@@ -407,6 +481,9 @@ export function apply(ctx) {
       want: (sessionId) => {
         bridge.want(sessionId)
       },
+      /* Who holds the mirror, and whether a chat is listening right now. */
+      owner: () => bridge.owner, // ui-copy-ignore
+      seats: () => [...bridge.seats.keys()].map((k) => String(k).slice(-8)).join(',') || 'none', // ui-copy-ignore
     }).map((definition) => {
       /* A reload can mount this surface twice before the old one is torn down.
          A name already in the registry is kept, not fought over: a duplicate

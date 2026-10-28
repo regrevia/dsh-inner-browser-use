@@ -440,6 +440,30 @@ The two places a reload can still meet itself are guarded instead of trusted:
 Guards are covered by `test/no-duplicate.test.mjs` plus a double-mount test:
 65 unit tests, 66 breadth checks, 20 packaged files.
 
+## Phase 25 — one chat cannot take another chat's page, 0.34.2
+
+The audit on 0.34.0 named five things a driver written for one chat got wrong.
+Each was reproduced against 0.34.1 first: two were already fixed (the
+`sessionScope`/`KEYS` import, and every `ensure()` route already carrying a
+session), three were real.
+
+| What | Before | Now |
+| --- | --- | --- |
+| popup lookup | any non-main tab, then navigated or closed | only a target that is neither this page nor another chat's (`isForeign`) |
+| focused password in a result line | echoed the `.value` (`DUMMY_SECRET_123`) | name only, value always empty |
+| `sidecar_do` on a step that did not land | kept going, typed into the wrong page | stops at that step, says to re-plan |
+| overlay that would not clear | clicked the control under it anyway | refuses the click/typing, names the overlay |
+| `changed_only` twice | repeated the same change | diff becomes the new baseline |
+| `/sidecar/state` | top-level `url` could be another chat's tab | `?session=` adds `chat.url/title/viewers` (live: doubao page, viewers 1) |
+| suite | 77 pass | 79 pass (isolation, leak) |
+
+## Phase 24 — a number that is checked before it is used, 0.34.1
+
+| What | Before | Now |
+| --- | --- | --- |
+| ref on a control whose words changed | pressed the new control | refused, says both words (0 ms extra on an unchanged ref) |
+| sidecar call after a hot reload | `sessionScope is not defined` | works; the Host half is checked by a test |
+
 ## Phase 23 — one tab per chat, typing that looks like hands, 0.34.0
 
 The browser used to be one page for the whole app, so any chat could navigate
