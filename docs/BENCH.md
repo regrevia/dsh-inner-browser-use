@@ -1,4 +1,10 @@
-## Phase 34 — one gate in front of every write, 0.34.12
+## Phase 35 — a review round that can be checked off, 0.34.13
+
+- `markRound()` 追加 verdict 行，`lastRound()` 折回 `marks`；`brief({already})` 只保留 open 条目，实测提问里出现「Already handled from your previous review」，已处理点不再重复。
+- 工具面新增 `sidecar_review_verdict`（`mark: [{point,status,evidence}]`，状态枚举 fixed/verified/invalid/open）；越界编号丢弃、未知状态记为 open。
+- 测试 92 → 96 条全绿。
+
+## Phase 34 — one gate in front of every write, 0.34.12## Phase 34 — one gate in front of every write, 0.34.12
 
 - `acting()` 统一 400（未命名会话）与 403（非持有者）；实测匿名 `POST /sidecar/nav` → 400 `which chat asked for it`，非持有者 `POST /sidecar/stop` → 403，持有者 `forget` → 200。
 - 测试 90 → 92 条，全绿；文案与样式 lint 无 error。

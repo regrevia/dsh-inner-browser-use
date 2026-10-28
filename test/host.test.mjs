@@ -163,6 +163,7 @@ test('registers the sidecar tools and nothing else', () => {
     'sidecar_pdf',
     'sidecar_resume',
     'sidecar_review',
+    'sidecar_review_verdict',
     'sidecar_scroll',
     'sidecar_select',
     'sidecar_shot',

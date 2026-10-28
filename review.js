@@ -30,6 +30,9 @@ function clean(text) {
  */
 export function brief(what = {}) {
   const repo = clean(what.repo)
+  /* What the reviewer said last time and what the code did about it: a point
+     already answered is not raised again, so a round does not re-litigate. */
+  const handled = Array.isArray(what.already) ? what.already.filter((mark) => clean(mark?.status) !== 'open') : []
   const commit = clean(what.commit)
   const focus = clean(what.focus)
   const lines = ['Please review the latest code and tell me what to change.']
@@ -44,6 +47,13 @@ export function brief(what = {}) {
     const cap = 5000
     lines.push('The change under review, inline (a diff):')
     lines.push(diff.length <= cap ? diff : `${diff.slice(0, cap)}\n… (trimmed)`)
+  }
+  if (handled.length > 0) {
+    lines.push('Already handled from your previous review, do not raise these again:')
+    for (const mark of handled.slice(0, 12)) {
+      const note = clean(mark.evidence) === '' ? '' : ` (${clean(mark.evidence).slice(0, 120)})`
+      lines.push(`- ${clean(mark.text).slice(0, 200)} — ${clean(mark.status)}${note}`)
+    }
   }
   lines.push('Answer with a short list: what is wrong, and the smallest change that fixes it. Name the file for each point.')
   return lines.join('\n')
@@ -112,11 +122,62 @@ export function lastRound(where = {}) {
   if (!existsSync(file)) return null
   const rows = readFileSync(file, 'utf8').split('\n').filter((row) => row.trim() !== '')
   if (rows.length === 0) return null
-  try {
-    return JSON.parse(rows[rows.length - 1])
-  } catch {
-    return null
+  /* Verdicts are separate rows, appended after the round they judge: find the
+     newest round, then fold in the marks written since. */
+  /** @type {any[]} */
+  const rows2 = []
+  for (const row of rows) {
+    try {
+      rows2.push(JSON.parse(row))
+    } catch {
+      /* a torn line costs its own row, not the log */
+    }
   }
+  let at = -1
+  for (let i = rows2.length - 1; i >= 0; i -= 1) {
+    if (rows2[i]?.kind !== 'verdict') {
+      at = i
+      break
+    }
+  }
+  if (at < 0) return null
+  const round = rows2[at]
+  const latest = new Map()
+  for (const row of rows2.slice(at + 1)) {
+    if (row?.kind !== 'verdict' || clean(row.roundAt) !== clean(round.at)) continue
+    for (const mark of Array.isArray(row.marks) ? row.marks : []) if (Number.isInteger(mark?.point)) latest.set(mark.point, mark)
+  }
+  return { ...round, marks: [...latest.values()].sort((a, b) => a.point - b.point) }
+}
+
+/** What a point can be, once the code has looked at it. */
+export const MARK_STATUS = ['fixed', 'verified', 'invalid', 'open']
+
+/**
+ * Say what happened to the points of the last round. The verdict is history
+ * too: it is appended, and the next round reads it so a settled point is not
+ * raised twice.
+ * @param {{dir?: string, marks?: any[]}} entry - point numbers (1-based) and their outcome.
+ * @returns {{file: string, round: any, marks: any[]}|null} what was written, or null when there is no round.
+ */
+export function markRound(entry = {}) {
+  const dir = clean(entry.dir) === '' ? ROUND_DIR : clean(entry.dir)
+  const round = lastRound({ dir })
+  if (round === null) return null
+  const said = Array.isArray(round.points) ? round.points : []
+  /** @type {any[]} */
+  const marks = []
+  for (const raw of Array.isArray(entry.marks) ? entry.marks : []) {
+    const point = Math.trunc(Number(raw?.point ?? 0))
+    if (point < 1 || point > said.length) continue
+    const status = MARK_STATUS.includes(clean(raw?.status)) ? clean(raw.status) : 'open'
+    marks.push({ point, text: said[point - 1], status, evidence: clean(raw?.evidence).slice(0, 200), at: new Date().toISOString() })
+  }
+  if (marks.length === 0) return null
+  const file = join(dir, 'rounds.ndjson')
+  mkdirSync(dir, { recursive: true })
+  appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), kind: 'verdict', roundAt: round.at, commit: round.commit, marks })}\n`)
+  return { file, round, marks }
 }
 
 /**

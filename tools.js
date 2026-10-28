@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
 import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, REF_GONE } from './read.js?v=1'
-import { brief as askBrief, recordRound, lastRoundNote } from './review.js?v=1'
+import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
 export const sessionScope = new AsyncLocalStorage()
@@ -1268,7 +1268,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const repo = String(args?.repo ?? '').trim()
         if (repo === '') return 'Which repository should the reviewer look at?'
         const commit = String(args?.commit ?? '').trim()
-        const asked = askBrief({ repo, commit, focus: String(args?.focus ?? ''), diff: String(args?.diff ?? '') })
+        /* What was settled last time travels with the question. */
+        const before = lastRound()
+        const already = Array.isArray(before?.marks) ? before.marks : []
+        const asked = askBrief({ repo, commit, focus: String(args?.focus ?? ''), diff: String(args?.diff ?? ''), already })
         const started = Date.now()
         const told = await askInPage(page, { text: asked, ref: args?.ref, timeout_ms: args?.timeout_ms ?? 120_000 })
         const tookMs = Date.now() - started
@@ -1288,8 +1291,47 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
             : wall
             ? `the page is asking to sign in first, so there is no review yet: ${answer.replace(/\s+/g, ' ').slice(0, 200)}`
             : `It answered in prose; no list to work from. It said: ${answer.replace(/\s+/g, ' ').slice(0, 200)}`
-        return `review round: ${commit === '' ? 'newest commit' : commit.slice(0, 12)} in ${Math.round(tookMs / 100) / 10}s\n${list}`
+        const settled = already.filter((mark) => mark.status !== 'open').length
+        const carried = settled === 0 ? '' : `\n(${settled} earlier point${settled === 1 ? '' : 's'} left out as already handled)`
+        return `review round: ${commit === '' ? 'newest commit' : commit.slice(0, 12)} in ${Math.round(tookMs / 100) / 10}s\n${list}${carried}`
       }),
+    },
+    {
+      name: 'sidecar_review_verdict', // ui-copy-ignore
+      description: 'Record what happened to each point of the last review round, so the next round leaves settled points out: point numbers are the ones sidecar_review printed, and each mark is fixed, verified (checked in the code and the point does not apply), invalid, or open.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          mark: { // ui-copy-ignore
+            type: 'array',
+            description: 'One entry per point: which point, its status, and the evidence that backs it.',
+            items: { // ui-copy-ignore
+              type: 'object', // ui-copy-ignore
+              properties: { // ui-copy-ignore
+                point: { type: 'integer', description: 'The point number sidecar_review printed, starting at 1.' },
+                status: { type: 'string', enum: MARK_STATUS, description: 'fixed, verified, invalid, or open.' },
+                evidence: { type: 'string', description: 'Where the code shows it: file, test, or commit.' },
+              },
+              required: ['point', 'status'], // ui-copy-ignore
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['mark'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 10_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} what was recorded. */
+      execute: async (args) => {
+        const written = markRound({ marks: Array.isArray(args?.mark) ? args.mark : [] })
+        if (written === null) return 'No review round to mark: play one with sidecar_review first.'
+        const counts = new Map()
+        for (const mark of written.marks) counts.set(mark.status, (counts.get(mark.status) ?? 0) + 1)
+        const said = [...counts].map(([status, n]) => `${n} ${status}`).join(', ')
+        return `review round ${String(written.round.commit || 'newest').slice(0, 12)}: recorded ${written.marks.length} of ${written.round.points.length} points (${said}).`
+      },
     },
     {
       name: 'sidecar_key', // ui-copy-ignore
