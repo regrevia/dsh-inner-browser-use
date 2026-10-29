@@ -15,7 +15,7 @@ live picture of that browser, and your own cursor keeps working on the picture.
 | `browser_extract` | Returns the items a CSS selector matches, one compact line each with its link, instead of the whole page. |
 | `browser_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. A cookie banner or modal over the control is cleared first, then the click happens. |
 | `browser_type` | Types text into the focused field, or clicks a numbered control first. Chinese goes in as one string. `submit: true` presses Enter. |
-| `browser_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down, Home, End, PageUp, PageDown. |
+| `browser_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, Insert, arrows, Home, End, PageUp, PageDown, F1-F12, the numeric keypad, letters, digits, punctuation and every shifted symbol, plus ContextMenu, CapsLock, PrintScreen and media keys. `Ctrl`/`Alt`/`Shift`/`Meta`/`Mod` modifiers, chords with `+`, and `Ctrl+C/X/V/A/Z/Y` run the real editing commands. |
 | `browser_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
 | `browser_shot` | Saves a full-size PNG into `~/.dsh-inner-browser-use/screenshots` and returns the path. |
 | `browser_state` | Reports whether the browser runs, which profile it uses, its address and title, and how many columns are showing it. |

@@ -646,35 +646,41 @@ window.__ModuleLoader__.load({
         const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
         post('/sidecar/input', { kind: 'wheel', x: point.x, y: point.y, dx: event.deltaX, dy: event.deltaY })
       }
-      /* The page's keys are the person's keys: shift makes a capital, and a
-         shortcut stays a shortcut so Ctrl+V pastes and Ctrl+A selects. */
+      /* The page's keys are the person's keys: shift makes a capital, a
+         shortcut stays a shortcut so Ctrl+V pastes and Ctrl+A selects, and the
+         key that goes down also goes up so a game can hold it. */
       const modsOf = (event) => (event.altKey === true ? 1 : 0)
         | (event.ctrlKey === true ? 2 : 0)
         | (event.metaKey === true ? 4 : 0)
         | (event.shiftKey === true ? 8 : 0)
-      const onKeyDown = (event) => {
-        touched()
-        /* A key still being composed belongs to the IME, not to the page. */
-        if (event.isComposing === true) return
-        const named = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']
+      const MODIFIER_KEYS = ['Alt', 'Control', 'Meta', 'Shift', 'AltGraph', 'OS', 'Super', 'Hyper']
+      const keyBody = (event, down) => {
         const modifiers = modsOf(event)
-        if (named.includes(event.key) === true) {
-          event.preventDefault()
-          post('/sidecar/input', { kind: 'key', key: event.key, code: event.code || event.key, keyCode: event.keyCode || 0, modifiers }) // ui-copy-ignore
-          return
-        }
-        if (event.key == null || event.key.length !== 1) return
-        event.preventDefault()
-        /* A shortcut carries no text of its own: the page decides what it does. */
         const shortcut = (modifiers & 7) !== 0
-        post('/sidecar/input', {
+        const typing = down === true && event.key.length === 1 && (modifiers & 7) === 0 && event.repeat !== true
+        return {
           kind: 'key',
           key: event.key,
           code: event.code || event.key,
           keyCode: event.keyCode || 0,
           modifiers,
-          text: shortcut ? undefined : event.key,
-        })
+          ...(typing ? { text: event.key } : {}),
+          ...(down === false ? { down: false } : {}),
+        }
+      }
+      const onKeyDown = (event) => {
+        touched()
+        /* A key still being composed belongs to the IME, not to the page. */
+        if (event.isComposing === true) return
+        if (event.key == null || MODIFIER_KEYS.includes(event.key) === true) return
+        event.preventDefault()
+        post('/sidecar/input', event.repeat === true ? { ...keyBody(event, true), repeat: true } : keyBody(event, true))
+      }
+      const onKeyUp = (event) => {
+        if (event.isComposing === true) return
+        if (event.key == null || MODIFIER_KEYS.includes(event.key) === true) return
+        event.preventDefault()
+        post('/sidecar/input', keyBody(event, false))
       }
       const goto = () => {
         const address = String(draft ?? '').trim()
@@ -718,6 +724,7 @@ window.__ModuleLoader__.load({
           onPointerMove,
           onWheel,
           onKeyDown,
+          onKeyUp,
         },
           frame === null && back !== ''
             ? h('button', {
@@ -758,6 +765,7 @@ window.__ModuleLoader__.load({
               clearIme()
             },
             onKeyDown,
+            onKeyUp,
           }),
           frame === null ? null : h('img', {
             className: 'dshib-side-frame',

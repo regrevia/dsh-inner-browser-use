@@ -1568,7 +1568,8 @@ export class SidecarPage {
     if (this.flashBridge !== null && (await this.flashKey(type, key)) === true) return
     const virtual = key.keyCode ?? key.windowsVirtualKeyCode ?? 0
     await this.input('Input.dispatchKeyEvent', {
-      type: key.text === undefined || key.text === '' ? type : (type === 'keyDown' ? 'keyDown' : type),
+      type: key.autoRepeat === true && type === 'keyDown' ? 'keyDown' : type,
+      ...(key.autoRepeat === true && type === 'keyDown' ? { autoRepeat: true } : {}),
       key: key.key, // ui-copy-ignore
       code: key.code ?? '', // ui-copy-ignore
       windowsVirtualKeyCode: virtual,

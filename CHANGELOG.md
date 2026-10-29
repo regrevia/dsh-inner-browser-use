@@ -1,3 +1,14 @@
+## 0.34.83
+
+整块键盘：150 个键逐个在真实 Chrome 里按下，跨平台快捷键走浏览器命令。
+
+- 按键表补齐：F1–F12、Insert、Numpad0–9 / NumpadEnter / NumpadAdd / Subtract / Multiply / Divide / Decimal、CapsLock、NumLock、ScrollLock、PrintScreen、Pause、ContextMenu、音量与媒体键，以及美式键盘全部标点与其 Shift 半键（`` ` ``/`~`、`-`/`_`、`=`/`+`、`[`/`{`、`]`/`}`、`\`/`|`、`;`/`:`、`'`/`"`、`,`/`<`、`.`/`>`、`/`/`?`，`1`–`0` 对应 `!@#$%^&*()`）。每个键带浏览器真正上报的 `key`、`code`、`keyCode`；Shift 半键自动带 shift 位并按字符插入。
+- `keySpec()` 认得人写的名字（`esc`/`return`/`del`/`up`/`space`/`f5`，大小写不敏感），未知键报错而不是静默按错；`modifierBits()` 统一解析 `Alt/Option`、`Ctrl/Control`、`Meta/Cmd/Command/Super/Win`、`Shift`，新增平台无关的 `Mod`（macOS 是 Command，Windows/Linux 是 Control）。
+- 快捷键不再只有粘贴：`Ctrl/Cmd+C/X/V/A/Z/Y` 与 `Ctrl/Cmd+Shift+Z` 映射到 CDP 编辑命令 copy / cut / paste / selectAll / undo / redo，两个命令键都认，字段、输入框、可编辑区真正生效。
+- 客户端把键盘完整转发：非打印键（F 键等）不再漏给宿主（以前 F5 会刷新 GUI），按下转发 `keydown`、松开转发 `keyup`，自动重复带 `repeat`，IME 组合中的键仍属于输入法；纯修饰键只随 `modifiers` 走。
+- 新增 `scripts/keyboard.mjs`（`npm run keys`）：起一个真实后台 Chrome，把 150 个键逐个按进输入框，核对页面收到的 `key`/`code`/`keyCode`/shift 与写入的字符，再跑复制、剪切、粘贴、全选删除、撤销、重做、Home/End/方向键光标、Tab 换焦点、Enter 换行、按住 180 ms 的 down→up 间隔。本机 macOS 结果：150/150 键、10 项快捷键全过，单键往返 1 ms，全程 2.4 s。CI 增加 `keys` job，在 macos-latest 与 windows-latest 的真实 Chrome 上各跑一遍。
+- 测试 184 pass / 0 fail。
+
 ## 0.34.82
 
 一次点击就是一次点击；工具改叫浏览器；键盘补齐 Shift 与 ⌘V。

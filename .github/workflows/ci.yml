@@ -50,3 +50,37 @@ jobs:
 
       - run: npm install --no-audit --no-fund
       - run: npm test
+
+  # The unit suite proves the table; this job proves the table against a real
+  # Chrome on the two platforms whose key events differ. A key that is only half
+  # right (a shifted symbol without its shift, Enter without its keyCode) fails
+  # here, not in a chat.
+  keys:
+    name: keys (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install a Chromium browser on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+          if (Test-Path $setup) { Write-Host "Chrome already present"; exit 0 }
+          $url = 'https://dl.google.com/chrome/install/latest/chrome_installer.exe'
+          $installer = Join-Path $env:RUNNER_TEMP 'chrome_installer.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList '/silent', '/install' -Wait
+          if (-not (Test-Path $setup)) { throw "Chrome did not install to $setup" }
+
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/keyboard.mjs --json

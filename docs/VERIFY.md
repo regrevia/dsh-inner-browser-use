@@ -67,6 +67,16 @@ A mirror that opens in every chat means the page half is not comparing
 - **Screenshot** with `browser_shot {}`: an absolute path under
   `~/.dsh-inner-browser-use/screenshots`. A black picture means the screencast
   was not running when the frame was taken.
+- **The whole keyboard, on this machine**: `npm run keys` starts a real
+  background Chrome, presses all 150 keys into a field, and checks what the page
+  reported for each one (`key`, `code`, `keyCode`, shift) plus what the field
+  typed. It then runs copy / cut / paste / select-all / undo / redo, caret keys,
+  Tab focus, Enter, and a 180 ms hold. One JSON line, exit code 0 when every key
+  matched. CI runs it on macOS and Windows in the `keys` job.
+- **A shortcut by hand**: type `Hi`, press `browser_key { "key": "Mod+a" }`,
+  type `X`: the field holds `X` and nothing before it. `Mod` is Command on macOS
+  and Control elsewhere; `Ctrl+C/X/V/A/Z/Y` and `Ctrl+Shift+Z` run the same
+  editing commands a person would.
 
 ## 5. Stop, then open again
 

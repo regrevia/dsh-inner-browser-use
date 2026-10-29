@@ -207,7 +207,7 @@ export class Bridge {
 /** Page read: address, title, controls, then text, as JSON the Host parses. */ // ui-copy-ignore
 /* The read model and the tool surface live in their own files: this module is
    the Host half (routes, bridge, lifetimes), not the model's vocabulary. */ // ui-copy-ignore
-import { KEYS, sidecarTools, sessionScope, workScope } from './tools.js?v=1'
+import { keyEvent, sidecarTools, sessionScope, workScope } from './tools.js?v=1'
 
 /**
  * A state poll may pick up a browser that outlived a reload, and only for the
@@ -606,28 +606,13 @@ export function apply(ctx) {
         } else if (kind === 'wheel') await page.wheel({ x, y, dx: Number(body.dx ?? 0), dy: Number(body.dy ?? 0) })
         else if (kind === 'text') await page.insertText(String(body.text ?? ''))
         else if (kind === 'key') {
-          const name = String(body.key ?? '')
-          const known = KEYS[name]
-          const held = Number(body.modifiers ?? 0)
-          /* A capital letter and a lower-case one are different keys: the page
-             reads `A` with shift down and a field inserts `A`. */
-          const capital = name.length === 1 && name !== name.toLowerCase()
-          const spec = {
-            key: name,
-            code: String(body.code ?? known?.code ?? name),
-            keyCode: Number(body.keyCode ?? 0) || known?.keyCode || 0,
-            text: body.text === undefined ? known?.text : String(body.text),
-            modifiers: capital ? held | 8 : held,
-          }
-          /* Ctrl+V / Command+V in a browser is a command, not only a key: a
-             plain key event leaves the field empty. */
-          if ((name === 'v' || name === 'V') && (held & 6) !== 0) {
-            await page.key('keyDown', { ...spec, text: undefined, commands: ['paste'] })
-            await page.key('keyUp', { ...spec, text: undefined })
-          } else {
-            await page.key('keyDown', spec)
-            await page.key('keyUp', { ...spec, text: undefined })
-          }
+          const key = keyEvent(body)
+          if (key.down !== true) await page.key('keyUp', { ...key.spec, text: undefined })
+          else if (key.repeat === true) {
+            /* Typing repeat: the page draws a held key as a fresh keydown. */
+            await page.key('keyDown', { ...key.spec, autoRepeat: true })
+          } else if (key.command === null) await page.key('keyDown', key.spec)
+          else await page.key('keyDown', { ...key.spec, text: undefined, commands: [key.command] })
         }
         /* Hovering and moving are looking, not acting: only real input counts as
            the person taking the page. */

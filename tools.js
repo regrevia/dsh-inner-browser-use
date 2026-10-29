@@ -392,13 +392,15 @@ export async function unreachable(page) {
   return `the network could not reach that address — the browser stopped on its own error page (${detail === '' ? 'no details' : detail}), which is not the site. Nothing on it is page content. Use browser_nav with another address, or fix the connection this machine needs.`
 }
 
-/** Key names this driver can press, spelled as a model would. */
+/** Key names this driver can press: DOM `key` names for the named keys, and
+    the character itself for a printable one (Space also answers to `Space`). */
 export const KEYS = {
   Enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
   Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
   Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
   Backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
   Delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
+  Insert: { key: 'Insert', code: 'Insert', keyCode: 45 },
   ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
   ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
   ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
@@ -408,6 +410,20 @@ export const KEYS = {
   PageUp: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
   PageDown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
   Space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
+  ContextMenu: { key: 'ContextMenu', code: 'ContextMenu', keyCode: 93 },
+  CapsLock: { key: 'CapsLock', code: 'CapsLock', keyCode: 20 },
+  NumLock: { key: 'NumLock', code: 'NumLock', keyCode: 144 },
+  ScrollLock: { key: 'ScrollLock', code: 'ScrollLock', keyCode: 145 },
+  PrintScreen: { key: 'PrintScreen', code: 'PrintScreen', keyCode: 44 },
+  Pause: { key: 'Pause', code: 'Pause', keyCode: 19 },
+  NumpadEnter: { key: 'Enter', code: 'NumpadEnter', keyCode: 13, text: '\r' },
+  AudioVolumeMute: { key: 'AudioVolumeMute', code: 'AudioVolumeMute', keyCode: 173 },
+  AudioVolumeDown: { key: 'AudioVolumeDown', code: 'AudioVolumeDown', keyCode: 174 },
+  AudioVolumeUp: { key: 'AudioVolumeUp', code: 'AudioVolumeUp', keyCode: 175 },
+  MediaPlayPause: { key: 'MediaPlayPause', code: 'MediaPlayPause', keyCode: 179 },
+  MediaTrackNext: { key: 'MediaTrackNext', code: 'MediaTrackNext', keyCode: 176 },
+  MediaTrackPrevious: { key: 'MediaTrackPrevious', code: 'MediaTrackPrevious', keyCode: 177 },
+  MediaStop: { key: 'MediaStop', code: 'MediaStop', keyCode: 178 },
 }
 
 /* A game moves while a key is held, and the keys a game listens for are letters
@@ -430,6 +446,174 @@ for (const digit of '0123456789') {
   KEYS[digit] = { key: digit, code: `Digit${digit}`, keyCode: digit.charCodeAt(0), text: digit }
 }
 
+/* The symbols above the digits and around the alphabet, both halves of every
+   key: a page reads `?` as Slash with shift down, and a field inserts `?`.
+   `keyCode` is the legacy VK number Windows and old pages compare against. */
+const PUNCTUATION = [
+  ['Backquote', '`', 192], ['Minus', '-', 189], ['Equal', '=', 187],
+  ['BracketLeft', '[', 219], ['BracketRight', ']', 221], ['Backslash', '\\', 220],
+  ['Semicolon', ';', 186], ['Quote', "'", 222], ['Comma', ',', 188],
+  ['Period', '.', 190], ['Slash', '/', 191],
+]
+const SHIFTED_SYMBOLS = [
+  ['~', 'Backquote', 192], ['!', 'Digit1', 49], ['@', 'Digit2', 50], ['#', 'Digit3', 51],
+  ['$', 'Digit4', 52], ['%', 'Digit5', 53], ['^', 'Digit6', 54], ['&', 'Digit7', 55],
+  ['*', 'Digit8', 56], ['(', 'Digit9', 57], [')', 'Digit0', 48], ['_', 'Minus', 189],
+  ['+', 'Equal', 187], ['{', 'BracketLeft', 219], ['}', 'BracketRight', 221], ['|', 'Backslash', 220],
+  [':', 'Semicolon', 186], ['"', 'Quote', 222], ['<', 'Comma', 188], ['>', 'Period', 190],
+  ['?', 'Slash', 191],
+]
+for (const [code, char, keyCode] of PUNCTUATION) {
+  KEYS[char] = { key: char, code, keyCode, text: char }
+}
+for (const [char, code, keyCode] of SHIFTED_SYMBOLS) {
+  KEYS[char] = { key: char, code, keyCode, text: char, shift: true }
+}
+
+/* Function keys, the numeric keypad a page can listen to, and the keys that do
+   nothing in a text field but everything in an app: a canvas game, a document
+   editor, a video player. */
+for (let n = 1; n <= 12; n += 1) {
+  KEYS[`F${n}`] = { key: `F${n}`, code: `F${n}`, keyCode: 111 + n }
+}
+for (const digit of '0123456789') {
+  KEYS[`Numpad${digit}`] = { key: digit, code: `Numpad${digit}`, keyCode: 96 + Number(digit), text: digit }
+}
+KEYS.NumpadAdd = { key: '+', code: 'NumpadAdd', keyCode: 107, text: '+' }
+KEYS.NumpadSubtract = { key: '-', code: 'NumpadSubtract', keyCode: 109, text: '-' }
+KEYS.NumpadMultiply = { key: '*', code: 'NumpadMultiply', keyCode: 106, text: '*' }
+KEYS.NumpadDivide = { key: '/', code: 'NumpadDivide', keyCode: 111, text: '/' }
+KEYS.NumpadDecimal = { key: '.', code: 'NumpadDecimal', keyCode: 110, text: '.' }
+
+/* The names people actually type, and the spelling a model guesses. */
+const KEY_ALIASES = {
+  esc: 'Escape', return: 'Enter', del: 'Delete', ins: 'Insert',
+  up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
+  pageup: 'PageUp', pagedown: 'PageDown', spacebar: 'Space', space: 'Space',
+  menu: 'ContextMenu', prtsc: 'PrintScreen', printscreen: 'PrintScreen',
+}
+
+/**
+ * The event a browser would report for a named key.
+ * @param {string} name - a key in {@link KEYS}, or something close to one.
+ * @returns {{key: string, code: string, keyCode: number, text?: string, shift?: boolean}} the event fields.
+ * @throws {Error} when the key does not exist.
+ */
+export function keySpec(name) {
+  const raw = String(name ?? '')
+  const exact = KEYS[raw]
+  if (exact !== undefined) return exact
+  if (raw === ' ') return KEYS.Space
+  const alias = KEY_ALIASES[raw.toLowerCase()]
+  if (alias !== undefined) return KEYS[alias]
+  const capital = raw.charAt(0).toUpperCase() + raw.slice(1)
+  if (KEYS[capital] !== undefined) return KEYS[capital]
+  const fn = /^f([1-9]|1[0-2])$/i.exec(raw)
+  if (fn !== null) return KEYS[`F${fn[1]}`]
+  throw new Error(`sidecar: no such key ${raw}`) // ui-copy-ignore
+}
+
+/**
+ * Turn `Ctrl+Shift` into the CDP modifier bits. `Mod` is the platform's own
+ * command key: Command on macOS, Control on Windows and Linux — one spelling
+ * for the shortcut a page treats as copy, undo, select-all.
+ * @param {string} held - modifiers joined by +, any of Alt/Option, Ctrl/Control,
+ *   Meta/Cmd/Command/Super/Win, Shift, Mod.
+ * @param {string} [platform] - defaults to this process's platform.
+ * @returns {number} CDP modifier bits: Alt 1, Ctrl 2, Meta 4, Shift 8.
+ */
+export function modifierBits(held, platform = process.platform) {
+  let bits = 0
+  for (const raw of String(held ?? '').split('+')) {
+    const one = raw.trim().toLowerCase()
+    if (one === 'alt' || one === 'option' || one === 'opt' || one === '⌥') bits |= 1
+    else if (one === 'ctrl' || one === 'control' || one === '^') bits |= 2
+    else if (one === 'meta' || one === 'cmd' || one === 'command' || one === 'super' || one === 'win' || one === '⌘') bits |= 4
+    else if (one === 'shift' || one === '⇧') bits |= 8
+    else if (one === 'mod') bits |= platform === 'darwin' ? 4 : 2
+  }
+  return bits
+}
+
+/**
+ * Turn what the mirror's client posted into the event the page should see. A
+ * capital letter carries its shift, a shortcut becomes the browser command it
+ * names, and a release carries no text so the field does not type twice.
+ * @param {any} body - `{ key, code?, keyCode?, modifiers?, text?, down?, repeat? }`.
+ * @returns {{name: string, down: boolean, repeat: boolean, spec: any, command: string|null}} the event.
+ */
+export function keyEvent(body) {
+  const name = String(body?.key ?? '')
+  let known
+  try {
+    known = keySpec(name)
+  } catch {
+    known = null
+  }
+  const held = Number(body?.modifiers ?? 0)
+  const down = body?.down !== false
+  const repeat = body?.repeat === true
+  const capital = name.length === 1 && name !== name.toLowerCase()
+  const modifiers = capital ? held | 8 : held
+  const command = down === true && repeat === false ? commandOf(name, modifiers) : null
+  const text = command !== null ? undefined : body?.text === undefined ? known?.text : String(body.text)
+  return {
+    name,
+    down,
+    repeat,
+    spec: {
+      key: name,
+      code: String(body?.code ?? known?.code ?? name),
+      keyCode: Number(body?.keyCode ?? 0) || known?.keyCode || 0,
+      text,
+      modifiers,
+    },
+    command,
+  }
+}
+
+/**
+ * Read a chord the way a shortcut is written: `Ctrl+Shift+Tab` is the held
+ * modifiers Ctrl and Shift around one Tab, and `Mod+a` is Command+a on macOS.
+ * @param {string} chord - keys joined by +, modifiers may be in it.
+ * @param {number} [modifiers] - bits already held.
+ * @returns {{names: string[], modifiers: number}} the keys to press and the bits.
+ */
+export function splitChord(chord, modifiers = 0) {
+  const bits = { alt: 1, ctrl: 2, control: 2, meta: 4, cmd: 4, command: 4, super: 4, win: 4, shift: 8, option: 1, opt: 1, mod: process.platform === 'darwin' ? 4 : 2 }
+  const names = []
+  let held = modifiers
+  for (const raw of String(chord ?? '').split('+')) {
+    const one = raw.trim()
+    if (one === '') continue
+    const bit = bits[one.toLowerCase()]
+    if (bit === undefined) names.push(one)
+    else held |= bit
+  }
+  return { names, modifiers: held }
+}
+
+/**
+ * The editing command a browser runs for a shortcut, if any: copy and paste are
+ * commands, not key events, and a key event alone leaves the clipboard alone.
+ * @param {string} name - the key name.
+ * @param {number} modifiers - CDP modifier bits.
+ * @returns {string|null} a CDP command name, or null.
+ */
+export function commandOf(name, modifiers) {
+  /* Either command key counts: a page listens for the one its platform uses,
+     and the mirror can be driven from a machine with the other one. */
+  if ((modifiers & 6) === 0) return null
+  const one = String(name ?? '').toLowerCase()
+  if (one === 'v') return 'paste'
+  if (one === 'c') return 'copy'
+  if (one === 'x') return 'cut'
+  if (one === 'a') return 'selectAll'
+  if (one === 'z') return (modifiers & 8) !== 0 ? 'redo' : 'undo'
+  if (one === 'y') return 'redo'
+  return null
+}
+
 /**
  * Press a key: keyDown, then keyUp, with the character when the key types one.
  * @param {any} page - sidecar page.
@@ -438,11 +622,15 @@ for (const digit of '0123456789') {
  * @returns {Promise<void>} done.
  */
 export async function pressKey(page, name, modifiers = 0, holdMs = 0) {
-  const key = KEYS[name] ?? KEYS[name.charAt(0).toUpperCase() + name.slice(1)]
-  if (key === undefined) throw new Error(`sidecar: no such key ${name}`) // ui-copy-ignore
+  const key = keySpec(name)
   const withShift = (key.shift === true ? modifiers | 8 : modifiers)
   const base = { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers: withShift }
-  await page.key('keyDown', key.text === undefined ? base : { ...base, text: key.text })
+  /* Copy, paste, undo and select-all are editor commands: a key event alone
+     leaves the clipboard and the field where they were. */
+  const command = commandOf(key.text ?? key.key, withShift)
+  await page.key('keyDown', command === null
+    ? (key.text === undefined ? base : { ...base, text: key.text })
+    : { ...base, text: undefined, commands: [command] })
   /* A key held down is how a game moves: down, wait, up — not a tap. */
   if (holdMs > 0) await new Promise((settle) => setTimeout(settle, holdMs))
   await page.key('keyUp', base)
@@ -460,8 +648,7 @@ export async function pressKey(page, name, modifiers = 0, holdMs = 0) {
  */
 export async function pressChord(page, names, modifiers = 0, holdMs = 0) {
   const keys = names.map((name) => {
-    const key = KEYS[name] ?? KEYS[name.charAt(0).toUpperCase() + name.slice(1)]
-    if (key === undefined) throw new Error(`sidecar: no such key ${name}`) // ui-copy-ignore
+    const key = keySpec(name)
     return { key, base: { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers: key.shift === true ? modifiers | 8 : modifiers } }
   })
   for (const one of keys) await page.key('keyDown', one.key.text === undefined ? one.base : { ...one.base, text: one.key.text })
@@ -2023,12 +2210,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'browser_key', // ui-copy-ignore
-      description: 'Press one key in the sidecar browser: Enter, Tab, Escape, Backspace, Delete, arrows, Home, End, PageUp, PageDown, Space, letters and digits. Join keys with + to hold them together, and hold_ms to keep them down.',
+      description: 'Press one key in the background browser: Enter, Tab, Escape, Backspace, Delete, Insert, arrows, Home, End, PageUp, PageDown, Space, F1-F12, the numeric keypad (Numpad0-Numpad9, NumpadEnter, NumpadAdd, ...), printable characters and every symbol on a US keyboard (including shifted ones such as ? : @), plus the keys with a name (ContextMenu, CapsLock, PrintScreen, media keys). Join keys with + to hold them together (ArrowLeft+ArrowUp, Shift+Tab), and hold_ms to keep them down. Modifiers accept Ctrl, Alt, Shift, Meta/Cmd, or Mod for the platform command key; Ctrl+C/X/V/A/Z/Y run the real copy, cut, paste, select-all, undo and redo.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          key: { type: 'string', description: 'Key name, or several joined by + to hold them together (ArrowLeft+ArrowUp, Shift+ArrowLeft). Letters and digits work too.' },
-          modifiers: { type: 'string', description: 'Held while pressing: Ctrl, Alt, Shift or Meta, joined by +.' },
+          key: { type: 'string', description: 'Key name, or several joined by + to hold them together (ArrowLeft+ArrowUp, Shift+ArrowLeft). Letters, digits, punctuation and shifted symbols work too.' },
+          modifiers: { type: 'string', description: 'Held while pressing: Ctrl, Alt, Shift, Meta/Cmd, or Mod (Command on macOS, Control on Windows and Linux), joined by +.' },
           hold_ms: { type: 'integer', description: 'Keep the key down this long before releasing. Games move while a key is held.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
@@ -2041,12 +2228,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
         const name = String(args?.key ?? 'Enter')
-        const held = String(args?.modifiers ?? '')
-        const mods = (held.includes('Alt') ? 1 : 0) + (held.includes('Ctrl') ? 2 : 0) + (held.includes('Meta') ? 4 : 0) + (held.includes('Shift') ? 8 : 0)
+        const chord = splitChord(name, modifierBits(args?.modifiers))
+        const mods = chord.modifiers
         const hold = Math.max(0, Math.min(60_000, Number(args?.hold_ms ?? 0)))
-        const names = name.split('+').map((one) => one.trim()).filter((one) => one !== '')
-        if (names.length > 1) await pressChord(page, names, mods, hold)
-        else await pressKey(page, name, mods, hold)
+        if (chord.names.length === 0) throw new Error(`sidecar: ${name} holds no key, only modifiers`) // ui-copy-ignore
+        /* One key goes through the plain path so an editing shortcut is sent as
+           the browser command it is; a chord holds every key down together. */
+        if (chord.names.length > 1) await pressChord(page, chord.names, mods, hold)
+        else await pressKey(page, chord.names[0], mods, hold)
         /* A held key is game input: waiting for the page to fall quiet after one
            costs more than the frame it was meant to drive. */
         if (hold === 0) await settle(page, 3000)
