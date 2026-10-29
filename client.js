@@ -167,6 +167,12 @@ window.__ModuleLoader__.load({
             single: true,
             priority: 'extension',
             title: () => L('side.label'),
+            /* The tab strip's close control is not the pane's own button: a
+               tab closed there never told the host, the ask stayed alive, and
+               the keepalive put the mirror back a few seconds later — a tab
+               the person closed that would not stay closed. Every close path
+               ends here. */
+            onClose: (_tab, where) => closeHere(String(where?.sessionId ?? mountedOf())),
           })))
           disposers.push(scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore
@@ -308,6 +314,32 @@ window.__ModuleLoader__.load({
     function SidecarBody(props) {
       const [frame, setFrame] = React.useState(null)
       const [ptr, setPtr] = React.useState(null)
+      /* The page is laid out at the size of this column, so the picture it
+         sends already has the right shape; these are its pixels. */
+      const [view, setView] = React.useState({ w: SIDE_VIEW.width, h: SIDE_VIEW.height })
+      /* The person at the mirror drives with their own hand: while they are,
+         the agent's arrow stays out of the way, and it comes back by itself
+         once their hold runs out. */
+      const [person, setPerson] = React.useState(false)
+      const personTimer = React.useRef(0)
+      /* The person's own hand hides the arrow the moment it lands, without
+         waiting for the browser to report a hold: the arrow is a claim about
+         what the agent did, and a claim that outlives the agent's turn is a lie
+         the person has to look past. It returns when their hand stops. */
+      const [hand, setHand] = React.useState(false)
+      const handTimer = React.useRef(0)
+      const touched = () => {
+        setHand(true)
+        clearTimeout(handTimer.current)
+        handTimer.current = setTimeout(() => setHand(false), 1500)
+      }
+      const hearHold = (message) => {
+        const hold = Number(message?.hold ?? 0)
+        if (!Number.isFinite(hold) || hold <= 0) return
+        setPerson(true)
+        clearTimeout(personTimer.current)
+        personTimer.current = setTimeout(() => setPerson(false), hold + 120)
+      }
       const [phase, setPhase] = React.useState('connecting')
       const [note, setNote] = React.useState('')
       /* The address this chat had before its tab went away: the pane reopens
@@ -418,11 +450,15 @@ window.__ModuleLoader__.load({
           pending = null
           setFrame(message)
           setPtr(message.pointer ?? null)
+          if (Number.isFinite(Number(message.w)) && Number.isFinite(Number(message.h))) {
+            setView({ w: Number(message.w), h: Number(message.h) })
+          }
           setPhase('live')
           drawnAt.current = Date.now()
           if (typeof message.url === 'string' && message.url !== '') setUrl(message.url)
         }
         const draw = (message) => {
+          hearHold(message)
           pending = message
           if (raf !== 0) return
           if (typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(paint)
@@ -451,6 +487,7 @@ window.__ModuleLoader__.load({
           } else if (message.type === 'pointer') {
             /* The arrow is drawn the moment the agent moves, not when the page
                next repaints: it stays honest even on a page that is idle. */
+            hearHold(message)
             setPtr(message.pointer ?? null)
           } else if (typeof message.jpeg === 'string') {
             draw(message)
@@ -459,6 +496,8 @@ window.__ModuleLoader__.load({
         source.onerror = () => setPhase('lost')
         return () => {
           clearInterval(stuck)
+          clearTimeout(personTimer.current)
+          clearTimeout(handTimer.current)
           if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
           source.close()
         }
@@ -482,9 +521,49 @@ window.__ModuleLoader__.load({
         return () => observer.disconnect()
       }, [])
 
-      const scale = size.w > 0 && size.h > 0 ? Math.min(size.w / SIDE_VIEW.width, size.h / SIDE_VIEW.height) : 0
-      const padX = (size.w - SIDE_VIEW.width * scale) / 2
-      const padY = (size.h - SIDE_VIEW.height * scale) / 2
+      const scale = size.w > 0 && size.h > 0 ? Math.min(size.w / view.w, size.h / view.h) : 0
+      const padX = (size.w - view.w * scale) / 2
+      const padY = (size.h - view.h * scale) / 2
+
+      /* The column tells the page how big it is, a beat after the resize stops:
+         a page that relayouts on every pointer step would never settle. */
+      React.useEffect(() => {
+        if (mine !== true || size.w < 200 || size.h < 200) return undefined
+        /* The page already has that shape: a resize that lands between two
+           viewport sizes would only cost a relayout and another frame. */
+        if (Math.abs(Number(view?.w ?? 0) - size.w) < 1 && Math.abs(Number(view?.h ?? 0) - size.h) < 1) return undefined
+        /* The page is told the column's size a beat after the resize stops, and
+           again until the browser says it took it: a request that arrives while
+           the page is still starting is refused, and a pane that gives up then
+           keeps a letterboxed picture for as long as it stays open. */
+        let live = true
+        let tries = 0
+        let timer = 0
+        const send = () => {
+          if (!live) return
+          fetch(`${ROUTE}/sidecar/viewport`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ session: String(props.sessionId ?? ''), w: Math.round(size.w), h: Math.round(size.h) }),
+          })
+            .then((answer) => (answer.ok === true ? answer.json() : { ok: false }))
+            .then((said) => {
+              if (!live || said?.ok === true || tries >= 5) return
+              tries += 1
+              timer = setTimeout(send, 400)
+            })
+            .catch(() => {
+              if (!live || tries >= 5) return
+              tries += 1
+              timer = setTimeout(send, 600)
+            })
+        }
+        timer = setTimeout(send, 250)
+        return () => {
+          live = false
+          clearTimeout(timer)
+        }
+      }, [mine, size.w, size.h, view?.w, view?.h])
 
       const who = String(props.sessionId ?? '')
       const post = (path, body) => {
@@ -521,7 +600,7 @@ window.__ModuleLoader__.load({
         const box = el.getBoundingClientRect()
         const x = (event.clientX - box.left - padX) / scale
         const y = (event.clientY - box.top - padY) / scale
-        if (x < 0 || y < 0 || x > SIDE_VIEW.width || y > SIDE_VIEW.height) return null
+        if (x < 0 || y < 0 || x > view.w || y > view.h) return null
         return { x: Math.round(x), y: Math.round(y) }
       }
       const ime = React.useRef(null)
@@ -537,6 +616,7 @@ window.__ModuleLoader__.load({
       }
       const stageRef = stage
       const onPointerDown = (event) => {
+        touched()
         const point = toView(event)
         if (point === null) return
         const field = ime.current
@@ -549,6 +629,7 @@ window.__ModuleLoader__.load({
       }
       const movedAt = React.useRef(0)
       const onPointerMove = (event) => {
+        touched()
         const point = toView(event)
         if (point === null) return
         /* Hover is part of a page: menus open under the hand, so the movement
@@ -560,11 +641,13 @@ window.__ModuleLoader__.load({
         hover(point)
       }
       const onWheel = (event) => {
+        touched()
         event.preventDefault()
-        const point = toView(event) ?? { x: Math.round(SIDE_VIEW.width / 2), y: Math.round(SIDE_VIEW.height / 2) }
+        const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
         post('/sidecar/input', { kind: 'wheel', x: point.x, y: point.y, dx: event.deltaX, dy: event.deltaY })
       }
       const onKeyDown = (event) => {
+        touched()
         /* A key still being composed belongs to the IME, not to the page. */
         if (event.isComposing === true) return
         const named = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']
@@ -591,7 +674,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dshib-side' },
           h('div', { className: 'dshib-side-note' }, L('side.foreign')))
       }
-      const pointer = ptr
+      const pointer = person === true || hand === true ? null : ptr
       const noteText = phase === 'failed' ? note || L('side.failed') : phase === 'live' ? L('side.empty') : L('side.connecting')
       return h('div', { className: 'dshib-side' },
         h('div', { className: 'dshib-side-bar' },
@@ -665,8 +748,8 @@ window.__ModuleLoader__.load({
           frame === null ? null : h('img', {
             className: 'dshib-side-frame',
             src: `data:image/jpeg;base64,${frame.jpeg}`,
-            width: Math.max(1, Math.round(SIDE_VIEW.width * scale)),
-            height: Math.max(1, Math.round(SIDE_VIEW.height * scale)),
+            width: Math.max(1, Math.round(view.w * scale)),
+            height: Math.max(1, Math.round(view.h * scale)),
             alt: '', // ui-copy-ignore
             draggable: false,
           }),

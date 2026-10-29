@@ -91,7 +91,9 @@ let stateReply = { owner: '', alive: false, chat: { alive: false } }
 
 globalThis.fetch = async (url, init) => {
   const address = String(url)
-  posts.push({ url: address, body: init === undefined ? null : JSON.parse(init.body) })
+/* A POST with no body is still a request worth recording: the close path sends
+   one, and `JSON.parse(undefined)` would throw before the test could look. */
+  posts.push({ url: address, body: init?.body === undefined ? null : JSON.parse(init.body) })
   if (address.includes('/sidecar/state')) return { ok: true, json: async () => stateReply }
   return { ok: true, json: async () => ({ ok: true, cursor: 'text' }) }
 }
@@ -185,6 +187,13 @@ test('the mirror tab is the only tab added, a tab type kept mounted, and never a
   assert.equal(sidecar.single, true)
   assert.equal(sidecar.priority, 'extension')
   assert.equal(sidecar.title(), '后台浏览器')
+})
+
+test('a tab closed from the strip tells the host, so the keepalive leaves it closed', () => {
+  const { tabs } = scene()
+  assert.equal(typeof tabs[0].onClose, 'function')
+  tabs[0].onClose({ id: 'dsh-inner-browser-use:sidecar' }, { sessionId: 'chat-shown' })
+  assert.equal(posts.some((post) => post.url.includes('/sidecar/forget?session=chat-shown')), true)
 })
 
 test('the mirror opens only in the chat a tool asked for, and only while it is on screen', () => {
@@ -302,4 +311,29 @@ test('a pane with no picture still offers to reopen its last page, and asks as i
   /* And the remembered address comes from the poll too, not only from a stream
      hello that never arrives when the browser is gone. */
   assert.ok(source.includes('info?.chat?.remembered'))
+})
+
+test('a viewport the browser refused is asked for again', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* One request that arrives while the page is starting is refused, and the
+     pane used to keep a letterboxed picture for as long as it stayed open. */
+  assert.ok(source.includes('tries >= 5'))
+  assert.ok(source.includes('timer = setTimeout(send, 400)'))
+  /* And it is not repeated once the page already has the pane's shape. */
+  assert.ok(source.includes('Math.abs(Number(view?.w ?? 0) - size.w) < 1'))
+  assert.ok(source.includes('[mine, size.w, size.h, view?.w, view?.h]'))
+})
+
+test('the arrow goes away as soon as a hand lands on the pane, not after a round trip', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The pane's own input is the earliest evidence a person is driving: it hides
+     the arrow before the browser reports a hold, and it looks again after. */
+  assert.match(source, /const touched = \(\) => \{\n\s+setHand\(true\)/)
+  for (const hook of ['onPointerDown', 'onPointerMove', 'onWheel', 'onKeyDown']) {
+    const body = source.slice(source.indexOf(`const ${hook} = (event) => {`))
+    assert.ok(body.slice(0, 120).includes('touched()'), `${hook} hides the arrow`)
+  }
+  assert.match(source, /const pointer = person === true \|\| hand === true \? null : ptr/)
+  /* A timer left running after the tab is gone is a callback with no page. */
+  assert.ok(source.includes('clearTimeout(handTimer.current)'))
 })
