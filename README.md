@@ -83,7 +83,9 @@ Screenshots are the only thing written outside the profile:
 | Read, dense page | 444 tokens (1510 chars, 90 controls) |
 | Read round trip | 1–4 ms |
 | Click round trip | 2 ms |
-| Screenshot | 77 ms, 113 KB |
+| Key round trip | 7 ms |
+| Key to next frame | 15–18 ms |
+| Screenshot | 75 ms, 115 KB |
 
 ## Install
 

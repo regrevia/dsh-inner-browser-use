@@ -455,6 +455,31 @@ test('a moving Flash page is polled faster than a still one', async () => {
   assert.ok(idlePolls < polls, `still page polled ${idlePolls}, moving ${polls}`)
 })
 
+test('a key does not pay for a liveness ping on every press', async () => {
+  const sidecar = new Sidecar({ profile: 'unit-ensure' })
+  /* This test is about the answer, not about a browser: a real launch here
+     would start Chrome and keep the file's process alive after the last test. */
+  sidecar.cdp = { closed: false, send: async () => {}, close() {} }
+  sidecar.launch = async () => {
+    throw new Error('no browser in this test')
+  }
+  const page = new SidecarPage(sidecar.cdp, 'unit-ensure')
+  let pings = 0
+  page.ping = async () => {
+    pings += 1
+    return { ok: true, closed: false }
+  }
+  page.url = 'https://a.test/'
+  sidecar.page = page
+  sidecar.pages.set('chat-1', page)
+  await sidecar.ensure({ session: 'chat-1' })
+  await sidecar.ensure({ session: 'chat-1' })
+  assert.equal(pings, 1, 'the second call trusts the answer it just got')
+  page.answeredAt = 0
+  await sidecar.ensure({ session: 'chat-1' })
+  assert.equal(pings, 2, 'a stale answer is checked again')
+})
+
 test('a child that ignores SIGTERM is killed, so no stray app is left', async () => {
   const sidecar = new Sidecar({ profile: 'unit-kill' })
   const kills = []

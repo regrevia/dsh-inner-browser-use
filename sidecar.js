@@ -104,6 +104,8 @@ export function flashRuntime() {
    blank one. */
 const tabsDir = process.env.DSH_INNER_BROWSER_STATE_DIR || join(homedir(), '.dsh', 'inner-browser-use')
 const tabsFile = join(tabsDir, 'tabs.json')
+/** @type {Record<string, string> | null} */
+let tabsCache = null
 /* Which runtime the person chose outlives a plugin reload for the same reason
    the tab address does: a reload must not quietly turn the game window back
    into a Chrome window that cannot play it. */
@@ -119,10 +121,16 @@ function readFlashChoice() {
 }
 
 /** @param {boolean} on - record the runtime choice. */
+let flashChoice = null
 function writeFlashChoice(on) {
+  /* Every tool call states its runtime, but almost never changes it: writing
+     the same byte per keystroke was a disk write inside the typing path. */
+  const value = on === true
+  if (flashChoice === value) return
   try {
     mkdirSync(tabsDir, { recursive: true })
-    writeFileSync(flashFile, JSON.stringify({ on: on === true }))
+    writeFileSync(flashFile, JSON.stringify({ on: value }))
+    flashChoice = value
   } catch {}
 }
 
@@ -1921,12 +1929,16 @@ export class Sidecar {
     /* Only chats, and only addresses: a stray key from a probe or an older run
        must not sit in this file pretending to be a chat that can be restored. */
     if (!/^session-/.test(id) || address === '' || address === 'about:blank') return
-    let saved = {}
-    try {
-      saved = JSON.parse(readFileSync(tabsFile, 'utf8')) ?? {}
-    } catch {
-      saved = {}
+    /* The note is read once and kept in memory: a liveness check per keystroke
+       was parsing this file on every key. */
+    if (tabsCache === null) {
+      try {
+        tabsCache = JSON.parse(readFileSync(tabsFile, 'utf8')) ?? {}
+      } catch {
+        tabsCache = {}
+      }
     }
+    const saved = tabsCache
     if (saved[id] === address) return
     saved[id] = address
     try {
@@ -2037,8 +2049,12 @@ export class Sidecar {
          restarted, a tab closed by hand. Handing that corpse back leaves the
          mirror on a blank picture forever, so it has to answer before it is
          trusted again. */
-      const alive = await mine.ping()
+      /* A page that answered a moment ago is still this chat's page. Pinging on
+         every keystroke put a round trip inside the typing path for nothing. */
+      const fresh = Date.now() - Number(mine.answeredAt ?? 0) < 1000
+      const alive = fresh ? { ok: true, closed: false } : await mine.ping()
       if (alive.ok) {
+        mine.answeredAt = Date.now()
         /* A blank tab after a restart is not where this chat was: the address it
            last had is on disk, and that is the one worth returning to. */
         if (String(mine.url ?? '') === 'about:blank') {
@@ -2082,11 +2098,16 @@ export class Sidecar {
       const page = this.page
       /* A page that stopped answering is a page nobody can drive. Start a new
          one on the address it was showing, rather than failing every call. */
-      let probe = page.dialog !== null && page.dialog !== undefined ? { ok: true } : await page.ping()
+      /* Every tool call used to pay a liveness round trip, and a keystroke
+         burst paid it per key. An answer from the last second is still an
+         answer; a page that dies in between fails its action loudly instead. */
+      const fresh = Date.now() - Number(page.answeredAt ?? 0) < 1000
+      let probe = page.dialog !== null && page.dialog !== undefined ? { ok: true } : fresh ? { ok: true, closed: false } : await page.ping()
       if (!probe.ok && !probe.closed) {
         await wait(150)
         probe = await page.ping()
       }
+      if (probe.ok) page.answeredAt = Date.now()
       if (!probe.ok) {
         page.crashed = true
         this.note('renderer stopped answering; opening a fresh tab')
