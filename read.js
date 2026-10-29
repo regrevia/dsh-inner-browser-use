@@ -1005,7 +1005,17 @@ export function finder(query, asRegex, limit) {
   const test = (text) => pattern === null ? text.toLowerCase().includes(needle) : pattern.test(text)
   const out = []
   const seen = new Set()
-  for (const el of document.querySelectorAll(reg.selector)) {
+  /* A control inside a web component lives in a shadow root, where a document
+     query never looks; collect the open roots first, cheaply and bounded. */
+  const roots = [document]
+  for (let i = 0; i < roots.length && roots.length <= 200; i += 1) {
+    for (const host of roots[i].querySelectorAll('*')) {
+      if (host.shadowRoot) roots.push(host.shadowRoot)
+    }
+  }
+  const found = []
+  for (const root of roots) for (const el of root.querySelectorAll(reg.selector)) found.push(el)
+  for (const el of found) {
     if (out.length >= ${limit}) break
     if (!el || !el.isConnected) continue
     const label = String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? el.getAttribute?.('placeholder') ?? el.getAttribute?.('title') ?? '').replace(/\\s+/g, ' ').trim()
