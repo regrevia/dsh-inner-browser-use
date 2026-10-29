@@ -107,6 +107,17 @@ export class Bridge {
   }
 
   /**
+   * A chat is the chat that asked, and nothing else. Guessing at an alias once
+   * put the mirror in a stranger's column: two conversations are never the same
+   * conversation, however few pages happen to be on screen.
+   * @param {string} session - whatever id the caller has.
+   * @returns {string} the same id.
+   */
+  canon(session) {
+    return String(session ?? '')
+  }
+
+  /**
    * Give the mirror to one chat and take it away from every earlier one.
    * @param {string} sessionId - chat that asked for it.
    */
@@ -123,11 +134,12 @@ export class Bridge {
    * @returns {boolean} whether a live tab took the frame.
    */
   want(sessionId, at = Date.now()) {
-    if (sessionId === '') return false
-    this.claim(sessionId)
-    this.wanted = { session: sessionId, at }
-    if (this.persist === true) writeMirror({ owner: this.owner, session: sessionId, at })
-    return this.push(sessionId, { type: 'sidecar-wanted', session: sessionId, at })
+    const id = this.canon(sessionId)
+    if (id === '') return false
+    this.claim(id)
+    this.wanted = { session: id, at }
+    if (this.persist === true) writeMirror({ owner: this.owner, session: id, at })
+    return this.push(id, { type: 'sidecar-wanted', session: id, at })
   }
 
   /**
@@ -265,6 +277,23 @@ export function wantsMirrorAgain(what) {
   return Number(what?.listeners ?? 0) <= 0
 }
 
+/**
+ * Whether asking again can achieve anything. A pane that is polling this very
+ * endpoint is awake and already knows the frames are missing, so a second ask
+ * every few seconds only writes log lines; a pane that went quiet may have lost
+ * the stream and does need one. One ask per gap at most.
+ * @param {any} what - { askedAgo, sinceLast, quiet, gap } in milliseconds.
+ * @returns {boolean} true when the ask should be sent now.
+ */
+export function nudgeDue(what) {
+  const askedAgo = Number(what?.askedAgo ?? -1)
+  const sinceLast = Number(what?.sinceLast ?? Infinity)
+  const quiet = Number(what?.quiet ?? 15_000)
+  const gap = Number(what?.gap ?? 10_000)
+  if (!Number.isFinite(askedAgo) || askedAgo < quiet) return false
+  return sinceLast >= gap
+}
+
 export const name = 'dsh-inner-browser-use'
 export const inject = ['webServer']
 
@@ -286,6 +315,8 @@ export function apply(ctx) {
      owns the browser is asked again, on a slow beat, until the frames stream
      has a listener — the client keeps the rule that only the mounted chat's
      column may open. */
+  /** @type {Map<string, number>} when each chat last polled for state. */
+  const lastAsk = new Map()
   ctx.effect(() => {
     let last = 0
     const timer = setInterval(() => {
@@ -293,7 +324,9 @@ export function apply(ctx) {
         const owner = bridge.owner
         const listeners = sidecar.page?.frames?.size ?? 0
         const again = wantsMirrorAgain({ alive: sidecar.page !== null && sidecar.page !== undefined, owner, wanted: bridge.wanted.session, listeners }) // ui-copy-ignore
-        if (again !== true || Date.now() - last < 10_000) return
+        if (again !== true) return
+        const due = nudgeDue({ askedAgo: Date.now() - (lastAsk.get(owner) ?? 0), sinceLast: Date.now() - last }) // ui-copy-ignore
+        if (due !== true) return
         last = Date.now()
         bridge.want(owner)
         appendFileSync(join(STATE_DIR, 'asks.log'), `${new Date().toISOString()} asked ${owner.slice(-8)} to draw the mirror again\n`)
@@ -323,8 +356,6 @@ export function apply(ctx) {
      stopped" and "nothing is drawing it": the poll is every 2.5 s, so a chat
      that asks is a chat with a mounted pane. Kept on disk because the answer
      has to survive a plugin reload, which is when the question is asked. */
-  /** @type {Map<string, number>} */
-  const lastAsk = new Map()
   const handler = async (req, res) => {
     const url = new URL(req.url ?? ROUTE, 'http://dsh.invalid')
     const path = url.pathname.slice(ROUTE.length) || '/'
@@ -374,6 +405,8 @@ export function apply(ctx) {
       const asked = String(url.searchParams.get('session') ?? '')
       const watching = asked !== '' ? asked : sessionId
       if (held(watching) && refuse()) return
+      /* Only the owner's own page may stream the picture. */
+      const streaming = watching
       res.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache, no-transform',
@@ -393,7 +426,7 @@ export function apply(ctx) {
              page wait: the newest picture is the only one worth sending. */
           if (res.writableLength > 3 * 1024 * 1024) return
           res.write(`data: ${JSON.stringify(frame)}\n\n`)
-        }, watching)
+        }, streaming)
         const info = await sidecar.state()
         /* The pane needs one address to offer back when this chat's own page
            went away; the state route answers the same question for the tab
@@ -512,6 +545,35 @@ export function apply(ctx) {
       return
     }
 
+    if (path === '/sidecar/viewport' && req.method === 'POST') {
+      /* The pane tells the page how big it is, so the picture fills the column
+         instead of being letterboxed inside it. Only the owner may resize what
+         its own mirror shows. */
+      let body
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        json(400, { ok: false, text: 'bad frame' }) // ui-copy-ignore
+        return
+      }
+      const actor = acting(body)
+      if (actor === '') {
+        json(403, { ok: false, text: 'this chat does not own the browser' }) // ui-copy-ignore
+        return
+      }
+      try {
+        const page = sidecar.page
+        if (page === null || page === undefined) {
+          json(409, { ok: false, text: 'the browser is not open' }) // ui-copy-ignore
+          return
+        }
+        json(200, { ok: true, view: await page.setViewport(body.w, body.h) })
+      } catch (error) {
+        json(500, { ok: false, text: String(error?.message ?? error) })
+      }
+      return
+    }
+
     if (path === '/sidecar/input' && req.method === 'POST') {
       let body
       try {
@@ -546,19 +608,39 @@ export function apply(ctx) {
         else if (kind === 'key') {
           const name = String(body.key ?? '')
           const known = KEYS[name]
+          const held = Number(body.modifiers ?? 0)
+          /* A capital letter and a lower-case one are different keys: the page
+             reads `A` with shift down and a field inserts `A`. */
+          const capital = name.length === 1 && name !== name.toLowerCase()
           const spec = {
             key: name,
             code: String(body.code ?? known?.code ?? name),
             keyCode: Number(body.keyCode ?? 0) || known?.keyCode || 0,
             text: body.text === undefined ? known?.text : String(body.text),
-            modifiers: Number(body.modifiers ?? 0),
+            modifiers: capital ? held | 8 : held,
           }
-          await page.key('keyDown', spec)
-          await page.key('keyUp', { ...spec, text: undefined })
+          /* Ctrl+V / Command+V in a browser is a command, not only a key: a
+             plain key event leaves the field empty. */
+          if ((name === 'v' || name === 'V') && (held & 6) !== 0) {
+            await page.key('keyDown', { ...spec, text: undefined, commands: ['paste'] })
+            await page.key('keyUp', { ...spec, text: undefined })
+          } else {
+            await page.key('keyDown', spec)
+            await page.key('keyUp', { ...spec, text: undefined })
+          }
         }
         /* Hovering and moving are looking, not acting: only real input counts as
            the person taking the page. */
-        if (kind !== 'hover' && kind !== 'move') sidecar.humanUse({ kind, x, y })
+        if (kind !== 'hover' && kind !== 'move') {
+          sidecar.humanUse({ kind, x, y })
+          /* The arrow goes now, not on the next repaint: a still page may not
+             paint again for a second and a half. */
+          try {
+            page.announceHold()
+          } catch {
+            /* the stream is gone; the next frame carries the same answer */
+          }
+        }
         json(200, cursor === undefined ? { ok: true } : { ok: true, cursor })
       } catch (error) {
         json(500, { ok: false, text: String(error?.message ?? error) })
@@ -717,11 +799,12 @@ export function apply(ctx) {
       name: 'browser-in-this-chat',
       order: 858,
       text: [
-        '## 网页任务：用 sidecar 浏览器做，不问直接开始',
+        '## 网页任务：用右栏的后台浏览器做，不问直接开始',
+        '说的是右栏那个「后台浏览器」，不是宿主自带的「浏览器」页签：页面跑在独立的后台 Chrome 里，模型能点、能读、能执行脚本。',
         '',
-        '人说「用网页端 / 在浏览器里 / 打开某个网站 / 帮我上 ChatGPT 生成 …」时，直接用 `sidecar_*` 工具；不要问要不要打开，也不要另起一个外部 Chrome。它的画面会出现在本会话右栏，做完保留，不主动关。',
-        '先接着用已有的页：`sidecar_view`（拿编号控件与可见文字）→ `sidecar_click` / `sidecar_type` → 再 `sidecar_view` 直到出现要的结果；页面要等就重复读，不 sleep。`sidecar_open` 只用于没有页、要换新地址、或要明确刷新；同一个地址不要反复重开。',
-        '要保存页面样子用 `sidecar_shot`，它会给出 PNG 绝对路径；要交给人看的文件，把绝对路径写进回复。',
+        '人说「用网页端 / 在浏览器里 / 打开某个网站 / 帮我上 ChatGPT 生成 …」时，直接用 `browser_*` 工具；不要问要不要打开，也不要另起一个外部 Chrome。它的画面会出现在本会话右栏，做完保留，不主动关。',
+        '先接着用已有的页：`browser_view`（拿编号控件与可见文字）→ `browser_click` / `browser_type` → 再 `browser_view` 直到出现要的结果；页面要等就重复读，不 sleep。`browser_open` 只用于没有页、要换新地址、或要明确刷新；同一个地址不要反复重开。',
+        '要保存页面样子用 `browser_shot`，它会给出 PNG 绝对路径；要交给人看的文件，把绝对路径写进回复。',
       ].join('\n'),
     }), 'dsh-inner-browser-use: system prompt section')
   }

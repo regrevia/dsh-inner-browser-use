@@ -1,13 +1,153 @@
+## Flash 镜像按栏改窗口（0.34.48，Electron Flash 运行时，右栏 747×1196）
+
+Flash 路径原来采集一个固定的 1440×900 窗口，竖高右栏里上下留黑边。现在 `setViewport` 直接改窗口大小，采集源与栏同比例。
+
+| 状态 | 窗口 | 画面占栏 | 单帧 |
+|---|---|---|---|
+| 0.34.47 | 1440×900 | 约 39% | 126 KB |
+| 0.34.48 | 747×1196 | 100% | 111 KB |
+
+轮询帧率 9 fps 不变（Flash 桥上限），改的是画面比例与单帧体积。
+
+## 动画页下行节流（0.34.47，真实 Chrome headless，720×880，canvas 60 fps 动画）
+
+| 状态 | 帧率 | 单帧 | 下行带宽 |
+| --- | --- | --- | --- |
+| 0.34.46 全推 | 60 fps | 11 KB | 654 KB/s |
+| 0.34.47 空闲节流 | 30 fps | 11 KB | 326 KB/s |
+| 0.34.47 指针活动（1.5 s 内） | 58 fps | 11 KB | 631 KB/s |
+
+节流只作用于下行：`latest`、`seq`、`still()` 与输入路径不变；`browser_shot` 仍走独立整帧截图。
+
+## 坏页读取成本（0.34.46，构造页：`querySelectorAll` 抛错被读 150 字符）
+
+| 读取结果 | 字符 | 约 token |
+| --- | --- | --- |
+| 0.34.46 一行故障说明 | 150 | 45 |
+| 0.34.45 同一页读成 0 控件 0 字 | 20 | 6（但模型会重试或猜内容，整轮更贵） |
+
+## 点击与多步延迟（0.34.45，headless Chrome，本地页）
+
+| 场景 | 0.34.45 | 0.34.44 |
+| --- | --- | --- |
+| `browser_do` 单步 | 73 / 83 ms | 98 / 112 ms |
+| 遮挡点击（自动清掉横幅） | 72 / 77 ms | 97 / 112 ms |
+| `browser_do` 20 步 | 2035 ms（102 ms/步） | 2151 ms |
+| 崩溃恢复（换新标签页） | 1390 ms | ~1.5 s |
+
+做法：`Page.frameStartedLoading` / `frameStoppedLoading` 打时间戳，点击后若页面已 `complete` 且没有新加载开始，`settle()` 一次求值就返回；预算不变（点击 ≤ 220、遮挡点击 ≤ 240、单步 ≤ 240、每步 ≤ 280、崩溃恢复 ≤ 2600 ms）。
+
+## 真实站点读页成本（0.34.44，headless Chrome，720×880 栏宽，`scripts/readcost.mjs`）
+
+| 页面 | 读法 | 字符 | 估算 token | 控件 |
+| --- | --- | --- | --- | --- |
+| GitHub 仓库首页（rust-lang/rust） | text | 2562 | 754 | 90 |
+| 同上 | links | 3763 | 1107 | 90 |
+| GitHub Topics · computer-use | links | 2590 | 762 | 90 |
+| 同上 | text | 1939 | 570 | 90 |
+| GitHub 登录表单 | forms | 218 | 64 | 4 |
+| 同上 | text | 533 | 157 | 13 |
+
+- 读页本身 1–21 ms；`max_chars` 只对长页生效（links 4600→2200：3763→2800 字符，1107→824 token），短页两种预算结果一致。
+- 空读取重试：内容在 700 ms 后才写入的页面，一次 `browser_view` 用 614 ms 拿到内容（此前直接读到空页）。正常页面不进入该分支，延迟与 token 不变。
+
+## 故障归因的 token 成本（0.34.43）
+
+| 场景 | 读取结果多出的内容 | 代价 |
+| --- | --- | --- |
+| 页面正常 | 0 字符 | 0 |
+| 1 个 404 请求 + 1 个脚本错误 | 1 行，约 130 字符 | ≈33 token，替代 2 次排查调用（通常 ≥600 字符） |
+| 同一页面再读 | 0 字符（已报过） | 0 |
+
+## 点击与多步延迟（0.34.42，headless Chrome，本地页）
+
+`node scripts/bench.mjs` 复现；末行 `budget` 是纳入退出码的预算断言。
+
+| 场景 | 0.34.42 | 0.34.40 |
+| --- | --- | --- |
+| `browser_click` 普通页 | 97 ms | 439 ms |
+| `browser_click` 横幅遮挡、自动清掉 | 107 ms | 593 ms |
+| 被弹窗拦住的点击（拒绝） | 2 ms | — |
+| `browser_do` 单步 | 95 ms | 440 ms |
+| `browser_do` 20 步 | 2151 ms（108 ms/步） | 9067 ms |
+| 崩溃恢复（换新标签页） | ~1.5 s | — |
+
+预算：点击 ≤ 220 ms、遮挡点击 ≤ 240 ms、单步 ≤ 240 ms、20 步每步 ≤ 280 ms、崩溃恢复 ≤ 2600 ms。
+
+## 点击与多步延迟（0.34.41，headless Chrome，本地页）
+
+| 场景 | 耗时 |
+| --- | --- |
+| `browser_click` 普通页 | 141 ms |
+| `browser_click` 横幅遮挡、自动清掉 | 235 ms |
+| 被弹窗拦住的点击（拒绝） | 2 ms |
+| `browser_do` 单步 | 131 ms |
+| `browser_do` 20 步 | 3073 ms（154 ms/步） |
+| 跟随点击开出的弹窗 | 22 ms |
+
+`node scripts/bench.mjs` 复现；对照 0.34.40 的 439 / 593 / 440 / 9067 ms。
+
+## 广度回归（0.34.40，headless Chrome，本地构造页）
+
+`node scripts/breadth.mjs` — 66 项操作全通过：shadow DOM 读/点、表单输入/退格/清空、按字段名输入、下拉、勾选、提交、只读变化、画布编号与点选、截图尺寸、遮挡弹窗拒绝、失效 ref 跟随、断线恢复。
+
+## 真实站点读页成本（0.34.39，headless Chrome，720×880 栏宽）
+
+| 页面 | 字符 | 估算 token | 控件 |
+| --- | --- | --- | --- |
+| example.com | 976 | 305 | 1 |
+| GitHub Topics · computer-use | 约 1.5k | 约 470 | 90 |
+
+读页脚本此前因正则转义缺失整段无法解析，同一测例读出 0 控件 0 字符；修好后为上面数字。
+
+## 读页 token 成本（0.34.38，构造页：300 行链接，字符预算 24000 以排除截断）
+
+| 读法 | 字符 | 估算 token |
+| --- | --- | --- |
+| 列出全部控件（旧） | 9153 | 2860 |
+| 控件折叠到 140 行（新） | 4277 | 1337 |
+
+正文不再被编号挤到预算之外；被折叠的控件滚动后重新出现。
+
+## 长文本输入延迟（0.34.37，真实 Chrome headless）
+
+| 目标 | 方式 | 314 字符耗时 | 文本一致 |
+| --- | --- | --- | --- |
+| `<textarea>` | 逐键 `dispatchKeyEvent` | 1686 ms | 是 |
+| `<textarea>` | 一次 `Input.insertText` | 2 ms | 是 |
+| `contenteditable` | 一次 `Input.insertText` | 13 ms | 是 |
+
+## 右栏尺寸下的镜像带宽（0.34.36，真实 Chrome headless，720×880）
+
+| 页面 | 3–4 s 内帧数 | 帧率 | 平均单帧 | 带宽 |
+| --- | --- | --- | --- | --- |
+| 静态真实站点（example.com） | 3 | <1 fps | 47 KB | 47 KB/s |
+| 注入 `requestAnimationFrame` 动画 | 181 / 3 s | ~60 fps | 15 KB | 875 KB/s |
+
+结论：静止页面几乎不花带宽（Chrome 的 screencast 只在合成器变化时发帧）；满帧动画按列宽排版后单帧只有 15 KB，60 fps 总计约 875 KB/s，走本机 SSE 无压力，不设帧率上限以免牺牲延迟。「同一张图不重复发」这道闸真正省掉的是 Flash 轮询分支与 `still()` 连发（单测：3 次连发 → 1 张）。
+
+## 镜像按右栏尺寸排版（0.34.35，真实 Chrome，`--headless=new`）
+
+页面不再按 1440×900 排版，而是按右栏实测的尺寸排版；下表的 `inner` 是页面自己报告的 `innerWidth×innerHeight`，证明不是缩放图片而是重新排版。
+
+| 请求尺寸 | 页面 inner | `Emulation.setDeviceMetricsOverride` + 重开 screencast | 一张整帧 `captureScreenshot` | 整帧 JPEG（纯色测试页） |
+| --- | --- | --- | --- | --- |
+| 720×880 | 720×880 | 41 ms | 39 ms | 11.7 KB |
+| 520×1000 | 520×1000 | 34 ms | 33 ms | 11.3 KB |
+| 1440×900 | 1440×900 | 49 ms | 47 ms | 17.4 KB |
+
+冷启动到可排版 827 ms。点击链路在同一尺寸下实测：两次 `Input.dispatchMouseEvent`（按下+抬起）13 ms，页面 `mousedown` 处理器已计数，订阅后下一帧 8 ms 内到达。
+
 ## Phase 46 — 开玩前的体检，0.34.30
 
-`npm run ready [url]` 跑新工具 `sidecar_prepare`，整条链路一次调用，自带 Chrome、跑完关掉：
+`npm run ready [url]` 跑新工具 `browser_prepare`，整条链路一次调用，自带 Chrome、跑完关掉：
 
 | 页面 | 调用耗时 | 找到的输入面 | 帧率 | 按键 |
 | --- | --- | --- | --- | --- |
 | 4399《怪物小汽车》 | 3297 ms | frame 748×336（在屏幕外，先滚进来再点） | 页面 58 fps / 框架 59 fps | 没进到框架，工具直说「先点进框架一次」 |
 | 奥拉星 `http://aoqi.100bt.com/` | 573 ms | — | — | —，地址已连不上，返回 Chrome 错误页说明 |
 
-`sidecar_prepare` 的判断顺序：连不上就直说 → 读页面 → 挑画布/框架（优先屏幕内的，否则滚进视野）→ 有 Flash 影片就说这个浏览器放不了 → 数帧率（页面与最大的框架各数一遍）→ 派一个真键看它是否真的到达框架 → 一行结论。
+`browser_prepare` 的判断顺序：连不上就直说 → 读页面 → 挑画布/框架（优先屏幕内的，否则滚进视野）→ 有 Flash 影片就说这个浏览器放不了 → 数帧率（页面与最大的框架各数一遍）→ 派一个真键看它是否真的到达框架 → 一行结论。
 
 ## Phase 45 — 两种操作方式的实际差别，0.34.29
 
@@ -26,7 +166,7 @@
 
 `node scripts/check-game.mjs <url>`，真 Chrome、自己的 profile、跑完自己关掉。两个真站：
 
-| 站点 | 空闲时页面刷新 | 全屏截图（`sidecar_shot` 同类）| 按住 `d` 200 ms 到达页面 |
+| 站点 | 空闲时页面刷新 | 全屏截图（`browser_shot` 同类）| 按住 `d` 200 ms 到达页面 |
 | --- | --- | --- | --- |
 | 奥拉星 `http://aoqi.100bt.com/` | **27 fps** | 中位数 **68 ms** | 是 |
 | 4399 `https://www.4399.com/` | **59.8 fps** | 中位数 **148 ms** | 是 |
@@ -41,10 +181,10 @@
 
 | 项 | 数字 |
 | --- | --- |
-| `sidecar_key` 带 `hold_ms: 300` 整次调用 | **305 ms**（含 300 ms 按住，收尾 5 ms） |
+| `browser_key` 带 `hold_ms: 300` 整次调用 | **305 ms**（含 300 ms 按住，收尾 5 ms） |
 | 页面测到的按住时长 | **301 ms** |
 | `ArrowLeft+ArrowUp` | 两键都收到 `keydown`，都收到 `keyup`，顺序为倒序松开 |
-| `sidecar_click` 带 `hold_ms: 200` 页面测到 | **211 ms** |
+| `browser_click` 带 `hold_ms: 200` 页面测到 | **211 ms** |
 
 对照 0.34.25 之前：同样的按住被 `settle` 拖到 727 ms，等于 0.7 s 才走一步——页游里这就是掉帧。
 
@@ -74,14 +214,14 @@
 | 镜像延迟 | 中位 8 ms / 最大 8 ms |
 | 遮挡检测 | 中位 3 ms / 最大 15 ms |
 | 点一下（普通页 / 有遮罩，含读回） | 439 / 590 ms，遮罩那次 `cleared: true` |
-| 一步 `sidecar_do` | 440 / 590 ms |
+| 一步 `browser_do` | 440 / 590 ms |
 | 截图 | 73 ms / 115 KB |
 | 读 dense 页 text 档 | 6 ms / 1484 字 / ≈436 token |
 | 读 dense 页 forms 档 | 1 ms / 432 字 / ≈127 token |
 | 再读同一页 | 1–2 ms，给出「没有变化」一行 |
 | `changed_only` | 58 字 / ≈17 token（整页 1505 字） |
 
-这轮 bench 的作用不是数字，而是**它第一次跑到 `sidecar_view` 就报 `ReferenceError` 退出**：那个工具在真实会话里同样会失败，而单测只测了它的纯函数部分。修完之后 bench 一次性跑完，数字在上面。
+这轮 bench 的作用不是数字，而是**它第一次跑到 `browser_view` 就报 `ReferenceError` 退出**：那个工具在真实会话里同样会失败，而单测只测了它的纯函数部分。修完之后 bench 一次性跑完，数字在上面。
 
 ## Phase 40 — the poll that names its chat, 0.34.19
 
@@ -130,9 +270,9 @@ video, a cross-origin frame — nothing in the text said "there is something her
 you cannot read". A model then planned as if the page were fully described.
 
 - `readPage` counts the unreadable visible things on the page and in frames, and `renderPage` prints exactly one line when the count is non-zero; zero adds no line (measured token cost of the feature is 0 on pages that have nothing to hide).
-- `chrome-error://` is no longer rendered as an empty page: it says the page did not load and names `sidecar_nav`.
+- `chrome-error://` is no longer rendered as an empty page: it says the page did not load and names `browser_nav`.
 - `navigate` retries that error page once (300 ms + 8 s cap). Cold launch on a fresh profile: first navigation recovered on the retry; an unreachable host still returns `bad` in well under the cap.
-- `sidecar_shot` without an image channel appends what the result is missing and which tool fills it; file path alone is no longer the whole answer.
+- `browser_shot` without an image channel appends what the result is missing and which tool fills it; file path alone is no longer the whole answer.
 - Suite: 101 tests, 0 failures.
 
 ## Phase 36 — a reload must not cost the browser, 0.34.14
@@ -145,7 +285,7 @@ you cannot read". A model then planned as if the page were fully described.
 ## Phase 35 — a review round that can be checked off, 0.34.13## Phase 35 — a review round that can be checked off, 0.34.13
 
 - `markRound()` 追加 verdict 行，`lastRound()` 折回 `marks`；`brief({already})` 只保留 open 条目，实测提问里出现「Already handled from your previous review」，已处理点不再重复。
-- 工具面新增 `sidecar_review_verdict`（`mark: [{point,status,evidence}]`，状态枚举 fixed/verified/invalid/open）；越界编号丢弃、未知状态记为 open。
+- 工具面新增 `browser_review_verdict`（`mark: [{point,status,evidence}]`，状态枚举 fixed/verified/invalid/open）；越界编号丢弃、未知状态记为 open。
 - 测试 92 → 96 条全绿。
 
 ## Phase 34 — one gate in front of every write, 0.34.12## Phase 34 — one gate in front of every write, 0.34.12
@@ -241,7 +381,7 @@ in one place.
 
 ## Phase 26 — a screenshot the model can see, 0.34.3
 
-Observation was structured text only: `sidecar_shot` wrote a PNG and returned
+Observation was structured text only: `browser_shot` wrote a PNG and returned
 a path, which is a file name the model cannot look at. Codex and Claude Code
 both hand screenshots back as image content, and that is the difference
 between planning from the picture and guessing.
@@ -357,7 +497,7 @@ answer), and a read now also asks for the frame tree.
 | key round trip | 13 ms | 2 ms |
 | screenshot | 82 ms, 133 KB | 77 ms, 113 KB |
 
-`sidecar_extract` on a 30-row list: 1106 chars for all 30 rows (≈330 tokens),
+`browser_extract` on a 30-row list: 1106 chars for all 30 rows (≈330 tokens),
 against 1291 chars for the same page read as text — and at a 500-char read
 budget the text read stops around row 12 while the list still returns 30.
 
@@ -407,10 +547,10 @@ frame's corner is one `DOM.getFrameOwner` plus one call on the owner element.
 | What | Number |
 | --- | --- |
 | the "what is on top of this control" probe | **1 ms median, 2 ms max** (5 samples) — the same `Runtime.evaluate` hop, no round trip added |
-| `sidecar_click` on an uncovered control | 460 ms median (3 runs, page-load settle included) |
-| `sidecar_click` on the same control under a cookie banner | 630 ms median (3 runs) — the banner's own Accept click, a 150 ms beat, a re-probe, then the intended click |
+| `browser_click` on an uncovered control | 460 ms median (3 runs, page-load settle included) |
+| `browser_click` on the same control under a cookie banner | 630 ms median (3 runs) — the banner's own Accept click, a 150 ms beat, a re-probe, then the intended click |
 | the same under a modal that offers to delete the account | 456 ms — reported, nothing pressed |
-| one `sidecar_do` step on an uncovered control | 458 ms median (3 runs) |
+| one `browser_do` step on an uncovered control | 458 ms median (3 runs) |
 | the same step under the cookie banner | 633 ms median (3 runs) — cleared, then the step ran |
 
 A batch pays it once per step that has something over it, not once per call: a
@@ -435,10 +575,10 @@ is now done inside the call, by looking the control up by what it is.
 
 | What | Number |
 | --- | --- |
-| `sidecar_click` on a control the page just redrew | **462 ms median, 483 ms max** (8 samples) — one extra read of the page's visible text, 600 chars, to find the control again |
-| `sidecar_click` on a control that was not redrawn | 445 ms median, 446 ms max (8 runs) — the probe costs nothing when the number is still good |
+| `browser_click` on a control the page just redrew | **462 ms median, 483 ms max** (8 samples) — one extra read of the page's visible text, 600 chars, to find the control again |
+| `browser_click` on a control that was not redrawn | 445 ms median, 446 ms max (8 runs) — the probe costs nothing when the number is still good |
 | stale refs recovered this way | **8/8** |
-| a control that really left the page | still refused, `Call sidecar_view and use the new number` — 2/2 in the breadth suite |
+| a control that really left the page | still refused, `Call browser_view and use the new number` — 2/2 in the breadth suite |
 
 So the recovery costs about **17 ms** when it is needed and nothing when it is
 not, against a model round trip of two calls plus the tokens of a fresh read.
@@ -466,7 +606,7 @@ change mid-session. Changing it restarts the browser, so it costs a cold start:
 | windowed → windowless, same profile and page | 22.1 s | one process, cold start |
 | asking for the shape it already has | 0 ms | nothing is restarted |
 
-Measured through the tool layer (`sidecar_open` → `sidecar_state` → `ps` spawn
+Measured through the tool layer (`browser_open` → `browser_state` → `ps` spawn
 args), profile `probe-tool`, 1 run each; the same-shape row is the third call in
 the same run. A browser start on this machine is 20–22 s either way, so the
 switch is not what costs — the process is.
@@ -482,9 +622,9 @@ bounded wait is the difference between a silent `viewers 0` and a sentence:
 
 | what | cost |
 | --- | --- |
-| `sidecar_open` with a tab watching | 0 ms |
-| `sidecar_open` with nothing watching | ≤ 1.2 s, and the line says so |
-| `sidecar_open` when the chat has no column to draw into | 0 ms (no wait) |
+| `browser_open` with a tab watching | 0 ms |
+| `browser_open` with nothing watching | ≤ 1.2 s, and the line says so |
+| `browser_open` when the chat has no column to draw into | 0 ms (no wait) |
 | building the sentence on a normal state read | 0 ms, one comparison |
 
 Measured with `/tmp/probe-unseen.mjs` (tool layer, example.com, profile
@@ -514,7 +654,7 @@ reverse-contains (1).
 
 | what the caller has | what it used to take | now |
 | --- | --- | --- |
-| a name for the field, no number | read the page, find the number, then type | one `sidecar_type` with `field`, one round trip |
+| a name for the field, no number | read the page, find the number, then type | one `browser_type` with `field`, one round trip |
 | the field's words live in a div | click landed on the div, text went wherever focus was | resolved to the field, `typed into "Work email"` |
 | a banner over the field | typed under the banner | banner cleared first, then typed |
 
@@ -524,7 +664,7 @@ Breadth check `type-by-words` on the `/bare` form: value lands in
 ## Phase 11 — choosing a dropdown by name, 0.21.0
 
 `/bare` now carries a `select[name=seats]` whose only name on screen is a div
-saying `Seats`. One `sidecar_select` with `field: "Seats"`, `value: "Two"`:
+saying `Seats`. One `browser_select` with `field: "Seats"`, `value: "Two"`:
 
 | what | result |
 | --- | --- |
@@ -558,7 +698,7 @@ Exact equality still wins over the squeezed form, so `Sign in` never lands on
 | what | before | now |
 | --- | --- | --- |
 | `{field: "Birthday"}` | not found, fell back to clicking the div | found the hidden input, clicked its visible box |
-| value after one `sidecar_do` step | whatever already had focus | `2001-02-03` in `#bd`, `typed into "Birthday"` |
+| value after one `browser_do` step | whatever already had focus | `2001-02-03` in `#bd`, `typed into "Birthday"` |
 | extra round trips | read the page, guess a number | none |
 
 The visible-box rule: a candidate is usable when it, or its nearest visible
@@ -571,7 +711,7 @@ something the person can see.
 
 | what | result |
 | --- | --- |
-| `sidecar_grab` | 6 ms, `picture-check.png`, 140x90 |
+| `browser_grab` | 6 ms, `picture-check.png`, 140x90 |
 | before | three round trips: list the images, ask for the full address, fetch it |
 
 A picture page has no text at all, so a read of it costs one line and no tokens;
@@ -581,7 +721,7 @@ the picture comes back as a file path the person can open.
 
 Two 140x90 PNGs: one a gradient, one a single colour.
 
-| page | what `sidecar_grab` answers | time |
+| page | what `browser_grab` answers | time |
 | --- | --- | --- |
 | `/pic` | `... 140x90 a picture with detail` | 21 ms (first, page cold) |
 | `/flat` | `... 140x90 mostly one colour` | 4 ms |
@@ -593,7 +733,7 @@ travels in the same line as the path.
 
 | page | read line | extra round trips |
 | --- | --- | --- |
-| `/pic` (gradient, no words) | `picture 140x90 a picture with detail "Chart" — sidecar_grab saves it as a file` | 0 |
+| `/pic` (gradient, no words) | `picture 140x90 a picture with detail "Chart" — browser_grab saves it as a file` | 0 |
 | `/flat` (single colour) | `picture 140x90 mostly one colour "Chart" — …` | 0 |
 | `/words` (text page) | no picture line | 0 |
 
@@ -621,20 +761,20 @@ A changed scroll offset is still reported, so "nothing changed" is never a lie.
 
 ## Phase 20 — one call carries the question and the answer, 0.30.0
 
-| step | before | `sidecar_ask` |
+| step | before | `browser_ask` |
 | --- | --- | --- |
-| type the message | `sidecar_type` + `submit` | same, inside the call |
-| read the page | `sidecar_view` | — |
-| read it again until the answer stops growing | 2–6 more `sidecar_view` calls | — |
+| type the message | `browser_type` + `submit` | same, inside the call |
+| read the page | `browser_view` | — |
+| read it again until the answer stops growing | 2–6 more `browser_view` calls | — |
 | **turns for a chat reply** | 3–7 | **1** |
-| measured `sidecar_ask` on `/chat` (answer over 2 arrivals, 700 ms tail) | — | 2.5 s, one turn |
+| measured `browser_ask` on `/chat` (answer over 2 arrivals, 700 ms tail) | — | 2.5 s, one turn |
 
 ## Phase 21 — a review round that closes the loop, 0.31.0
 
-| step | before | `sidecar_review` |
+| step | before | `browser_review` |
 | --- | --- | --- |
 | write the request (repo, commit, focus) | by hand, every round | built from three fields |
-| send it, wait for the answer | `sidecar_ask` | same call |
+| send it, wait for the answer | `browser_ask` | same call |
 | turn the answer into a list | read it, retype it | parsed, numbering kept |
 | know what the last round was about | — | round log, with the commit and the time |
 | **turns for a review round** | 3–7 + bookkeeping | **1** |
@@ -710,7 +850,7 @@ session), three were real.
 | --- | --- | --- |
 | popup lookup | any non-main tab, then navigated or closed | only a target that is neither this page nor another chat's (`isForeign`) |
 | focused password in a result line | echoed the `.value` (`DUMMY_SECRET_123`) | name only, value always empty |
-| `sidecar_do` on a step that did not land | kept going, typed into the wrong page | stops at that step, says to re-plan |
+| `browser_do` on a step that did not land | kept going, typed into the wrong page | stops at that step, says to re-plan |
 | overlay that would not clear | clicked the control under it anyway | refuses the click/typing, names the overlay |
 | `changed_only` twice | repeated the same change | diff becomes the new baseline |
 | `/sidecar/state` | top-level `url` could be another chat's tab | `?session=` adds `chat.url/title/viewers` (live: doubao page, viewers 1) |
@@ -741,3 +881,14 @@ not.
 | human typing, >160 chars | 8-char bursts, 16–58 ms gaps, ≈6 ms per char |
 | headless UA | desktop Chrome UA, no `HeadlessChrome` |
 | suite | 70 pass, breadth 66, ui-copy clean |
+
+## Flash 分支（Electron 11.3.0 / Chromium 87，1440×900，Apple 芯片 + Rosetta）
+
+| what | measured |
+| --- | --- |
+| cold start to a driven page | 1389 ms（热启 545–927 ms） |
+| first painted frame | 8–10 s（SWF 自己的加载；之前是 11 KB 白帧） |
+| one frame via capturePage | 16 ms |
+| frame size, JPEG q72 | 96–103 KB |
+| mirror SSE | 15 fps（66 ms 一轮），4 s 收 60 帧，均值 97.8 KB |
+| switch cost | 一次浏览器重启（`browser_open({flash:true})` → `browser_open({flash:false})`） |

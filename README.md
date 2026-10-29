@@ -10,17 +10,17 @@ live picture of that browser, and your own cursor keeps working on the picture.
 
 | Tool | What it does |
 | --- | --- |
-| `sidecar_open` | Starts the browser (or reuses the running one) and opens an address. `headless: false` shows a real window on the desktop instead. |
-| `sidecar_view` | Returns the address, the title, every control as `1 … 120`, and the visible text. |
-| `sidecar_extract` | Returns the items a CSS selector matches, one compact line each with its link, instead of the whole page. |
-| `sidecar_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. A cookie banner or modal over the control is cleared first, then the click happens. |
-| `sidecar_type` | Types text into the focused field, or clicks a numbered control first. Chinese goes in as one string. `submit: true` presses Enter. |
-| `sidecar_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down, Home, End, PageUp, PageDown. |
-| `sidecar_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
-| `sidecar_shot` | Saves a full-size PNG into `~/.dsh-inner-browser-use/screenshots` and returns the path. |
-| `sidecar_state` | Reports whether the browser runs, which profile it uses, its address and title, and how many columns are showing it. |
+| `browser_open` | Starts the browser (or reuses the running one) and opens an address. `headless: false` shows a real window on the desktop instead. |
+| `browser_view` | Returns the address, the title, every control as `1 … 120`, and the visible text. |
+| `browser_extract` | Returns the items a CSS selector matches, one compact line each with its link, instead of the whole page. |
+| `browser_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. A cookie banner or modal over the control is cleared first, then the click happens. |
+| `browser_type` | Types text into the focused field, or clicks a numbered control first. Chinese goes in as one string. `submit: true` presses Enter. |
+| `browser_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down, Home, End, PageUp, PageDown. |
+| `browser_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
+| `browser_shot` | Saves a full-size PNG into `~/.dsh-inner-browser-use/screenshots` and returns the path. |
+| `browser_state` | Reports whether the browser runs, which profile it uses, its address and title, and how many columns are showing it. |
 
-`sidecar_view` answers with one page of text:
+`browser_view` answers with one page of text:
 
 ```
 https://example.com
@@ -34,8 +34,9 @@ Numbers stay valid until the next read. Anything that changes the page returns a
 
 ## The column
 
-The pane is a picture of the browser, sent as JPEG over the session's own stream: 1440×900,
-quality 72, every frame, about 82 KB and 25 per second on a page at rest.
+The pane is a picture of the browser, sent as JPEG over the session's own stream: quality 72,
+every frame, about 82 KB and 25 per second on a page at rest. The page is laid out at the size
+of the column, so the picture fills the frame instead of sitting letterboxed inside it.
 
 Two pointers live on that picture:
 
@@ -116,18 +117,19 @@ opens before a call: a chat that never asked for a page keeps its column as it w
   the page's own, whether Chrome shares the page's process or runs the frame apart; a click in
   either lands where the frame actually sits.
 - **A download lands on disk.** A click that saves a file writes it into the browser's own
-  profile folder, and `sidecar_downloads` names it, its size and when it arrived.
-- **The network is visible.** `sidecar_network` lists what the page asked for, newest first,
+  profile folder, and `browser_downloads` names it, its size and when it arrived.
+- **The network is visible.** `browser_network` lists what the page asked for, newest first,
   so a page that fills itself in from an address can be understood without a screenshot.
 - **An overlay does not eat the action.** A cookie banner over the button is cleared the way a
   person would clear it, then the click lands — in the same call, and in every step of a
-  `sidecar_do` batch. Anything offering to delete, pay or sign out is reported instead.
+  `browser_do` batch. Anything offering to delete, pay or sign out is reported instead.
 
 ## What it does not do
 
 - **It does not touch your Chrome.** The browser runs from a separate profile with no
   connection to the window you are using.
-- **The viewport is fixed.** 1440×900, desktop layout, no resizing and no mobile emulation.
+- **The layout viewport is the column, nothing more.** Desktop layout, no mobile emulation, no
+touch emulation; a very narrow column is laid out narrow rather than zoomed out.
 - **One page at a time.** A link that opens a tab is followed — the mirror lands on the new
   page and the popup closes — so there is never a second page to choose between.
 

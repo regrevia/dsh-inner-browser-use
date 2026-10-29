@@ -5,7 +5,7 @@
  * Two costs decide whether this is usable: the tokens a read spends, and the
  * round trips a task spends. The tool surface here is shaped around both — a
  * read can be narrowed (`mode`, `max_chars`) and diffed (`changed_only`), and
- * `sidecar_do` runs a run of steps in one call with waits that know when a page
+ * `browser_do` runs a run of steps in one call with waits that know when a page
  * has settled.
  */
 
@@ -140,7 +140,7 @@ export async function pruneArtifacts(dir, keep) {
 const follows = { count: 0 }
 
 /** Shown when the sidecar has never been started in this run. */
-export const SIDECAR_OFF = 'The sidecar browser is not running. Call sidecar_open with the address first.'
+export const SIDECAR_OFF = 'The sidecar browser is not running. Call browser_open with the address first.'
 
 /** Output schema every tool returns. */
 /** The picture half of a screenshot result: shown only when the route can see it. */
@@ -212,6 +212,23 @@ async function brief(page) {
   if (dialog !== null && dialog !== undefined) {
     return `${String(page.url ?? '')} · dialog ${String(dialog.type ?? '')}: ${String(dialog.message ?? '')}`
   }
+  /* On a Flash page the DOM around the plugin says nothing about what is on
+     screen, and reading it right after a click waits for the main thread the
+     plugin is holding. The bridge answers with the address and title instead. */
+  if (page.flashBridge !== null && page.flashBridge !== undefined) {
+    try {
+      const reply = await fetch(`http://127.0.0.1:${page.flashBridge}/info`, { signal: AbortSignal.timeout(600) })
+      if (reply.ok === true) {
+        const info = await reply.json()
+        const bits = [String(info?.url ?? page.url ?? '')]
+        if (String(info?.title ?? '') !== '') bits.push(String(info.title))
+        return bits.join(' · ')
+      }
+    } catch {
+      /* the cached address below is still a true answer */
+    }
+    return String(page.url ?? '')
+  }
   const info = await evaluate(page, BRIEF_JS)
   const bits = [String(info?.url ?? '')]
   if (String(info?.title ?? '') !== '') bits.push(String(info.title))
@@ -227,9 +244,51 @@ async function brief(page) {
  * @param {string} label - what was done.
  * @returns {Promise<string>} reply text.
  */
+/** The address each page last reported to the model, so it is said once. */
+const saidUrls = new WeakMap()
+
+/**
+ * The address is worth one line the first time and every time it changes; the
+ * same address on every step is a cost with nothing to teach — the model read
+ * it a step ago and still has it. Titles and focus still come through.
+ * @param {any} page - sidecar page.
+ * @param {string} briefText - address, title and focus as `brief` built them.
+ * @returns {string} the line to send.
+ */
+export function oncePerPage(page, briefText) {
+  const parts = String(briefText).split(' · ')
+  const url = String(parts[0] ?? '')
+  const known = page === null || page === undefined ? undefined : saidUrls.get(page)
+  if (url !== '' && known !== undefined) {
+    saidUrls.set(page, url)
+    if (url === known && parts.length > 1) return parts.slice(1).join(' · ')
+    return briefText
+  }
+  if (url !== '' && page !== null && page !== undefined) saidUrls.set(page, url)
+  return briefText
+}
+
+/**
+ * A read that starts with an address the model was already given opens with the
+ * page itself. The address is how a page says which page it is, not something
+ * to repeat every read; a page that moved says the new address in full.
+ * @param {any} page - sidecar page.
+ * @param {string} url - the address this read is from.
+ * @param {string} text - the rendered read.
+ * @returns {string} the read, without a leading address already said.
+ */
+export function withoutSeenAddress(page, url, text) {
+  const body = String(text ?? '')
+  const address = String(url ?? '')
+  if (address === '' || page === null || page === undefined) return body
+  const first = body.split('\n')[0]
+  if (first !== address || saidUrls.get(page) !== address) return body
+  return body.slice(first.length + 1)
+}
+
 async function acted(page, args, look, label) {
   if (args?.read === true) return await look()
-  return `ok ${label} · ${await brief(page)}`
+  return `ok ${label} · ${oncePerPage(page, await brief(page))}`
 }
 
 /**
@@ -250,7 +309,7 @@ async function acted(page, args, look, label) {
 /** Titles a site shows while it asks the browser to prove a person is there. */
 const CHECK_TITLES = ['请稍候', 'just a moment', 'checking your browser', 'verifying you are human', 'attention required']
 
-const CHECK_NOTE = 'That is the site asking a browser to prove a person is there, and a windowless one never gets past it. sidecar_open with headless false opens a window on the same profile, with the same logins.'
+const CHECK_NOTE = 'That is the site asking a browser to prove a person is there, and a windowless one never gets past it. browser_open with headless false opens a window on the same profile, with the same logins.'
 
 /**
  * A check page: the site has not refused, it is asking for proof. Reading it
@@ -312,18 +371,25 @@ export async function unreachable(page) {
   if (!isErrorPage(page)) return ''
   /* The code is the part a model can act on: ERR_NAME_NOT_RESOLVED is a typo,
      ERR_PROXY_CONNECTION_FAILED is this machine's proxy, ERR_TIMED_OUT is slow. */
-  let detail = String(page.title ?? '')
+  let detail = ''
   try {
     const said = await evaluate(page, `(() => {
       const text = String(document.body ? document.body.innerText : '')
       const code = (String(text).match(/ERR_[A-Z0-9_]+/) || [''])[0]
-      return code === '' ? String(document.title || '') : code
+      return code
     })()`)
-    if (typeof said === 'string' && said.trim() !== '') detail = said.trim()
+    if (typeof said === 'string') detail = said.trim()
   } catch {
     /* The error page itself refused to be read; the address still says enough. */
   }
-  return `the network could not reach that address — the browser stopped on its own error page (${detail === '' ? 'no details' : detail}), which is not the site. Nothing on it is page content. Use sidecar_nav with another address, or fix the connection this machine needs.`
+  /* Chrome often writes the address it could not reach where the code would
+     be: that is still the one thing the person can check. */
+  if (detail === '') {
+    const title = String(page.title ?? '').trim()
+    if (title !== '' && !/\s/.test(title)) detail = title
+  }
+  if (detail === '') detail = String(page.wantUrl ?? page.lastUrl ?? '').replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  return `the network could not reach that address — the browser stopped on its own error page (${detail === '' ? 'no details' : detail}), which is not the site. Nothing on it is page content. Use browser_nav with another address, or fix the connection this machine needs.`
 }
 
 /** Key names this driver can press, spelled as a model would. */
@@ -350,7 +416,15 @@ export const KEYS = {
    engines still look at. */
 for (const letter of 'abcdefghijklmnopqrstuvwxyz') {
   KEYS[letter] = { key: letter, code: `Key${letter.toUpperCase()}`, keyCode: letter.toUpperCase().charCodeAt(0), text: letter }
-  KEYS[letter.toUpperCase()] = KEYS[letter]
+  /* A capital is its own key event: the page reads `A` with shift held, and a
+     form inserts `A`, not `a`. */
+  KEYS[letter.toUpperCase()] = {
+    key: letter.toUpperCase(),
+    code: `Key${letter.toUpperCase()}`,
+    keyCode: letter.toUpperCase().charCodeAt(0),
+    text: letter.toUpperCase(),
+    shift: true,
+  }
 }
 for (const digit of '0123456789') {
   KEYS[digit] = { key: digit, code: `Digit${digit}`, keyCode: digit.charCodeAt(0), text: digit }
@@ -366,7 +440,8 @@ for (const digit of '0123456789') {
 export async function pressKey(page, name, modifiers = 0, holdMs = 0) {
   const key = KEYS[name] ?? KEYS[name.charAt(0).toUpperCase() + name.slice(1)]
   if (key === undefined) throw new Error(`sidecar: no such key ${name}`) // ui-copy-ignore
-  const base = { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers }
+  const withShift = (key.shift === true ? modifiers | 8 : modifiers)
+  const base = { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers: withShift }
   await page.key('keyDown', key.text === undefined ? base : { ...base, text: key.text })
   /* A key held down is how a game moves: down, wait, up — not a tap. */
   if (holdMs > 0) await new Promise((settle) => setTimeout(settle, holdMs))
@@ -387,7 +462,7 @@ export async function pressChord(page, names, modifiers = 0, holdMs = 0) {
   const keys = names.map((name) => {
     const key = KEYS[name] ?? KEYS[name.charAt(0).toUpperCase() + name.slice(1)]
     if (key === undefined) throw new Error(`sidecar: no such key ${name}`) // ui-copy-ignore
-    return { key, base: { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers } }
+    return { key, base: { key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers: key.shift === true ? modifiers | 8 : modifiers } }
   })
   for (const one of keys) await page.key('keyDown', one.key.text === undefined ? one.base : { ...one.base, text: one.key.text })
   if (holdMs > 0) await new Promise((settle) => setTimeout(settle, holdMs))
@@ -453,7 +528,7 @@ export function personNote(sidecar) {
 export function holdText(sidecar) {
   const left = Number(sidecar?.holding?.() ?? 0)
   if (left <= 0) return ''
-  return `the person is using the mirror (${String(Math.ceil(left / 1000))} s more) — nothing was sent. Let them finish, then repeat this call; sidecar_resume takes the page back now.`
+  return `the person is using the mirror (${String(Math.ceil(left / 1000))} s more) — nothing was sent. Let them finish, then repeat this call; browser_resume takes the page back now.`
 }
 
 /**
@@ -487,11 +562,15 @@ async function coverProbe(page, ref) {
  * @param {ReturnType<typeof coverProbe>} probe - what the page said is on top.
  * @returns {string} a sentence, or an empty string.
  */
-function coverNote(probe) {
+function coverNote(probe, moved) {
   if (probe === null || probe === undefined) return ''
   const what = probe.tag === 'div' || probe.tag === 'section' ? 'an overlay' : `a ${probe.tag}`
-  return `
-${what} covers it${probe.name === '' ? '' : `: ${probe.name}`} — the click landed beneath it`
+  const head = `
+${what} covers it${probe.name === '' ? '' : `: ${probe.name}`}`
+  /* A banner that is about to be cleared is not a warning: the line below it
+     already says what was clicked on the way, so do not claim the click will
+     land under something that is leaving. */
+  return moved ? head : `${head} — the click would land beneath it`
 }
 
 /**
@@ -506,14 +585,19 @@ ${what} covers it${probe.name === '' ? '' : `: ${probe.name}`} — the click lan
 async function clearCover(page, ref) {
   const probe = await coverProbe(page, ref)
   if (probe === null) return { note: '', cleared: true, name: '' }
-  const note = coverNote(probe)
+  const note = coverNote(probe, probe.dismiss !== null)
   const away = probe.dismiss
   if (away === null) return { note, cleared: false, name: '' }
   await page.mouse('mouseMoved', { x: away.x, y: away.y })
   await page.mouse('mousePressed', { x: away.x, y: away.y, clickCount: 1 })
   await page.mouse('mouseReleased', { x: away.x, y: away.y, clickCount: 1 })
-  await wait(150)
-  const again = await coverProbe(page, ref)
+  /* Prove the banner left instead of guessing a paint delay: poll the same
+     question the refusal would ask, and stop the moment it answers clear. */
+  let again = await coverProbe(page, ref)
+  for (let look = 0; look < 8 && again !== null; look += 1) {
+    await wait(20)
+    again = await coverProbe(page, ref)
+  }
   if (again !== null) return { note: `${note}
 - clicking ${away.name} on it did not clear it`, cleared: false, name: away.name } // ui-copy-ignore
   return { note: `${note}
@@ -543,7 +627,7 @@ function wait(ms) {
  * @param {{contextId?: number, sessionId?: string}|null} [route] - frame to run in.
  * @returns {Promise<any>} the value.
  */
-async function evaluate(page, expression, route) {
+async function evaluate(page, expression, route, raceMs = 2000) {
   const params = { expression, returnByValue: true, awaitPromise: true }
   if (route?.contextId !== undefined) params.contextId = route.contextId
   /* A page that navigates mid-call destroys the context this ran in; the
@@ -551,7 +635,9 @@ async function evaluate(page, expression, route) {
      take the whole process down with it. */
   const call = page.cdp.send('Runtime.evaluate', params, route?.sessionId)
     .catch((error) => ({ threw: String(error?.message ?? error) }))
-  const raced = await Promise.race([call, wait(2000).then(() => 'timeout')])
+  let timer = null
+  const raced = await Promise.race([call, new Promise((done) => { timer = setTimeout(() => done('timeout'), raceMs) })])
+  clearTimeout(timer)
   if (raced === 'timeout') return undefined
   if (raced?.threw !== undefined) return undefined
   const { result, exceptionDetails } = raced
@@ -559,6 +645,22 @@ async function evaluate(page, expression, route) {
     return { error: String(exceptionDetails.exception?.description ?? exceptionDetails.text ?? 'evaluate failed') }
   }
   return result?.value
+}
+
+/**
+ * What the page looks like in one cheap string: address, title, how many
+ * elements and how much text. Two of these equal says the click did nothing
+ * visible — worth saying, so the model does not click a dead control twice.
+ * A Flash page has no DOM to ask, so its frame counter answers instead.
+ * @param {any} page - sidecar page.
+ * @returns {Promise<string>} a fingerprint, or '' when the page would not say.
+ */
+export async function pageMark(page) {
+  if (page?.flashBridge !== null && page?.flashBridge !== undefined) {
+    return `flash:${Number(page.seq ?? 0)}:${Number(page.lastFrameAt ?? 0)}`
+  }
+  const said = await evaluate(page, `(() => { const body = document.body; return String(document.title || '').slice(0, 80) + '|' + String(location.href).slice(0, 200) + '|' + (body ? body.innerText.length : 0) + '|' + document.querySelectorAll('*').length })()`).catch(() => undefined)
+  return typeof said === 'string' ? said : ''
 }
 
 /**
@@ -582,21 +684,62 @@ function asSpot(said) {
  * @param {number} [timeout] - ceiling in milliseconds.
  * @returns {Promise<string>} the address it settled on.
  */
-export async function settle(page, timeout = 5000) {
+export async function settle(page, timeout = 5000, since = 0) {
+  /* A Flash page has no load events and no DOM of its own to poll: the next
+     picture is the only sign the click changed anything, and the bridge paints
+     every pump, so this ends at the frame instead of at the timeout. */
+  if (page.flashBridge !== null && page.flashBridge !== undefined) {
+    const until = Date.now() + Math.min(timeout, 700)
+    const before = Number(page.seq ?? 0)
+    while (Date.now() < until) {
+      if (Number(page.seq ?? 0) > before || Number(page.lastFrameAt ?? 0) > since) break
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    return String(page.url ?? '')
+  }
   /* A click may have opened a tab. The mirror follows it, so every tool that
      waited on a page ends up on the page the person would be looking at. */
   const opened = typeof page.adoptOpened === 'function' ? await page.adoptOpened().catch(() => '') : ''
   const deadline = Date.now() + timeout
+  const started = Date.now()
   let last = ''
   let steady = 0
   while (Date.now() < deadline) {
     if (page.dialog !== null && page.dialog !== undefined) return String(page.url ?? '')
-    const state = await evaluate(page, '({ ready: document.readyState, href: location.href })')
+    /* The browser already said the load it began has finished. That is the same
+       answer a readyState poll gives, and it stays true while a page's own
+       scripts hold the main thread, which is exactly when the poll stalls. */
+    const began = Number(page.navStarted ?? 0)
+    const fired = Number(page.loadFired ?? 0)
+    /* Two event-only answers: nothing began loading since the action, or the
+       navigation this action started has already finished. Neither needs the
+       renderer, whose answer can take seconds on a page that is busy. */
+    if (since > 0 && began <= since) return String(page.url ?? '')
+    if (fired > 0 && fired >= began && (since === 0 || fired >= since)) return String(page.url ?? '')
+    /* A click opened a page whose own requests hang: the browser began loading
+       and nothing has finished since. A person presses Esc and uses what
+       arrived, and waiting the whole timeout only to give up helps no one. */
+    if (since > 0 && began > since && Date.now() - began > 900) {
+      await page.cdp.send('Page.stopLoading', {}).catch(() => {})
+      return String(page.url ?? '')
+    }
+    const state = await evaluate(page, '({ ready: document.readyState, href: location.href })', null, 400)
+    /* Nothing began loading since the action, and the page is complete: the
+       click changed state without navigating, so there is nothing to wait for. */
+    if (since > 0 && state?.ready === 'complete' && Number(page.navStarted ?? 0) <= since) return String(state?.href ?? '')
     const key = `${String(state?.ready)}|${String(state?.href)}`
     steady = key === last ? steady + 1 : 0
     last = key
+    /* A page that already says complete needs one steady poll, not two: the
+       second look is what a redirect needs, and a click usually has none. */
+    if (state?.ready === 'complete' && steady >= 1) return String(state?.href ?? '')
     if (state?.ready !== 'loading' && steady >= 2) return String(state?.href ?? '')
-    await wait(60)
+    /* A loaded page can change on the next paint; a loading one is either
+       navigating or about to be. Right after an action that is usually the
+       page the action opened, which lands in tens of milliseconds, so the
+       first quarter second is watched closely and only then slows down. */
+    const fresh = Date.now() - started < 250
+    await wait(state?.ready === 'complete' ? (fresh ? 12 : 25) : (fresh ? 12 : 60))
   }
   return ''
 }
@@ -626,7 +769,29 @@ async function until(page, expression, timeout) {
  * @returns {Promise<string>} a compact report.
  */
 /** The first control whose words match, scrolled into view. Text can beat a number: it costs no read. */
-async function findWords(page, words) {
+export async function findWords(page, words, known) {
+  /* The words a caller used usually came from a read that already happened, so
+     look among those numbers first: one position check is a single evaluate,
+     while a fresh read walks the whole page. A number the page no longer has
+     falls through to the read, so a redraw is not a missed click. */
+  const squeezeOf = (text) => String(text).toLowerCase().replace(/\s+/g, '')
+  const wantedFirst = squeezeOf(words)
+  const remembered = Array.isArray(known) ? known.filter((control) => control.view !== false && squeezeOf(control.name ?? '').includes(wantedFirst)) : []
+  remembered.sort((a, b) => Number(squeezeOf(a.name ?? '') === wantedFirst) - Number(squeezeOf(b.name ?? '') === wantedFirst))
+  /* A page that repeats one word down a list ("Add to cart" on every card) has
+     one obvious answer: the first one a person would reach. The last-first
+     order that keeps a scrolled page fast also picked whichever duplicate sat
+     lowest, so visible matches are tried in reading order first and the near
+     end is only the fallback. */
+  const firstInOrder = remembered.filter((control) => control.view !== false).sort((a, b) => Number(a.ref) - Number(b.ref))
+  const nearEnd = remembered.slice(-8).reverse()
+  for (const control of [...firstInOrder.slice(0, 4), ...nearEnd]) {
+    const spot = await locate(page, Number(control.ref))
+    if (spot.gone === true) continue
+    const name = String(spot.name ?? control.name ?? '')
+    if (!squeezeOf(name).includes(wantedFirst)) continue
+    return { ...control, ref: Number(control.ref), name, x: Number(spot.x), y: Number(spot.y) }
+  }
   const read = await readPage(page, { mode: 'text', maxChars: 1200, max: 200 })
   const shown = read.controls.filter((control) => control.view !== false)
   /* The words may sit in separate inline nodes: <span>Sign</span><span>in</span>
@@ -666,8 +831,8 @@ async function fieldSpot(page, words) {
  * @param {string} words - what the field is called on screen.
  * @returns {Promise<{x: number, y: number, name: string, lead: string, ref?: number}|null>} the click.
  */
-async function fieldByName(page, words) {
-  const hit = await findWords(page, words)
+async function fieldByName(page, words, known) {
+  const hit = await findWords(page, words, known)
   const lead = hit === null ? '' : await coverLead(page, hit.ref)
   if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
     const spot = await locate(page, hit.ref)
@@ -682,6 +847,75 @@ async function fieldByName(page, words) {
 }
 
 /**
+ * A date-like field ignores human typing: Chrome's date input wants its own
+ * segments, so keystrokes leave the value empty while the call reports success.
+ * Set it the way a form would, and say the value the page now holds.
+ * @param {any} page - sidecar page.
+ * @param {string} text - what the caller wanted in it.
+ * @returns {Promise<string>} a clause about the field, or '' when it is not one.
+ */
+/* The input kinds a person cannot type into: Chrome gives each of them its own
+   segment editor, and keys typed at it leave the value empty. */
+const DATE_KINDS = ['date', 'time', 'month', 'week', 'datetime-local']
+
+/**
+ * The date-like kind the focus is on, if it is on one.
+ * @param {any} page - sidecar page.
+ * @returns {Promise<string>} date, time… or '' when it is an ordinary field.
+ */
+async function dateLikeFocus(page) {
+  const said = await evaluate(page, `(() => {
+    const el = document.activeElement
+    if (!el || String(el.tagName).toUpperCase() !== 'INPUT') return ''
+    const kind = String(el.type)
+    if (!${JSON.stringify(DATE_KINDS)}.includes(kind)) return ''
+    if (String(el.value) !== '') return ''
+    return JSON.stringify({ kind })
+  })()`).catch(() => undefined)
+  return String(asSpot(said)?.kind ?? '')
+}
+
+async function fillDateLike(page, text) {
+  const kind = await dateLikeFocus(page)
+  if (kind === '') return ''
+  const empty = { kind }
+  const want = String(text).trim()
+  const after = await evaluate(page, `(() => {
+    const el = document.activeElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(el, ${JSON.stringify(want)})
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return String(el.value)
+  })()`).catch(() => undefined)
+  if (typeof after !== 'string' || after === '') {
+    return `that ${empty.kind} field would not take "${want}" — it wants ${empty.kind === 'time' ? '09:30' : '2026-03-04'}`
+  }
+  return `set ${after} in the ${empty.kind} field`
+}
+
+/**
+ * Put text in the focused box the cheapest way that still works there.
+ * A box that reacts while you type (suggestion lists, live search) needs the
+ * keys in order; anything else takes one paste event, and the box itself is
+ * the judge of whether it took it.
+ * @param {any} page - sidecar page.
+ * @param {string} text - what to type.
+ * @param {string} [hint] - the field's name, to spot a live-search box.
+ * @returns {Promise<void>} resolves when the box holds the text.
+ */
+export async function typeInto(page, text, hint = '') {
+  const words = String(text)
+  if (words === '') return
+  const live = /search|query|lookup|filter|搜索|筛选|查询/i.test(hint)
+  if (!live && (await page.quickType(words)) === true) {
+    await wait(30)
+    return
+  }
+  await page.humanType(words)
+}
+
+/**
  * Click a spot, type into it, and optionally clear it first.
  * @param {any} page - sidecar page.
  * @param {{x: number, y: number}} point - where to click.
@@ -692,20 +926,28 @@ async function writeAt(page, point, text, options = {}) {
   /* Approach the control the way a hand does: a couple of small moves that
      land in different places, not a teleport followed by a click. */
   const drift = (by) => ({ x: point.x + by, y: point.y + Math.round(by / 2) })
+  /* The shape of the approach is what a page can see; the gaps between its
+     points only buy latency. Three moves stay, the pauses are frames. */
   await page.mouse('mouseMoved', drift(-14 - Math.round(Math.random() * 10)))
-  await wait(40 + Math.round(Math.random() * 45))
+  await wait(5 + Math.round(Math.random() * 8))
   await page.mouse('mouseMoved', drift(-4 - Math.round(Math.random() * 4)))
-  await wait(25 + Math.round(Math.random() * 35))
+  await wait(4 + Math.round(Math.random() * 6))
   await page.mouse('mouseMoved', point)
-  await wait(35 + Math.round(Math.random() * 60))
+  await wait(5 + Math.round(Math.random() * 8))
   await page.mouse('mousePressed', { ...point, clickCount: 1 })
-  await wait(20 + Math.round(Math.random() * 40))
+  await wait(5 + Math.round(Math.random() * 9))
   await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-  await wait(90 + Math.round(Math.random() * 120))
+  await wait(14 + Math.round(Math.random() * 18))
   if (options.clear === true) await clearFocus(page)
+  /* A date or time input never takes keystrokes: noticing that before typing
+     spends one round trip instead of fourteen keys and a failed readback. */
+  if (await dateLikeFocus(page) !== '') return await fillDateLike(page, text)
   if (options.human === false) await page.insertText(text)
-  else await page.humanType(text)
+  else await typeInto(page, text, String(options.hint ?? ''))
+  const fixed = await fillDateLike(page, text)
+  if (fixed !== '') return fixed
   if (options.submit === true) await pressKey(page, 'Enter')
+  return ''
 }
 
 /**
@@ -783,7 +1025,7 @@ async function runStep(page, step, known) {
     }
   }
   if (step.tap !== undefined && !/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(step.tap))) {
-    const hit = await findWords(page, String(step.tap))
+    const hit = await findWords(page, String(step.tap), known)
     if (hit === null) return stuck(`no control says ${JSON.stringify(String(step.tap))}`)
     const lead = await coverLead(page, hit.ref)
     const spot = await locate(page, hit.ref)
@@ -797,9 +1039,10 @@ async function runStep(page, step, known) {
   if (step.field !== undefined) {
     /* The words may sit on the field or in a div above a bare input. Only a
        click that lands on the field itself can be trusted with the typing. */
-    const target = await fieldByName(page, String(step.field))
+    const target = await fieldByName(page, String(step.field), known)
     if (target === null) return stuck(`${String(step.field)}: ${REF_GONE}`)
-    await writeAt(page, { x: target.x, y: target.y }, String(step.text ?? ''), { clear: step.clear, submit: step.submit })
+    const dated = await writeAt(page, { x: target.x, y: target.y }, String(step.text ?? ''), { clear: step.clear, submit: step.submit })
+    if (dated !== '') return dated
     return `${target.lead}typed into "${target.name.slice(0, 60)}"`
   }
   if (step.tap !== undefined) {
@@ -868,8 +1111,36 @@ async function runStep(page, step, known) {
  * @param {{mode?: string, maxChars?: number}} options - narrowing.
  * @returns {Promise<any>} the read.
  */
+/** A read with nothing in it often means the document is still being built:
+ * samples of real pages showed zero controls when the read landed before
+ * hydration, and the model then calls the page broken. */
+function looksEmpty(read) {
+  return (read?.controls?.length ?? 0) === 0 && String(read?.text ?? '').trim().length < 40
+}
+
+/** @param {string} url - what the page claims to be. @returns {boolean} true when waiting can still help. */
+function canFill(url) {
+  const said = String(url ?? '')
+  return said.startsWith('http://') || said.startsWith('https://')
+}
+
 async function remember(page, refs, options) {
-  const read = await readPage(page, options)
+  let read = await readPage(page, options)
+  if (looksEmpty(read) && canFill(read.url)) {
+    /* Hydration and client-side rendering finish a few hundred milliseconds
+       after the address does. Read again until the page has something, but
+       never longer than a person would wait for a page that stays empty. */
+    const deadline = Date.now() + 1500
+    while (looksEmpty(read) && canFill(read.url) && Date.now() < deadline) {
+      await wait(120)
+      const again = await readPage(page, options)
+      if (!looksEmpty(again)) {
+        read = again
+        break
+      }
+      read = again
+    }
+  }
   refs.refs = read.controls
   refs.at = Date.now()
   return read
@@ -892,6 +1163,34 @@ export function sameRead(before, after) {
 }
 
 /**
+ * Where two readings of a page differ, said in one line. A counter moving, one
+ * row appearing, a word edited: the page is mostly the same, and sending all of
+ * it again is what makes a long session expensive.
+ * @param {string} before - the text earlier.
+ * @param {string} after - the text now.
+ * @returns {string} a short line, or '' when the two have nothing in common.
+ */
+export function textChange(before, after) {
+  const was = String(before ?? '')
+  const now = String(after ?? '')
+  let head = 0
+  const shortest = Math.min(was.length, now.length)
+  while (head < shortest && was[head] === now[head]) head += 1
+  let tail = 0
+  while (tail < shortest - head && was[was.length - 1 - tail] === now[now.length - 1 - tail]) tail += 1
+  const gone = was.slice(head, was.length - tail)
+  const came = now.slice(head, now.length - tail)
+  /* A page that changed in one place is worth a line; one that shares almost no
+     text is a different page, and a diff of it would be as long as the page. */
+  if (head + tail < 12) return ''
+  const clip = (text) => (text.length > 160 ? `${text.slice(0, 157)}…` : text)
+  const near = clip(was.slice(Math.max(0, head - 24), head))
+  const far = clip(now.slice(now.length - tail, now.length - tail + 24))
+  const line = `${near === '' ? '' : `…${near} `}${gone === '' ? '' : `[${clip(gone)}] `}→ ${came === '' ? '' : `[${clip(came)}] `}${far === '' ? '' : `${far}…`}`
+  return line.trim()
+}
+
+/**
  * Say only what changed since the previous read.
  * @param {any} previous - the read before.
  * @param {any} next - the read now.
@@ -902,8 +1201,7 @@ export function diffRead(previous, next, options = {}) {
   const maxChars = Number(options.maxChars ?? 2000)
   const before = new Map(previous.controls.map((control) => [control.ref, control]))
   const after = new Map(next.controls.map((control) => [control.ref, control]))
-  const lines = [next.url]
-  if (previous.url !== next.url) lines.push(`address changed to ${next.url}`)
+  const lines = [previous.url === next.url ? next.url : `address ${next.url}`]
   const added = next.controls.filter((control) => !before.has(control.ref))
   const removed = previous.controls.filter((control) => !after.has(control.ref))
   const changed = next.controls.filter((control) => {
@@ -919,9 +1217,14 @@ export function diffRead(previous, next, options = {}) {
   }
   if (added.length + removed.length + changed.length === 0) lines.push('no control changed')
   if (previous.text !== next.text) {
-    const head = next.text.slice(0, Math.max(200, Math.min(1200, maxChars - 800)))
-    lines.push('', 'text now:', head)
-    if (next.text.length > head.length) lines.push(`… ${next.text.length - head.length} more characters`)
+    const said = textChange(previous.text, next.text)
+    const room = Math.max(200, Math.min(1200, maxChars - 200))
+    if (said !== '') lines.push(`text: ${said}`)
+    else {
+      const head = next.text.slice(0, room)
+      lines.push('', 'text now:', head)
+      if (next.text.length > head.length) lines.push(`… ${next.text.length - head.length} more characters`)
+    }
   }
   if (next.focused !== null && previous.focused?.ref !== next.focused.ref) lines.push(`focus ${next.focused.ref} ${next.focused.name}`)
   return lines.join('\n')
@@ -976,7 +1279,7 @@ export async function extractRows(page, args) {
   const out = await page.cdp.send('Runtime.evaluate', { expression, returnByValue: true }).catch((error) => ({ error: String(error?.message ?? error) }))
   if (out?.error !== undefined && out.error !== null && typeof out.error === 'string') return `the page did not answer: ${out.error}`
   const value = out?.result?.value
-  if (value === undefined || value === null || value === '') return 'the page did not answer; try again, or read the page with sidecar_view.'
+  if (value === undefined || value === null || value === '') return 'the page did not answer; try again, or read the page with browser_view.'
   if (value.gone === true) return `ref ${ref} is gone. Read the page again and use a new number.`
   if (value.bad === true) return `${select} is not a selector this browser understands.`
   const rows = Array.isArray(value.rows) ? value.rows : []
@@ -1044,7 +1347,7 @@ if (args?.ref !== undefined) {
     }
     return best === null ? null : { x: Math.round(best.x), y: Math.round(best.y), name: best.name }
   })()`)
-  if (at === null || at === undefined) return 'No box to type in on this page. Call sidecar_view to see what is there.'
+  if (at === null || at === undefined) return 'No box to type in on this page. Call browser_view to see what is there.'
   point = { x: Number(at.x), y: Number(at.y) }
 }
 await page.mouse('mouseMoved', point)
@@ -1087,7 +1390,7 @@ const took = Date.now() - started
 const echo = String(said.slice(0, 24))
 if (fresh !== '' && echo.length >= 8 && !fresh.includes(echo)) {
   const asking = /(sign in|log in|登录|注册)/i.test(fresh)
-  return `the page changed but does not show the message: it did not take what was sent.${asking ? ' It is asking for a sign-in — sign in in the column, then ask again.' : ' Try sidecar_view to see what is in the way.'}`
+  return `the page changed but does not show the message: it did not take what was sent.${asking ? ' It is asking for a sign-in — sign in in the column, then ask again.' : ' Try browser_view to see what is in the way.'}`
 }
 /* A box that still holds the words is the page saying it did not take them:
    a signed-out page leaves them there, and the old wording sent the reader
@@ -1133,21 +1436,40 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   }
   /** Looking is still useful while the person has the page. */
   const withRead = async (work) => {
+    /* A call starting means the last click is over: a tab that opens now is not
+       going to be followed under this call's feet. */
+    try {
+      sidecar.page?.disarmFollow?.()
+    } catch {
+      /* the page is already gone */
+    }
     /* A plugin reload makes a new driver while the browser it started keeps
        running. Refusing every read until someone opens a page again would throw
        away a browser that is still there: attach to it instead. */
     if (!sidecar.alive) {
+      /* A renderer crash can take the whole browser with it, and the first
+         relaunch sometimes loses the race with the old process exiting. One
+         more try turns that into a fresh tab instead of a refusal. */
       try {
         await sidecar.ensure({ session: currentSession() })
       } catch {
-        return { text: SIDECAR_OFF }
+        await wait(300)
+        try {
+          await sidecar.ensure({ session: currentSession() })
+        } catch {
+          return { text: SIDECAR_OFF }
+        }
       }
     }
     const page = await sidecar.ensure({ session: currentSession() })
     const dead = await unreachable(page)
     if (dead !== '') return { text: dead + personNote(sidecar) }
     const text = await work(page)
-    return { text: text + personNote(sidecar) }
+    /* Why a page stopped working is usually in its own log, and looking it up
+       costs another call. This is the one place every read passes through, so
+       say what went wrong since the previous one, once. */
+    const trouble = typeof page.troubleOf === 'function' ? page.troubleOf() : ''
+    return { text: text + (trouble === '' ? '' : `\n${trouble}`) + personNote(sidecar) }
   }
   const withPage = async (work) => {
     if (!sidecar.alive) return { text: SIDECAR_OFF }
@@ -1157,6 +1479,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   }
   const look = async (page, options) => {
     const read = await remember(page, refsFor(), options)
+    /* A read already showed the address: the next action does not repeat it. */
+    if (String(read.url ?? '') !== '') saidUrls.set(page, String(read.url))
     const said = renderPage(read, options)
     return isCheckPage(read) ? `${said}\n${CHECK_NOTE}` : said
   }
@@ -1198,13 +1522,17 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
 
   return [
     {
-      name: 'sidecar_open', // ui-copy-ignore
-      description: 'Start (or reuse) the sidecar browser — a real Chrome with its own persistent profile — and open a URL in it. It runs in the background and its screen appears in this chat\'s sidebar tab, so it keeps working while the person looks elsewhere. Logins survive restarts.',
+      name: 'browser_open', // ui-copy-ignore
+      description: 'Start (or reuse) the background browser — a real Chrome with its own persistent profile — and open a URL in it. It is not the host\'s own browser tab: this Chrome runs on its own and only its picture is mirrored into this chat\'s right column, so it keeps working while the person looks elsewhere. Logins survive restarts.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           url: { type: 'string', description: 'Address to open. Omit to reuse the current page.' },
           headless: { type: 'boolean', description: 'Run without a window. Default true; turn off only if a site refuses a windowless browser.' },
+          flash: {
+            type: 'boolean',
+            description: 'Play the page in the Flash-era browser instead of Chrome — for a site whose game is a Flash movie that never got an HTML5 version. Default off; switching either way restarts the browser.',
+          },
         },
         additionalProperties: false,
       },
@@ -1214,12 +1542,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @param {any} exec - tool run. @returns {Promise<{text: string}>} what the page is. */
       execute: async (args, exec) => {
         const who = String(exec?.agent?.id ?? '')
-        const page = await sidecar.ensure({ url: args?.url, headless: args?.headless, session: who })
+        const page = await sidecar.ensure({ url: args?.url, headless: args?.headless, flash: args?.flash, session: who })
         if (args?.url === undefined) await page.readTitle()
         /* A window on the person's screen is their business, not a surprise: say
            it, so nobody wonders what popped up. A site that refuses a windowless
            browser is the only reason this happens. */
-        const windowed = sidecar.headless === false ? 'The browser is showing a window this time — a site only opens for a windowed one. Same profile, same logins.\n' : ''
+        /* The Flash runtime is windowless even when headless is false: its window
+           is never shown, so nothing popped up to explain. */
+        const windowed = sidecar.headless === false && sidecar.flash !== true ? 'The browser is showing a window this time — a site only opens for a windowed one. Same profile, same logins.\n' : ''
         /* The tab appears in the calling chat and nowhere else: the person may
            be reading a different chat, and a browser there would be a surprise. */
         if (who !== '') host.want?.(who) // ui-copy-ignore
@@ -1227,13 +1557,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const dead = await unreachable(page)
         if (dead !== '') return { text: dead }
         /* The column may still be drawing nothing: say so here, where the
-           person is looking for a picture, rather than only in sidecar_state. */
+           person is looking for a picture, rather than only in browser_state. */
         const unseen = who === '' ? '' : viewerNote(await watchForViewer(sidecar, page, 1200))
         return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + await look(page, { mode: 'text' }) }
       },
     },
     {
-      name: 'sidecar_mode', // ui-copy-ignore
+      name: 'browser_mode', // ui-copy-ignore
       description: 'Choose how this chat acts from now on. "human" moves the real mouse and presses real keys, which no page can tell from a person — games and pages that watch pointer movement need this. "dom" clicks and fills the controls the page registered, which reaches one that an overlay covers and leaves key handlers alone. A call can also pass its own mode, which wins for that call only.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1259,7 +1589,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       },
     },
     {
-      name: 'sidecar_prepare', // ui-copy-ignore
+      name: 'browser_prepare', // ui-copy-ignore
       description: 'Get a game or a heavy app page ready to play, in one call: read what is on it, find the surface that takes input, say whether it needs a Flash player this browser does not have, measure its real frame rate, and test whether keys reach it. Ends with what to do next instead of a blank page and no explanation.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1358,7 +1688,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const lines = []
         lines.push(`page: ${read.title === '' ? read.url : read.title} — ${read.controls.length} control(s), ${read.textChars} character(s)`)
         lines.push(surface === null ? 'surface: no canvas or frame takes the screen — the page itself takes input' : `surface: ${surface.tag} ${surface.w}x${surface.h} at ${surface.x},${surface.y}${surface.scrolled === true ? ' (scrolled it into view)' : ''}${clicked === '' ? '' : ` (${clicked})`}`)
-        if (read.blind?.flash > 0) lines.push(`flash: ${read.blind.flash} movie(s) found, and this browser has no Flash player — the site's own H5 or micro-client version is the only way to play it`)
+        if (read.blind?.flash > 0 && sidecar.flash !== true) lines.push(`flash: ${read.blind.flash} movie(s) — open the same page with flash:true and it runs in this plugin's own player, in the column, with no window on the desktop`) // ui-copy-ignore
+        else if (read.blind?.flash > 0) lines.push(`flash: ${read.blind.flash} movie(s) running on this plugin's own player`)
         else lines.push('flash: none found')
         lines.push(`frames: ${Math.max(0, frames.length - 1)} (${childFrames.filter((frame) => String(frame.url ?? '') === 'about:blank').length} of them about:blank)`)
         const rates = []
@@ -1367,8 +1698,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         lines.push(`frame rate: ${rates.length === 0 ? 'the page could not count' : rates.join(', ')} over ${ms} ms`)
         lines.push(`keys: ${keys}`)
         lines.push(`mode: human${surface === null ? '' : ' — a game watches the mouse and the keys, and only real ones arrive trusted'}`)
-        const trouble = read.blind?.flash > 0
-          ? "not playable here: it needs Flash"
+        const trouble = read.blind?.flash > 0 && sidecar.flash !== true
+          ? 'call open with flash:true to run it here'
+          : read.blind?.flash > 0
+            ? 'the movie needs a click inside it before it starts'
           : surface === null && Number(mainRate?.fps ?? 0) === 0
             ? 'nothing on this page is animating — it may be waiting for a click, or the game is behind a login'
             : surface === null
@@ -1379,13 +1712,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       },
     },
     {
-      name: 'sidecar_view', // ui-copy-ignore
+      name: 'browser_view', // ui-copy-ignore
       description: 'Read the sidecar browser: numbered controls and the words on screen. Numbers stay valid across reads and actions until the page navigates. Narrow it with mode (text, links, forms, full) and max_chars; ask for changed_only after an action to spend fewer tokens.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           mode: { type: 'string', enum: ['text', 'links', 'forms', 'full'], description: 'What to include. Default text: controls plus the visible words.' },
-          max_chars: { type: 'integer', description: 'Character budget for the page text. Default 6000.' },
+          max_chars: { type: 'integer', description: 'Character budget for the page text. Default 4600.' },
           changed_only: { type: 'boolean', description: 'Only what changed since the last read.' },
         },
         additionalProperties: false,
@@ -1416,26 +1749,31 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
            repeating the page would only spend tokens. */
         if (sameRead(before, read) && state.lastShape === JSON.stringify(options)) {
           const moved = Number(before.scroll?.y ?? 0) !== Number(read.scroll?.y ?? 0) ? `, scrolled to ${Math.round(Number(read.scroll?.y ?? 0))}` : ''
-          return `still at ${read.url}${moved} — nothing changed since the last read; the numbers above still work${note}`
+          /* The address was said with the read above; "here" is the whole of it. */
+          const where = saidUrls.get(page) === String(read.url ?? '') ? 'here' : read.url
+          saidUrls.set(page, String(read.url ?? ''))
+          return `still ${where}${moved} — nothing changed since the last read; the numbers above still work${note}`
         }
         state.lastShape = JSON.stringify(options)
-        return renderPage(read, options) + note
+        const said = withoutSeenAddress(page, read.url, renderPage(read, options))
+        saidUrls.set(page, String(read.url ?? ''))
+        return said + note
       }),
     },
     {
-      name: 'sidecar_click', // ui-copy-ignore
+      name: 'browser_click', // ui-copy-ignore
       description: 'Click a numbered control, a point, or the first control whose words contain `text` — the last needs no read first. The click is real mouse input and the mirror shows where it landed.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          ref: { type: 'integer', description: 'Number from sidecar_view.' },
+          ref: { type: 'integer', description: 'Number from browser_view.' },
           text: { type: 'string', description: 'Words on the control, when its number is not known.' },
           x: { type: 'integer', description: 'Viewport x, when clicking a point.' },
           y: { type: 'integer', description: 'Viewport y, when clicking a point.' },
           double: { type: 'boolean', description: 'Double-click.' },
           right: { type: 'boolean', description: 'Right-click, opening a context menu.' },
           hold_ms: { type: 'integer', description: 'Keep the button down this long before releasing: a press-and-hold a game or a drag handle needs.' },
-          mode: { type: 'string', enum: ['human', 'dom'], description: '"human" moves the real mouse and is what a page cannot tell from a person; "dom" fires the page\'s own click on the numbered control, which reaches one an overlay covers. Omit to use what this chat set with sidecar_mode.' },
+          mode: { type: 'string', enum: ['human', 'dom'], description: '"human" moves the real mouse and is what a page cannot tell from a person; "dom" fires the page\'s own click on the numbered control, which reaches one an overlay covers. Omit to use what this chat set with browser_mode.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         additionalProperties: false,
@@ -1454,18 +1792,19 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — used where it is now`
           point = { x: Number(spot.x), y: Number(spot.y) }
         } else if (String(args?.text ?? '') !== '') {
-          const hit = await findWords(page, String(args.text))
-          if (hit === null) return `No control says ${JSON.stringify(String(args.text))}. Call sidecar_view to see what is there.`
+          const hit = await findWords(page, String(args.text), refsFor().refs)
+          if (hit === null) return `No control says ${JSON.stringify(String(args.text))}. Call browser_view to see what is there.`
           point = { x: hit.x, y: hit.y }
           label = `"${hit.name.slice(0, 60)}"`
         }
-        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from sidecar_view, or both x and y.'
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return 'Give a ref from browser_view, or both x and y.'
         if (wayOf(args) === 'dom') {
-          if (args?.ref === undefined) return 'Acting on the page itself needs a number from sidecar_view: pass ref, or leave mode out to click like a person.'
+          if (args?.ref === undefined) return 'Acting on the page itself needs a number from browser_view: pass ref, or leave mode out to click like a person.'
+          const pressedAt = Date.now()
           const said = await evaluate(page, clickInDom(Number(args.ref), { double: args?.double === true, right: args?.right === true })).catch(() => undefined)
           const hit = asSpot(said)
           if (hit?.ok !== true) return REF_GONE
-          await settle(page)
+          await settle(page, 5000, pressedAt)
           const called = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label} on the page itself`)
           return called + (followed === '' ? '' : ` (${followed})`)
         }
@@ -1477,25 +1816,26 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           /* An overlay that would not go away leaves the control underneath:
              the click would land on the overlay, so it is not sent. */
           if (gate.cleared !== true) {
-            return `${cover.trim()}\nNot clicked: the control is still covered. Call sidecar_view and handle the overlay first.`
+            return `${cover.trim()}\nNot clicked: the control is still covered. Call browser_view and handle the overlay first.`
           }
           if (gate.cleared && cover !== '') {
             const again = await locate(page, Number(args.ref))
             if (again.gone !== true) point = { x: Number(again.x), y: Number(again.y) }
           }
         }
+        const pressedAt = Date.now()
         await page.mouse('mouseMoved', point)
         await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         const hold = Math.max(0, Math.min(60_000, Number(args?.hold_ms ?? 0)))
         if (hold > 0) await new Promise((settle) => setTimeout(settle, hold))
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
-        await settle(page)
+        await settle(page, 5000, pressedAt)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
         return said + cover + (followed === '' ? '' : ` (${followed})`)
       }),
     },
     {
-      name: 'sidecar_type', // ui-copy-ignore
+      name: 'browser_type', // ui-copy-ignore
       description: 'Type text into the sidecar browser — Chinese included — optionally pressing Enter. Pass a ref to focus that control first. With clear, the field is emptied first.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1505,7 +1845,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           field: { type: 'string', description: 'The field is called this on screen, when you have no number for it.' },
           submit: { type: 'boolean', description: 'Press Enter after typing.' },
           clear: { type: 'boolean', description: 'Select all and delete before typing.' },
-          mode: { type: 'string', enum: ['human', 'dom'], description: '"human" presses real keys and is what a page cannot tell from a person; "dom" sets the field and fires its input events, which leaves key handlers untouched. Omit to use what this chat set with sidecar_mode.' },
+          mode: { type: 'string', enum: ['human', 'dom'], description: '"human" presses real keys and is what a page cannot tell from a person; "dom" sets the field and fires its input events, which leaves key handlers untouched. Omit to use what this chat set with browser_mode.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         required: ['text'], // ui-copy-ignore
@@ -1521,13 +1861,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (wayOf(args) === 'dom') {
           let target = Number.isInteger(args?.ref) ? Number(args.ref) : undefined
           if (target === undefined && args?.field !== undefined) {
-            const found = await fieldByName(page, String(args.field))
+            const found = await fieldByName(page, String(args.field), refsFor().refs)
             if (found === null) return `${String(args.field)}: ${REF_GONE}`
             if (!Number.isInteger(found.ref)) return `${String(args.field)}: read the page and pass its number, since a field found by its label has none.`
             target = Number(found.ref)
             cover = found.lead
           }
-          if (target === undefined) return 'Acting on the page itself needs a number from sidecar_view: pass ref, or leave mode out to type like a person.'
+          if (target === undefined) return 'Acting on the page itself needs a number from browser_view: pass ref, or leave mode out to type like a person.'
           const said = await evaluate(page, writeInDom(target, String(args?.text ?? ''), { clear: args?.clear === true, submit: args?.submit === true })).catch(() => undefined)
           const wrote = asSpot(said)
           if (wrote?.ok !== true) return REF_GONE
@@ -1536,10 +1876,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           return `${called} (field now "${String(wrote.value).slice(0, 40)}")` + cover
         }
         if (args?.field !== undefined && args?.ref === undefined) {
-          const target = await fieldByName(page, String(args.field))
+          const target = await fieldByName(page, String(args.field), refsFor().refs)
           if (target === null) return `${String(args.field)}: ${REF_GONE}`
           cover = target.lead
-          await writeAt(page, { x: target.x, y: target.y }, String(args?.text ?? ''), { clear: args?.clear, submit: args?.submit === true })
+          const dated = await writeAt(page, { x: target.x, y: target.y }, String(args?.text ?? ''), { clear: args?.clear, submit: args?.submit === true, hint: target.name })
+          if (dated !== '') return dated + cover
           await settle(page)
           const called = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')
           return called + cover + ` (typed into "${target.name.slice(0, 50)}")` // ui-copy-ignore
@@ -1548,7 +1889,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const gate = await clearCover(page, Number(args.ref))
           cover = gate.note
           if (gate.cleared !== true) {
-            return `${cover.trim()}\nNot typed into: the field is still covered. Call sidecar_view and handle the overlay first.`
+            return `${cover.trim()}\nNot typed into: the field is still covered. Call browser_view and handle the overlay first.`
           }
           const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return spot.why ?? REF_GONE + cover
@@ -1560,7 +1901,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           await wait(80)
         }
         if (args?.clear === true) await clearFocus(page)
-        await page.humanType(String(args?.text ?? ''))
+        if (await dateLikeFocus(page) !== '') return (await fillDateLike(page, String(args?.text ?? ''))) + cover
+        const words = String(args?.text ?? '')
+        await typeInto(page, words, String(args?.field ?? ''))
+        const dated = await fillDateLike(page, words)
+        if (dated !== '') return dated + cover
         if (args?.submit === true) await pressKey(page, 'Enter')
         await settle(page)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')
@@ -1568,13 +1913,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_ask', // ui-copy-ignore
+      name: 'browser_ask', // ui-copy-ignore
       description: 'Say something to a chat that is open in the page — a model, a support window, a search box — and read its answer back in the same call. Types into the box, presses Enter, then waits until the answer stops growing. Use it to get a review or a picture prompt answered without a read between every step.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           text: { type: 'string', description: 'What to say.' },
-          ref: { type: 'integer', description: 'The box to type in, from sidecar_view. Omit to use the page\u2019s own chat box.' },
+          ref: { type: 'integer', description: 'The box to type in, from browser_view. Omit to use the page\u2019s own chat box.' },
           submit: { type: 'boolean', description: 'Press Enter to send. Default true.' },
           timeout_ms: { type: 'integer', description: 'How long to wait for the answer. Default 60000.' },
         },
@@ -1588,8 +1933,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withPage((page) => askInPage(page, args)),
     },
     {
-      name: 'sidecar_review', // ui-copy-ignore
-      description: 'Ask the chat in the page to review a repository and take its review back as a list: builds the message, sends it, waits for the answer, and writes the round down so the next round knows what was already said. Use it for a review round, not for a one-off question (that is sidecar_ask).',
+      name: 'browser_review', // ui-copy-ignore
+      description: 'Ask the chat in the page to review a repository and take its review back as a list: builds the message, sends it, waits for the answer, and writes the round down so the next round knows what was already said. Use it for a review round, not for a one-off question (that is browser_ask).',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
@@ -1597,7 +1942,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           commit: { type: 'string', description: 'The commit the review is about. Omit for the newest one.' },
           focus: { type: 'string', description: 'One thing to look at especially.' },
           diff: { type: 'string', description: 'The change to review, as a diff. Include it when the reviewer cannot open the repository itself.' },
-          ref: { type: 'integer', description: 'The box to type in, from sidecar_view. Omit to use the page\u2019s own chat box.' },
+          ref: { type: 'integer', description: 'The box to type in, from browser_view. Omit to use the page\u2019s own chat box.' },
           timeout_ms: { type: 'integer', description: 'How long to wait for the review. Default 120000.' },
         },
         required: ['repo'], // ui-copy-ignore
@@ -1640,8 +1985,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_review_verdict', // ui-copy-ignore
-      description: 'Record what happened to each point of the last review round, so the next round leaves settled points out: point numbers are the ones sidecar_review printed, and each mark is fixed, verified (checked in the code and the point does not apply), invalid, or open.',
+      name: 'browser_review_verdict', // ui-copy-ignore
+      description: 'Record what happened to each point of the last review round, so the next round leaves settled points out: point numbers are the ones browser_review printed, and each mark is fixed, verified (checked in the code and the point does not apply), invalid, or open.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
@@ -1651,7 +1996,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
             items: { // ui-copy-ignore
               type: 'object', // ui-copy-ignore
               properties: { // ui-copy-ignore
-                point: { type: 'integer', description: 'The point number sidecar_review printed, starting at 1.' },
+                point: { type: 'integer', description: 'The point number browser_review printed, starting at 1.' },
                 status: { type: 'string', enum: MARK_STATUS, description: 'fixed, verified, invalid, or open.' },
                 evidence: { type: 'string', description: 'Where the code shows it: file, test, or commit.' },
               },
@@ -1669,7 +2014,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} what was recorded. */
       execute: async (args) => {
         const written = markRound({ marks: Array.isArray(args?.mark) ? args.mark : [] })
-        if (written === null) return 'No review round to mark: play one with sidecar_review first.'
+        if (written === null) return 'No review round to mark: play one with browser_review first.'
         const counts = new Map()
         for (const mark of written.marks) counts.set(mark.status, (counts.get(mark.status) ?? 0) + 1)
         const said = [...counts].map(([status, n]) => `${n} ${status}`).join(', ')
@@ -1677,7 +2022,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       },
     },
     {
-      name: 'sidecar_key', // ui-copy-ignore
+      name: 'browser_key', // ui-copy-ignore
       description: 'Press one key in the sidecar browser: Enter, Tab, Escape, Backspace, Delete, arrows, Home, End, PageUp, PageDown, Space, letters and digits. Join keys with + to hold them together, and hold_ms to keep them down.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1709,7 +2054,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_scroll', // ui-copy-ignore
+      name: 'browser_scroll', // ui-copy-ignore
       description: 'Scroll the sidecar browser by wheel at its centre (negative goes up), then return what it shows.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1727,18 +2072,21 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
         await page.wheel({ x: Number(args?.x ?? VIEW.width / 2), y: Number(args?.y ?? VIEW.height / 2), dy: Number(args?.dy ?? 600) })
+        /* A wheel is a request, not a result: a list that loads more rows on
+           scroll has not answered yet when the wheel returns. Give the scroll
+           handler its turn, then let the page fall quiet. */
         await wait(200)
         const delta = Number(args?.dy ?? 600)
         return acted(page, args, () => look(page, { mode: 'text', maxChars: 4000 }), `scroll ${delta > 0 ? '+' : ''}${delta}`)
       }),
     },
     {
-      name: 'sidecar_hover', // ui-copy-ignore
+      name: 'browser_hover', // ui-copy-ignore
       description: 'Move the pointer onto a numbered control, so hover-only menus and tooltips open, then return what the page shows.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          ref: { type: 'integer', description: 'Number from sidecar_view.' },
+          ref: { type: 'integer', description: 'Number from browser_view.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         required: ['ref'], // ui-copy-ignore
@@ -1758,7 +2106,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_nav', // ui-copy-ignore
+      name: 'browser_nav', // ui-copy-ignore
       description: 'Change the sidecar browser\'s address: open a url, go back, go forward, or reload. Use this instead of clicking the browser chrome.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1788,7 +2136,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_do', // ui-copy-ignore
+      name: 'browser_do', // ui-copy-ignore
       description: 'Run several steps in one call and report one compact result: the whole of "click search, type a query, press Enter, wait for results" is one call instead of five. Steps run in order and stop at the first that cannot proceed. Each step: {ref, tap | text, submit}, {tap: "x,y"}, {tap: "Sign in"}, {field: "Email", text}, {text}, {key}, {scroll}, {wait_text}, {wait_gone}, {wait_url}, {wait_idle}, {eval}, {open}, {sleep_ms}. Waits know when the page has settled. A step that names a control clears a cookie banner in its way first.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1834,13 +2182,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (steps.length === 0) return 'Give at least one step.'
         const report = []
         for (const [index, step] of steps.entries()) {
+          const stepAt = Date.now()
           const said = await runStep(page, step ?? {}, refsFor().refs)
           const text = typeof said === 'string' ? said : said.text
           report.push(`${index + 1}. ${text}`)
           /* A step that never landed makes every later step a guess, so the
              batch ends here instead of typing into a page that is not there. */
           if (typeof said !== 'string' && said.blocked === true) {
-            return `${report.join('\n')}\nStopped after step ${index + 1}. Call sidecar_view and plan again from what the page shows now.`
+            return `${report.join('\n')}\nStopped after step ${index + 1}. Call browser_view and plan again from what the page shows now.`
           }
           /* A step can navigate straight onto Chrome's error page — a mistyped
              address, or a site that does not answer. The rest of the batch
@@ -1848,7 +2197,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
              here and says what really happened. */
           if (isErrorPage(page)) return `${report.join('\n')}\nStopped after step ${index + 1}: ${await unreachable(page)}`
           if (step?.sleep_ms === undefined && step?.wait_text === undefined && step?.wait_gone === undefined && step?.wait_url === undefined && step?.wait_idle === undefined) {
-            await settle(page, Number(step?.timeout ?? 5000))
+            await settle(page, Number(step?.timeout ?? 5000), stepAt)
           }
         }
         const mode = String(args?.read ?? 'text')
@@ -1866,13 +2215,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_extract', // ui-copy-ignore
+      name: 'browser_extract', // ui-copy-ignore
       description: 'Read the items a selector matches as one compact line each — lists, search results, tables, menus — instead of the whole page. Each row keeps its link when it has one. Use it when a page has more rows than the read budget allows; it costs a fraction of a full read.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           select: { type: 'string', description: 'CSS selector for the items, for example "ul.results > li".' },
-          ref: { type: 'integer', description: 'Only look inside this control, as numbered by the last sidecar_view.' },
+          ref: { type: 'integer', description: 'Only look inside this control, as numbered by the last browser_view.' },
           limit: { type: 'integer', description: 'Most rows to return. Default 40, at most 200.' },
         },
         required: ['select'], // ui-copy-ignore
@@ -1885,7 +2234,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       execute: async (args) => withRead((page) => extractRows(page, args)),
     },
     {
-      name: 'sidecar_eval', // ui-copy-ignore
+      name: 'browser_eval', // ui-copy-ignore
       description: 'Run JavaScript in the sidecar page and return its value. For what the numbered controls cannot express: reading a table, setting storage, filling a widget. The page must be opened first.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -1918,12 +2267,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_select', // ui-copy-ignore
+      name: 'browser_select', // ui-copy-ignore
       description: 'Choose an option in a dropdown, by visible label or value, then return the page.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          ref: { type: 'integer', description: 'Number of the select control from sidecar_view.' },
+          ref: { type: 'integer', description: 'Number of the select control from browser_view.' },
           field: { type: 'string', description: 'The dropdown is called this on screen, when you have no number for it.' },
           value: { type: 'string', description: 'Option label or value to choose.' },
         },
@@ -1935,20 +2284,30 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the page after. */
       execute: async (args) => withPage(async (page) => {
-        if (args?.ref === undefined) {
-          if (args?.field === undefined) return 'name the dropdown: pass its number from sidecar_view, or the words on screen that name it.' // ui-copy-ignore
-          const chosen = await evaluate(page, selectSpot(String(args.field), String(args?.value ?? '')))
+        let use = args
+        /* One dropdown on the page needs no naming: the value alone says which
+           one, and asking costs the caller a whole read. */
+        if (use?.ref === undefined && use?.field === undefined) {
+          const read = await readPage(page, { mode: 'text', maxChars: 1200, max: 200 })
+          const drops = read.controls.filter((control) => control.view !== false && ['select', 'combobox', 'listbox'].includes(String(control.kind)))
+          if (drops.length === 1) use = { ...use, ref: Number(drops[0].ref) }
+          else if (drops.length > 1) return `which dropdown: ${drops.slice(0, 5).map((one) => `${String(one.name).slice(0, 30)} (${String(one.ref)})`).join(' · ')}`
+          else return 'the page has no dropdown to choose in.' // ui-copy-ignore
+        }
+        if (use?.ref === undefined) {
+          const field = String(use.field)
+          const chosen = await evaluate(page, selectSpot(field, String(use?.value ?? '')))
           const said = typeof chosen === 'string' ? chosen : chosen?.error === undefined ? '' : String(chosen.error)
           if (said === '' || said.startsWith('no dropdown')) return said === '' ? 'the page did not answer; read it and try again.' : said // ui-copy-ignore
           await settle(page, 3000)
-          if (args?.read === true) return `${said}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
+          if (use?.read === true) return `${said}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
           return `${said} · ${await brief(page)}`
         }
-        const spot = await findAgain(page, Number(args?.ref))
+        const spot = await findAgain(page, Number(use?.ref))
         if (spot.gone === true) return spot.why ?? REF_GONE
-        const wanted = JSON.stringify(String(args?.value ?? ''))
-        const route = await contextFor(page, Number(args?.ref))
-        const local = route?.local ?? Number(args?.ref)
+        const wanted = JSON.stringify(String(use?.value ?? ''))
+        const route = await contextFor(page, Number(use?.ref))
+        const local = route?.local ?? Number(use?.ref)
         const said = await evaluate(page, `(() => {
   const reg = window.__dshRead
   const hit = reg && reg.find(${local})
@@ -1963,17 +2322,17 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   return 'chose ' + option.text.trim()
 })()`, route)
         await settle(page, 3000)
-        if (args?.read === true) return `${String(said)}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
+        if (use?.read === true) return `${String(said)}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
         return `${String(said)} · ${await brief(page)}`
       }),
     },
     {
-      name: 'sidecar_upload', // ui-copy-ignore
+      name: 'browser_upload', // ui-copy-ignore
       description: 'Put files into a file input on the page, by absolute path, then return the page. The file chooser never opens.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          ref: { type: 'integer', description: 'Number of the file input from sidecar_view.' },
+          ref: { type: 'integer', description: 'Number of the file input from browser_view.' },
           files: { type: 'array', items: { type: 'string' }, description: 'Absolute paths on this machine.' },
         },
         required: ['ref', 'files'], // ui-copy-ignore
@@ -2002,14 +2361,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_shot', // ui-copy-ignore
+      name: 'browser_shot', // ui-copy-ignore
       description: 'Save a PNG of the sidecar browser into the session folder and return its absolute path; when the current model accepts images the picture comes back in the same call, so a captcha, a chart or a broken layout can be looked at instead of guessed. Default is the visible screen; full takes the whole page, ref takes one control.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           name: { type: 'string', description: 'File name without extension.' },
           full: { type: 'boolean', description: 'The whole page, not just the screen.' },
-          ref: { type: 'integer', description: 'One control from sidecar_view.' },
+          ref: { type: 'integer', description: 'One control from browser_view.' },
           scale: { type: 'integer', description: 'Pixel ratio. Default 1; 2 is sharper and heavier.' },
         },
         additionalProperties: false,
@@ -2062,12 +2421,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         /* The route may not carry pictures at all: then the file path is all
            this call can give, and saying so is better than a silent path the
            next step assumes was looked at. */
-        if (image === undefined) return { text: `${said.text}\nno picture reached this result — sidecar_view reads the words here, sidecar_grab returns a picture as a file` }
+        if (image === undefined) return { text: `${said.text}\nno picture reached this result — browser_view reads the words here, browser_grab returns a picture as a file` }
         return { text: said.text, image }
       },
     },
     {
-      name: 'sidecar_grab', // ui-copy-ignore
+      name: 'browser_grab', // ui-copy-ignore
       description: 'Save the picture on the page as a file: an image, a chart, a drawing surface. Picks the largest one, or the one inside a given control.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2120,7 +2479,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_state', // ui-copy-ignore
+      name: 'browser_state', // ui-copy-ignore
       description: 'Report the sidecar browser: whether it runs, its profile, address, title, how many people are watching its mirror, and how many times a call had to find a control again after the page redrew it.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: TEXT_OUTPUT, // ui-copy-ignore
@@ -2141,6 +2500,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `tab list ${[...sidecar.pages.entries()].map(([key, each]) => `${key.slice(-8)}=${String(each.url)}=${each.cdp?.closed === true ? 'closed' : 'open'}`).join(' | ')}`, // ui-copy-ignore
           `default tab ${String(sidecar.page?.url)}`, // ui-copy-ignore
           state.headless === false ? 'showing a window' : 'no window',
+          sidecar.flash ? 'Flash-era runtime' : 'Chrome runtime',
           `profile ${String(state.profile)}`,
           `url ${String(state.url)}`,
           `title ${String(state.title)}`,
@@ -2157,7 +2517,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
 
     {
-      name: 'sidecar_resume', // ui-copy-ignore
+      name: 'browser_resume', // ui-copy-ignore
       description: 'Take the page back from the person at the mirror: clears the hold so the next action is sent at once, instead of waiting the few seconds out.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: TEXT_OUTPUT, // ui-copy-ignore
@@ -2170,7 +2530,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       },
     },
     {
-      name: 'sidecar_downloads', // ui-copy-ignore
+      name: 'browser_downloads', // ui-copy-ignore
       description: 'List what this browser has downloaded, newest first, with the file name, its size and when it arrived.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: TEXT_OUTPUT, // ui-copy-ignore
@@ -2185,7 +2545,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
 
     {
-      name: 'sidecar_drag', // ui-copy-ignore
+      name: 'browser_drag', // ui-copy-ignore
       description: 'Drag from one place to another with real mouse steps: from a ref or a point, to a point or offset. Use it for sliders, dashboards and drag-and-drop lists.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2228,12 +2588,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_check', // ui-copy-ignore
+      name: 'browser_check', // ui-copy-ignore
       description: 'Set a checkbox, radio or switch to a known state, and say whether it took. Clicking blindly flips a control that is already right; this one looks first.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          ref: { type: 'integer', description: 'Control number from sidecar_view.' },
+          ref: { type: 'integer', description: 'Control number from browser_view.' },
           checked: { type: 'boolean', description: 'Wanted state. Omit to flip it.' },
           read: { type: 'boolean', description: 'Read the page after.' },
         },
@@ -2269,7 +2629,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_wait', // ui-copy-ignore
+      name: 'browser_wait', // ui-copy-ignore
       description: 'Wait until the page shows a piece of text, stops showing it, reaches an address, or goes quiet. Cheaper than reading in a loop.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2305,7 +2665,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_dialog', // ui-copy-ignore
+      name: 'browser_dialog', // ui-copy-ignore
       description: 'Answer the alert, confirm or prompt the page is showing, or read what it asks. A dialog blocks the page until it is answered, so nothing else works while one is open.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2333,7 +2693,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_console', // ui-copy-ignore
+      name: 'browser_console', // ui-copy-ignore
       description: 'The console lines and errors this page has produced, newest last. Use it when a click seemed to do nothing.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2351,7 +2711,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_failed', // ui-copy-ignore
+      name: 'browser_failed', // ui-copy-ignore
       description: 'Requests this page tried and that failed, newest last. A blank area is often one of these.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2369,7 +2729,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_cookie',
+      name: 'browser_cookie',
       description: 'Read or change the cookies this browser keeps. Login state is a cookie, so this is how you check a sign-in and how you keep one.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2413,7 +2773,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_clipboard', // ui-copy-ignore
+      name: 'browser_clipboard', // ui-copy-ignore
       description: 'Read the sidecar browser\'s clipboard, or put text on it and paste it with a key press. For a page that only copies through a button, click it then read here.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2436,7 +2796,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       }),
     },
     {
-      name: 'sidecar_network', // ui-copy-ignore
+      name: 'browser_network', // ui-copy-ignore
       description: 'List the responses the page has received, newest first: method, status, type and address. Use it when a page fills itself from the network and the screen does not say why.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2462,7 +2822,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
 
     {
-      name: 'sidecar_tabs', // ui-copy-ignore
+      name: 'browser_tabs', // ui-copy-ignore
       description: 'List the pages open in the browser, switch the mirror to another one, or close one. Use it when a site opens a link in a tab of its own.',
       parameters: {
         type: 'object', // ui-copy-ignore
@@ -2489,15 +2849,19 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           return `tab ${index} · ${String(next?.url ?? '')}`
         }
         if (action === 'close') {
+          /* Say what was closed, not what is left: after the close the page
+             that was at that row is gone and reads back as about:blank. */
+          const before = await sidecar.tabs(currentSession())
+          const gone = String(before[index]?.url ?? '')
           await sidecar.closeTab(index, currentSession())
-          return `closed tab ${index} · ${String((sidecar.pageFor(currentSession()) ?? sidecar.page)?.url ?? '')}`
+          return `closed tab ${index} · ${gone}`
         }
         throw new Error(`sidecar: unknown action ${action}`)
       }),
     },
 
     {
-      name: 'sidecar_pdf', // ui-copy-ignore
+      name: 'browser_pdf', // ui-copy-ignore
       description: 'Print the page to a PDF and return its path. Useful when the person wants the document rather than a picture of it.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: TEXT_OUTPUT, // ui-copy-ignore

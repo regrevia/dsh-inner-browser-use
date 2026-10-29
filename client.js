@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
     const DICT = {
       zh: {
         'side.label': '后台浏览器',
-        'side.empty': '还没有打开的页面，在上方地址栏输入网址',
+        'side.empty': '后台的独立 Chrome 还没有页面，在上方地址栏输入网址',
         'side.restore': '恢复上次的页面',
         'side.connecting': '正在连接…',
         'side.failed': '画面没有连上',
@@ -45,7 +45,7 @@ window.__ModuleLoader__.load({
       },
       en: {
         'side.label': 'Background browser',
-        'side.empty': 'No page open; type an address above',
+        'side.empty': 'The background Chrome has no page yet; type an address above',
         'side.restore': 'Reopen the last page',
         'side.connecting': 'Connecting…',
         'side.failed': 'The picture did not connect',
@@ -646,21 +646,35 @@ window.__ModuleLoader__.load({
         const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
         post('/sidecar/input', { kind: 'wheel', x: point.x, y: point.y, dx: event.deltaX, dy: event.deltaY })
       }
+      /* The page's keys are the person's keys: shift makes a capital, and a
+         shortcut stays a shortcut so Ctrl+V pastes and Ctrl+A selects. */
+      const modsOf = (event) => (event.altKey === true ? 1 : 0)
+        | (event.ctrlKey === true ? 2 : 0)
+        | (event.metaKey === true ? 4 : 0)
+        | (event.shiftKey === true ? 8 : 0)
       const onKeyDown = (event) => {
         touched()
         /* A key still being composed belongs to the IME, not to the page. */
         if (event.isComposing === true) return
         const named = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']
+        const modifiers = modsOf(event)
         if (named.includes(event.key) === true) {
           event.preventDefault()
-          post('/sidecar/input', { kind: 'key', key: event.key, code: event.code || event.key, keyCode: event.keyCode || 0 }) // ui-copy-ignore
+          post('/sidecar/input', { kind: 'key', key: event.key, code: event.code || event.key, keyCode: event.keyCode || 0, modifiers }) // ui-copy-ignore
           return
         }
-        if (event.metaKey === true || event.ctrlKey === true || event.altKey === true) return
-        if (event.key != null && event.key.length === 1) {
-          event.preventDefault()
-          post('/sidecar/input', { kind: 'text', text: event.key })
-        }
+        if (event.key == null || event.key.length !== 1) return
+        event.preventDefault()
+        /* A shortcut carries no text of its own: the page decides what it does. */
+        const shortcut = (modifiers & 7) !== 0
+        post('/sidecar/input', {
+          kind: 'key',
+          key: event.key,
+          code: event.code || event.key,
+          keyCode: event.keyCode || 0,
+          modifiers,
+          text: shortcut ? undefined : event.key,
+        })
       }
       const goto = () => {
         const address = String(draft ?? '').trim()

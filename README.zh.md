@@ -9,17 +9,17 @@ profile，不是产品自带的那个浏览页签：右栏放的是它的画面�
 
 | 工具 | 作用 |
 | --- | --- |
-| `sidecar_open` | 启动浏览器（已在跑就复用）并打开一个地址。传 `headless: false` 会改为在桌面上开真实窗口。 |
-| `sidecar_view` | 返回地址、标题、编号成 `1 … 120` 的控件，以及可见文字。 |
-| `sidecar_extract` | 按 CSS 选择器把列表项读成一行一条、带链接，比整页读省得多。 |
-| `sidecar_click` | 点编号控件，或点 `x`/`y` 坐标。`double: true` 双击。控件被横幅或弹层挡着时，先关掉它再点。 |
-| `sidecar_type` | 往焦点输入框输入文字，也可以先点一个编号控件。中文整段送进去。`submit: true` 回车提交。 |
-| `sidecar_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
-| `sidecar_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
-| `sidecar_shot` | 存一张原尺寸 PNG 到 `~/.dsh-inner-browser-use/screenshots`，返回路径。 |
-| `sidecar_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题，以及有几个右栏在看它。 |
+| `browser_open` | 启动浏览器（已在跑就复用）并打开一个地址。传 `headless: false` 会改为在桌面上开真实窗口。 |
+| `browser_view` | 返回地址、标题、编号成 `1 … 120` 的控件，以及可见文字。 |
+| `browser_extract` | 按 CSS 选择器把列表项读成一行一条、带链接，比整页读省得多。 |
+| `browser_click` | 点编号控件，或点 `x`/`y` 坐标。`double: true` 双击。控件被横幅或弹层挡着时，先关掉它再点。 |
+| `browser_type` | 往焦点输入框输入文字，也可以先点一个编号控件。中文整段送进去。`submit: true` 回车提交。 |
+| `browser_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
+| `browser_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
+| `browser_shot` | 存一张原尺寸 PNG 到 `~/.dsh-inner-browser-use/screenshots`，返回路径。 |
+| `browser_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题，以及有几个右栏在看它。 |
 
-`sidecar_view` 一次给一页文本：
+`browser_view` 一次给一页文本：
 
 ```
 https://example.com
@@ -98,12 +98,18 @@ dsh plugin install ./dsh-inner-browser-use-0.12.1.tgz
 第一次调用会启动浏览器，并把镜像放进这个会话的右栏。没有调用就不会有东西自己打开：没要过
 页面的会话，右栏保持原样。
 
+## Flash 页面
+
+`browser_open` 带 `flash: true` 时，这个地址改用插件自带的 Flash 运行时（Electron 87 + Pepper Flash）在**离屏窗口**里播放：窗口一次都不显示，Dock 与菜单栏都不出现，画面只在发起会话的右栏里。切换回来再调一次 `flash: false`，选择会记住。运行时首次使用时下载到 `~/.dsh/inner-browser-use/flash/`，不需要单独安装播放器。
+
+`npm run flash-hidden` 会真起一次运行时并断言「窗口未显示 / 帧持续产出 / 两帧不同」；`npm run flash-mirror` 量镜像帧率与按下/抬起/按键耗时；`npm run flash-tools` 量工具层成本（奥拉星登录页实测：点击 28 ms、输入 14 ms、`browser_view` 31 ms；同一页后续回话只说标题，点击 22 字符、输入 13 字符）；`npm run flash-local` 用仓库自带的 SWF 在本机起页，不依赖网络，量首帧与输入直达。
+
 ## 框架、下载、网络
 
 - **iframe 能读，跨站也能。** 不管是和页面共用进程，还是 Chrome 单独给一个进程，里面的控件都和页面自己的控件一样有编号；点击按框架在页面上的实际位置落点。
-- **下载会落到磁盘。** 点一下就下载的文件写在这个浏览器自己的 profile 目录里，`sidecar_downloads` 报出文件名、大小和到达时间。
-- **能看到网络。** `sidecar_network` 倒序列出页面请求了什么，自己用接口填内容、屏幕上又看不出原因的页面，不用截图去猜。
-- **遮罩不吞动作。** 盖在按钮上的 cookie 横幅会按人的做法先关掉再点下去，同一次调用里完成；`sidecar_do` 的每一步都一样。写着删除、支付、退出的遮罩只报告，不代按。
+- **下载会落到磁盘。** 点一下就下载的文件写在这个浏览器自己的 profile 目录里，`browser_downloads` 报出文件名、大小和到达时间。
+- **能看到网络。** `browser_network` 倒序列出页面请求了什么，自己用接口填内容、屏幕上又看不出原因的页面，不用截图去猜。
+- **遮罩不吞动作。** 盖在按钮上的 cookie 横幅会按人的做法先关掉再点下去，同一次调用里完成；`browser_do` 的每一步都一样。写着删除、支付、退出的遮罩只报告，不代按。
 
 ## 不做什么
 

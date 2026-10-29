@@ -6,7 +6,8 @@
  * is listed, so the two cannot drift apart again.
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { dirname, join, relative, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -78,12 +79,17 @@ test('a pack built from package.json files carries everything the plugin needs',
         if (name.endsWith(suffix)) wanted.push(`${folder}/${name}`)
       }
     }
-    for (const file of wanted) {
+    /** Copy a file, or a whole folder npm was told to ship, into the stage. */
+    const stage = (file) => {
       const from = join(root, file)
-      if (!statSync(from).isFile()) continue
+      if (statSync(from).isDirectory()) {
+        for (const name of readdirSync(from)) stage(`${file.replace(/\/$/, '')}/${name}`)
+        return
+      }
       mkdirSync(join(staged, dirname(file)), { recursive: true })
       copyFileSync(from, join(staged, file))
     }
+    for (const file of wanted) stage(file)
     const tarball = join(dir, 'pack.tgz')
     execFileSync('tar', ['czf', tarball, '-C', staged, '.'])
     const listing = execFileSync('tar', ['tzf', tarball], { encoding: 'utf8' })
@@ -101,4 +107,32 @@ test('a pack built from package.json files carries everything the plugin needs',
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('a Flash page opens without claiming a window appeared', () => {
+  const tools = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /flash: args\?\.flash/)
+  assert.match(tools, /sidecar\.headless === false && sidecar\.flash !== true/)
+})
+
+test('a run that finds something wrong says so through its exit code, not a hard exit', () => {
+  /* process.exit() inside a script skips whatever cleanup is queued and shows up
+     in reviews as a crash risk; the scripts here only own their own process, so
+     they set the code and let the process end. */
+  const walked = []
+  const sweep = (dir) => {
+    for (const one of readdirSync(dir, { withFileTypes: true })) {
+      const at = join(dir, one.name)
+      if (one.isDirectory()) sweep(at)
+      else if (one.name.endsWith('.mjs') && !one.name.startsWith('.')) walked.push(at)
+    }
+  }
+  sweep(join(root, 'scripts'))
+  sweep(join(root, 'tools'))
+  assert.ok(walked.length > 10)
+  const offenders = walked.filter((one) => readFileSync(one, 'utf8').includes('process.exit('))
+  assert.deepEqual(offenders, [])
+  const refused = spawnSync(process.execPath, [join(root, 'tools', 'save-client.mjs')], { input: '', encoding: 'utf8' })
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /empty input: refused/)
 })

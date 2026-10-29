@@ -1,6 +1,6 @@
 {
   "name": "dsh-inner-browser-use",
-  "version": "0.34.32",
+  "version": "0.34.82",
   "description": "An agent-owned Chromium sidecar mirrored into the DeepSeek Harness right column: the agent drives it, the person watches and can take the mouse, and logins survive restarts.",
   "type": "module",
   "main": "index.js",
@@ -22,6 +22,11 @@
     "cordis.patch.yml",
     "icon.svg",
     "scripts/doctor.mjs",
+    "scripts/check-flash-window.mjs",
+    "scripts/check-flash-mirror.mjs",
+    "scripts/check-flash-local.mjs",
+    "scripts/check-flash-tools.mjs",
+    "runtime/",
     "docs/",
     "README.md",
     "README.zh.md",
@@ -51,7 +56,11 @@
     "game": "node scripts/check-game.mjs",
     "modes": "node scripts/check-modes.mjs",
     "ready": "node scripts/check-prepare.mjs",
-    "swf": "node scripts/swf-inspect.mjs"
+    "swf": "node scripts/swf-inspect.mjs",
+    "flash-hidden": "node scripts/check-flash-window.mjs",
+    "flash-mirror": "node scripts/check-flash-mirror.mjs",
+    "flash-tools": "node scripts/check-flash-tools.mjs",
+    "flash-local": "node scripts/check-flash-local.mjs"
   },
   "license": "MIT",
   "author": {

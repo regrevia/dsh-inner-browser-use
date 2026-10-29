@@ -33,7 +33,7 @@ Expected before any tool call: `"alive":false`, `"profile":"default"`,
 
 ## 2. A tool opens its own page
 
-Ask the model `用 sidecar_open 打开 https://www.bing.com`, or call it yourself.
+Ask the model `用 browser_open 打开 https://www.bing.com`, or call it yourself.
 Expected: the result names the address and title, and this chat's right column
 shows the picture in a tab called **后台浏览器** or **Background browser**.
 `doctor.mjs` now reads `attached, headless`, `viewers 1`, frames climbing.
@@ -43,8 +43,8 @@ shows the picture in a tab called **后台浏览器** or **Background browser**.
 - `"alive":false` with a non-empty `"error"`: Chrome did not start. Check the
   binary at a listed path, and on macOS that the launch carried
   `--use-mock-keychain`.
-- Frames flat while viewers is 1: the screencast stalled. `sidecar_stop`, then
-  `sidecar_open` again.
+- Frames flat while viewers is 1: the screencast stalled. `browser_stop`, then
+  `browser_open` again.
 - `"pointer":null`: no tool input yet; it fills on the first click or move.
 
 ## 3. Only the chat that asked
@@ -60,18 +60,18 @@ A mirror that opens in every chat means the page half is not comparing
 - **Hover** the search field: your cursor turns into an I-beam, the black arrow
   does not move. An arrow that follows the mouse means the pointer paths are
   crossed.
-- **Type** Chinese with `sidecar_type { "text": "…", "submit": true }`: the
+- **Type** Chinese with `browser_type { "text": "…", "submit": true }`: the
   results page appears and the field holds characters, not boxes.
-- **Backspace** with `sidecar_key { "key": "Backspace" }` in a filled field:
+- **Backspace** with `browser_key { "key": "Backspace" }` in a filled field:
   one character goes. Nothing happening means the key reached the document.
-- **Screenshot** with `sidecar_shot {}`: an absolute path under
+- **Screenshot** with `browser_shot {}`: an absolute path under
   `~/.dsh-inner-browser-use/screenshots`. A black picture means the screencast
   was not running when the frame was taken.
 
 ## 5. Stop, then open again
 
-`sidecar_stop` reads `"alive":false` and leaves the profile alone.
-`sidecar_open https://www.bing.com` brings the same profile back, still signed
+`browser_stop` reads `"alive":false` and leaves the profile alone.
+`browser_open https://www.bing.com` brings the same profile back, still signed
 in from the first pass.
 
 Signed out after the restart: Chrome came up on another profile, or was killed
@@ -140,13 +140,13 @@ broke. Two of them cover a cross-site frame, which Chrome runs in its own
 process. Three cover a control under an overlay: the click clears a cookie
 banner and lands (`under clicked`), typing into a field under the same banner
 works, and a modal that offers to delete the account is reported without
-anything being pressed. Two more drive the same overlay through `sidecar_do`:
+anything being pressed. Two more drive the same overlay through `browser_do`:
 a batch step clears the banner before it clicks, and a batch step fills a field
 that was under it. One more counts the recoveries: after the redraw check, the
 state line says at least one ref was followed to its new number. Three cover a
 hand on the mirror: while the person is using it a read still works
 (`hold-allows-read`), an action is refused and names both ways out
-(`hold-refuses-action`), and `sidecar_resume` hands the page back so the same
+(`hold-refuses-action`), and `browser_resume` hands the page back so the same
 click goes through (`resume-lets-go`).
 
 ## Who the mirror serves

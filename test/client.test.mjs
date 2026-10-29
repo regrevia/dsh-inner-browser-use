@@ -273,13 +273,21 @@ test('a key reaches the browser as itself, and a composed word as text', () => {
   const stage = body.children[1]
   const field = stage.children.find((child) => child.type === 'textarea')
 
-  const plain = (key, keyCode) => ({ key, code: key, keyCode, isComposing: false, metaKey: false, ctrlKey: false, altKey: false, preventDefault() {} }) // ui-copy-ignore
+  const plain = (key, keyCode, extra = {}) => ({ key, code: key, keyCode, isComposing: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, preventDefault() {}, ...extra }) // ui-copy-ignore
 
   stage.props.onKeyDown(plain('Backspace', 8))
-  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Backspace', code: 'Backspace', keyCode: 8, session: 'chat-shown' })
+  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers: 0, session: 'chat-shown' })
 
   stage.props.onKeyDown(plain('Enter', 13))
-  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Enter', code: 'Enter', keyCode: 13, session: 'chat-shown' })
+  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'Enter', code: 'Enter', keyCode: 13, modifiers: 0, session: 'chat-shown' })
+
+  /* A capital keeps its shift, so the page gets `A` and not `a`. */
+  stage.props.onKeyDown(plain('A', 65, { shiftKey: true }))
+  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'A', code: 'A', keyCode: 65, modifiers: 8, text: 'A', session: 'chat-shown' })
+
+  /* A shortcut stays a shortcut, and carries no text of its own. */
+  stage.props.onKeyDown(plain('v', 86, { metaKey: true }))
+  assert.deepEqual(posts.at(-1).body, { kind: 'key', key: 'v', code: 'v', keyCode: 86, modifiers: 4, session: 'chat-shown' })
 
   /* A key the IME is still composing is its own, not the page's. */
   const held = plain('a', 65)

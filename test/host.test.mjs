@@ -141,58 +141,59 @@ test('a second mount of the same tools is a warning, not a crash', () => {
 
 test('registers the sidecar tools and nothing else', () => {
   assert.deepEqual([...defs.keys()].sort(), [
-    'sidecar_ask',
-    'sidecar_check',
-    'sidecar_click',
-    'sidecar_clipboard',
-    'sidecar_console',
-    'sidecar_cookie',
-    'sidecar_dialog',
-    'sidecar_do',
-    'sidecar_downloads',
-    'sidecar_drag',
-    'sidecar_eval',
-    'sidecar_extract',
-    'sidecar_failed',
-    'sidecar_grab',
-    'sidecar_hover',
-    'sidecar_key',
-    'sidecar_mode',
-    'sidecar_nav',
-    'sidecar_network',
-    'sidecar_open',
-    'sidecar_pdf',
-    'sidecar_prepare',
-    'sidecar_resume',
-    'sidecar_review',
-    'sidecar_review_verdict',
-    'sidecar_scroll',
-    'sidecar_select',
-    'sidecar_shot',
-    'sidecar_state',
-    'sidecar_tabs',
-    'sidecar_type',
-    'sidecar_upload',
-    'sidecar_view',
-    'sidecar_wait',
+    'browser_ask',
+    'browser_check',
+    'browser_click',
+    'browser_clipboard',
+    'browser_console',
+    'browser_cookie',
+    'browser_dialog',
+    'browser_do',
+    'browser_downloads',
+    'browser_drag',
+    'browser_eval',
+    'browser_extract',
+    'browser_failed',
+    'browser_grab',
+    'browser_hover',
+    'browser_key',
+    'browser_mode',
+    'browser_nav',
+    'browser_network',
+    'browser_open',
+    'browser_pdf',
+    'browser_prepare',
+    'browser_resume',
+    'browser_review',
+    'browser_review_verdict',
+    'browser_scroll',
+    'browser_select',
+    'browser_shot',
+    'browser_state',
+    'browser_tabs',
+    'browser_type',
+    'browser_upload',
+    'browser_view',
+    'browser_wait',
   ])
   for (const [name, definition] of defs) {
-    assert.ok(name.startsWith('sidecar_'), `${name} drives its own browser`)
+    assert.ok(name.startsWith('browser_'), `${name} drives its own browser`)
     assert.equal(definition.parameters.additionalProperties, false)
     assert.equal(definition.output.schema.type, 'object')
     assert.deepEqual(definition.output.schema.required, ['text'])
     assert.deepEqual(definition.output.render({}, { text: 'hi' }), [{ type: 'text', text: 'hi' }])
     /* Reading where the sidecar stands is safe anywhere; driving it is not. */
-    assert.equal(definition.isConcurrencySafe(), ['sidecar_state', 'sidecar_resume', 'sidecar_console', 'sidecar_failed', 'sidecar_downloads', 'sidecar_network', 'sidecar_extract', 'sidecar_mode'].includes(name))
+    assert.equal(definition.isConcurrencySafe(), ['browser_state', 'browser_resume', 'browser_console', 'browser_failed', 'browser_downloads', 'browser_network', 'browser_extract', 'browser_mode'].includes(name))
   }
 })
 
 test('the model is told to use the sidecar and the right column', () => {
   assert.equal(prompts.length, 1)
   assert.equal(prompts[0].name, 'browser-in-this-chat')
-  assert.match(prompts[0].text, /sidecar_view/)
+  assert.match(prompts[0].text, /browser_view/)
   assert.match(prompts[0].text, /右栏/)
-  assert.doesNotMatch(prompts[0].text, /browser_click/)
+  /* One name for one thing: the prompt never calls it a sidecar. */
+  assert.doesNotMatch(prompts[0].text, /sidecar/)
 })
 
 test('a chat with no tab receives nothing', () => {
@@ -360,7 +361,7 @@ test('Chrome\'s own error page is never read as the site', async () => {
   assert.match(said, /the network could not reach that address/)
   assert.match(said, /never-resolves-this.invalid/, 'the address that failed is named')
   assert.match(said, /not the site/, 'a model must not quote it as content')
-  assert.match(said, /sidecar_nav/, 'the sentence carries the way out')
+  assert.match(said, /browser_nav/, 'the sentence carries the way out')
   // A real page costs one comparison and says nothing.
   assert.equal(isErrorPage({ url: 'https://example.com/' }), false)
   assert.equal(await unreachable({ url: 'https://example.com/' }), '')
@@ -477,7 +478,7 @@ test('a field with its words in a div above it can still be found', async () => 
 test('the typing tool can be told which field by its words', async () => {
   const { sidecarTools } = await import('../tools.js?v=1')
   const tools = sidecarTools({ state: () => ({}) }, { last: undefined })
-  const type = tools.find((tool) => tool.name === 'sidecar_type')
+  const type = tools.find((tool) => tool.name === 'browser_type')
   assert.ok(type !== undefined)
   assert.ok(type.parameters.properties.field !== undefined)
   assert.ok(type.parameters.properties.ref !== undefined)
@@ -493,7 +494,7 @@ test('a dropdown can be chosen by the words that name it', async () => {
   /* Both the name and the option are data, never code. */
   assert.ok(selectSpot("say \"hi\"", "it's").includes('say \\"hi\\"'))
   const { sidecarTools } = await import('../tools.js?v=1')
-  const select = sidecarTools({ state: () => ({}) }, { last: undefined }).find((tool) => tool.name === 'sidecar_select')
+  const select = sidecarTools({ state: () => ({}) }, { last: undefined }).find((tool) => tool.name === 'browser_select')
   assert.ok(select.parameters.properties.field !== undefined)
   assert.deepEqual(select.parameters.required, ['value'])
 })
@@ -542,12 +543,55 @@ test('a read says when the answer is a picture', async () => {
   const { renderPage } = await import('../read.js?v=1')
   const said = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { kind: 'img', width: 140, height: 90, name: 'Chart', colors: 40, flat: 0.1 } }, { mode: 'text' })
   assert.match(said, /picture 140x90 a picture with detail "Chart"/)
-  assert.match(said, /sidecar_grab saves it as a file/)
+  assert.match(said, /browser_grab saves it as a file/)
   /* A page with words does not get the line: it is not the answer there. */
   const words = renderPage({ url: 'https://example.test', title: 'Home', text: 'some words', textChars: 10, controls: [], picture: null }, { mode: 'text' })
   assert.doesNotMatch(words, /picture /)
   const blank = renderPage({ url: 'https://example.test/pic', title: '', text: '', textChars: 0, controls: [], picture: { kind: 'img', width: 800, height: 600, name: '', colors: 1, flat: 1 } }, { mode: 'text' })
   assert.match(blank, /mostly one colour/)
+})
+
+test('typing asks the box for one paste, and the keys in order only where they are needed', async () => {
+  const { typeInto } = await import('../tools.js?v=1')
+  const log = []
+  const box = { quickType: async (text) => { log.push(`paste:${text}`); return true }, humanType: async (text) => { log.push(`keys:${text}`) }, insertText: async () => undefined }
+  await typeInto(box, 'hello', 'Note')
+  assert.deepEqual(log, ['paste:hello'])
+  /* A box that reacts as you type gets the keys, so its list really appears. */
+  log.length = 0
+  await typeInto(box, 'shoes', 'Site search')
+  assert.deepEqual(log, ['keys:shoes'])
+  /* When the paste does not take, the keys are the fallback. */
+  log.length = 0
+  box.quickType = async (text) => { log.push(`paste:${text}`); return false }
+  await typeInto(box, 'hello', 'Note')
+  assert.deepEqual(log, ['paste:hello', 'keys:hello'])
+  assert.deepEqual(log.filter((line) => line.startsWith('keys')), ['keys:hello'])
+})
+
+test('a page that repeats a word down a list costs one line, not thirty', async () => {
+  const { renderPage } = await import('../read.js?v=1')
+  const controls = Array.from({ length: 30 }, (_, i) => ({ ref: i + 1, kind: 'button', name: 'Add to cart', value: '', view: true }))
+  const read = { url: 'https://example.test/list', title: 'List', text: controls.map(() => 'Add to cart').join(' '), textChars: 360, controls }
+  const said = renderPage(read, { mode: 'text' })
+  assert.match(said, /1 \[btn\] Add to cart ×30/)
+  assert.equal(said.split('\n').filter((line) => line.includes('Add to cart')).length, 1)
+  /* Asking for links or forms is asking for every one of them. */
+  const everyOne = renderPage(read, { mode: 'full' })
+  assert.equal(everyOne.split('\n').filter((line) => /^\d+ \[btn\] Add to cart/.test(line)).length, 30)
+})
+
+test('words that are only the controls again are not printed twice', async () => {
+  const { renderPage } = await import('../read.js?v=1')
+  const controls = [{ ref: 1, kind: 'link', name: 'Product 0', value: '', view: true }, { ref: 2, kind: 'button', name: 'Add to cart', value: '', view: true }]
+  const words = 'Product 0 Add to cart '.repeat(12)
+  const listing = renderPage({ url: 'https://example.test/list', title: 'List', text: words, textChars: words.length, controls }, { mode: 'text' })
+  assert.doesNotMatch(listing, /Product 0 Add to cart /)
+  assert.match(listing, /the words here are the 2 controls above/)
+  /* An article's prose is the answer: it stays. */
+  const prose = 'The bridge opens in spring. '.repeat(20)
+  const article = renderPage({ url: 'https://example.test/news', title: 'News', text: prose, textChars: prose.length, controls }, { mode: 'text' })
+  assert.match(article, /The bridge opens in spring/)
 })
 
 test('a picture that never arrived is named', async () => {
@@ -570,8 +614,8 @@ test('a second read of the same page is one line', async () => {
 
 test('there is a tool that asks a chat in the page and brings the answer back', async () => {
   const { sidecarTools } = await import('../tools.js?v=1')
-  const ask = sidecarTools({ alive: false }, { refs: [], at: 0 }).find((tool) => tool.name === 'sidecar_ask')
-  assert.ok(ask, 'sidecar_ask is registered')
+  const ask = sidecarTools({ alive: false }, { refs: [], at: 0 }).find((tool) => tool.name === 'browser_ask')
+  assert.ok(ask, 'browser_ask is registered')
   assert.match(ask.description, /read its answer back in the same call/)
   assert.deepEqual(Object.keys(ask.parameters.properties), ['text', 'ref', 'submit', 'timeout_ms'])
   assert.deepEqual(ask.parameters.required, ['text'])
@@ -693,6 +737,19 @@ test('a running browser that nobody is drawing asks its own chat to draw it agai
   assert.equal(wantsMirrorAgain({ ...base, wanted: 'session-ab' }), false)
 })
 
+test('a chat that is already polling is not asked again, a quiet one is', async () => {
+  const { nudgeDue } = await import('../index.js')
+  /* The pane polls every 2.5 s: it is awake and knows the frames are missing. */
+  assert.equal(nudgeDue({ askedAgo: 2_500, sinceLast: 60_000 }), false)
+  /* No poll for a while: this pane may have lost the stream, one ask is due. */
+  assert.equal(nudgeDue({ askedAgo: 20_000, sinceLast: 60_000 }), true)
+  /* Asked a moment ago: give the client time to open the stream before asking. */
+  assert.equal(nudgeDue({ askedAgo: 20_000, sinceLast: 2_000 }), false)
+  /* A chat that never polled has no column to repair. */
+  assert.equal(nudgeDue({ askedAgo: -1, sinceLast: 60_000 }), false)
+  assert.equal(nudgeDue({}), false)
+})
+
 test('picking a surviving browser up names the chat, so that chat gets its own tab back', async () => {
   const { adoptOptions, needsTab } = await import('../index.js')
   assert.deepEqual(adoptOptions('session-1', 'https://example.com/a'), { session: 'session-1', url: 'https://example.com/a' })
@@ -710,4 +767,34 @@ test('a running browser with no tab for this chat is a poll that reopens one', a
   /* Another chat's column and an unnamed poll are not this chat's to repair. */
   assert.equal(needsTab({ alive: false }, 'session-a', 'session-b'), false)
   assert.equal(needsTab({ alive: false }, '', 'session-a'), false)
+})
+
+test('a mirror ask never leaks to a different chat, however similar the ids look', () => {
+  /* The column is global and the ids are long: an alias guessed by "which chat
+     polled last" once put the mirror in a stranger's sidebar. Asking is the only
+     way to receive it, and the ask is compared as one exact string. */
+  const bridge = new Bridge()
+  /** @param {string} tag - which stream. @returns {any} a response-shaped sink. */
+  const sink = (tag) => ({ tag, frames: [], end() {}, write(frame) { this.frames.push(frame) } })
+  const mine = sink('mine')
+  const stranger = sink('stranger')
+  bridge.attach('session-aaaa-1111', mine)
+  bridge.attach('session-aaaa-2222', stranger)
+  assert.equal(bridge.want('session-aaaa-1111'), true)
+  assert.equal(mine.frames.length, 1)
+  assert.equal(stranger.frames.length, 0, 'a neighbour chat is not handed the picture')
+  assert.equal(bridge.canon('session-aaaa-1111'), 'session-aaaa-1111', 'an id is itself')
+  assert.equal(bridge.canon(''), '')
+  assert.equal(bridge.canon(undefined), '')
+  /* A second chat asking takes the mirror over: the first one's tab goes back to
+     its note, and only the newcomer is drawn. */
+  assert.equal(bridge.want('session-aaaa-2222'), true)
+  assert.equal(bridge.owner, 'session-aaaa-2222')
+  assert.equal(mine.frames.length, 1, 'the old owner is not sent the new owner\'s picture')
+  assert.equal(stranger.frames.length, 1)
+  /* Nothing is inferred from a seat alone: a chat that never asked is not owed
+     a mirror because it is the only one listening. */
+  const quiet = sink('quiet')
+  bridge.attach('session-bbbb-3333', quiet)
+  assert.equal(quiet.frames.length, 0)
 })

@@ -4,7 +4,7 @@ Two halves in two processes, and a Chrome that neither of them is.
 
 ```
 server side  (index.js, in the DSH process)
-  sidecar_* tools ──> Sidecar ── CDP over a socket ──> headless Chrome
+  browser_* tools ──> Sidecar ── CDP over a socket ──> headless Chrome
                          │
   HTTP + SSE routes <────┘
         │
@@ -41,7 +41,7 @@ Other launch flags:
 | `--use-mock-keychain`, `--password-store=basic` | No keychain prompt on macOS. |
 | `--remote-allow-origins=*` | The CDP client connects over a plain WebSocket. |
 | `--disable-blink-features=AutomationControlled` | Sites that sniff for automation get the ordinary path. |
-| `--window-size=1440,900`, `--lang=zh-CN` | The viewport the pane mirrors, and a Chinese page locale. |
+| `--window-size=1440,900`, `--lang=zh-CN` | The window the browser starts in, and a Chinese page locale; the layout viewport is set to the column instead. |
 
 The binary comes from a fixed list: Google Chrome, Chromium or Canary under `/Applications`,
 then `/usr/bin/google-chrome` and `/usr/bin/chromium`. Nothing else is probed and there is no
@@ -58,7 +58,7 @@ The browser outlives the plugin:
    `/json/new?about:blank` as a fallback) and a client connects to it.
 
 One page per browser. `apply()` only constructs the `Sidecar`; no process exists until the
-first tool call, and `sidecar_state` reports a stopped browser without starting one.
+first tool call, and `browser_state` reports a stopped browser without starting one.
 
 Shutdown asks Chrome to close (`Browser.close`), waits briefly, then sends `SIGTERM`, which is
 the point where Chrome flushes cookies. An idle timer closes the browser after 15 minutes; a
@@ -85,13 +85,16 @@ the CDP socket stays in the server half.
 ## Mirror
 
 The server half starts `Page.startScreencast` with JPEG quality 72, `maxWidth` and `maxHeight`
-at 1440×900, `optimizeForSpeed`, `everyNthFrame: 1`, and acknowledges every frame it receives
+at the pane's size, `optimizeForSpeed`, `everyNthFrame: 1`, and acknowledges every frame it receives
 so Chrome keeps sending. Frames are never queued: with two frames in flight, further frames
 are dropped and the next one that fits takes their place. A slow reader loses frames, never
 freshness.
 
-The viewport is pinned with `Emulation.setDeviceMetricsOverride` to the same 1440×900, so a
-frame is the whole page as laid out, not a crop.
+The layout viewport follows the column: the pane measures itself, posts the size to
+`/sidecar/viewport` a beat after the resize settles, and the server pins
+`Emulation.setDeviceMetricsOverride` to that size and restarts the screencast at it. So a frame
+is the whole page as laid out at the shape it is shown in — no letterbox bands, no crop. Sizes
+below 320 px or above 1920×1600 are ignored rather than applied as a sliver.
 
 If `Browser.getVersion` reports `HeadlessChrome`, the user agent is overridden with an ordinary
 Chrome string, `acceptLanguage: 'zh-CN,zh;q=0.9,en;q=0.8'` and `platform: 'MacIntel'`, so a site
@@ -133,7 +136,7 @@ browser without pulling the column away from the person reading it.
 
 `sidecarTools()` in `tools.js` builds the 28 definitions and `index.js` registers them on the
 plugin's tool scope. All of them return one text block. A page read numbers the controls and
-keeps those numbers across later reads, so `sidecar_click` by ref means the element the model
+keeps those numbers across later reads, so `browser_click` by ref means the element the model
 last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
 
 Before a ref click or a ref focus, one page-side probe asks what is on top of that control.
@@ -145,7 +148,7 @@ reported, never accepted on the person's behalf. The whole exchange is one `Runt
 and a possible `mousePressed`/`mouseReleased` pair on an already-open CDP connection, so an
 uncovered click pays nothing.
 
-`sidecar_do` runs the same probe before a step that names a control — by `ref`, by
+`browser_do` runs the same probe before a step that names a control — by `ref`, by
 text, or by field label — so a banner the first step clears is gone for the rest of
 the batch, and the step's own line says it in one clause (`after Accept on a banner,`).
 A batch therefore pays for one overlay, not one per step.
@@ -154,7 +157,7 @@ An action answers with one line — address, title, focused field — and reads 
 `read: true` is passed. That is what keeps a long batch cheap (see `BENCH.md`).
 
 Calls that touch the browser are marked not concurrency-safe; reading state, console and failed
-requests is. `sidecar_open`, `sidecar_view`, `sidecar_wait` and `sidecar_shot` carry longer
+requests is. `browser_open`, `browser_view`, `browser_wait` and `browser_shot` carry longer
 timeouts than the rest.
 
 Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,
@@ -169,7 +172,7 @@ without asking first when someone wants something done on a site.
 `Network.enable` is already on for the mirror. A request is kept when it is
 sent and settled when its response arrives, so the list holds method, status,
 type and address of what the page actually got — 120 rows, oldest dropped.
-`sidecar_network` reads that list without touching the page, which is why it
+`browser_network` reads that list without touching the page, which is why it
 can answer while a dialog is open.
 
 ## Downloads
@@ -177,7 +180,7 @@ can answer while a dialog is open.
 Chrome is pointed at `<profile>/downloads` when the page starts, so a click
 that saves a file writes it there instead of nowhere. The folder belongs to
 the profile: it is the same one on the next launch, and nothing outside the
-profile is touched. `sidecar_downloads` lists what is on disk, newest first;
+profile is touched. `browser_downloads` lists what is on disk, newest first;
 a `.crdownload` still in flight is not listed.
 
 ## Frames and popups
@@ -215,4 +218,4 @@ and there is still one page to drive.
 | `locale/*.json` | Page: pane labels. |
 
 Data on disk is confined to `~/.dsh/inner-browser-use/`: `chrome/<profile>` for the browser,
-`screenshots/` for `sidecar_shot`.
+`screenshots/` for `browser_shot`.

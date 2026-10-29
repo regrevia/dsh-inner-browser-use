@@ -66,9 +66,10 @@ const state = await get(`${ROUTE}/sidecar/state`)
 console.log(`host     ${state === null ? `not answering under ${ROUTE}` : base}`)
 if (state === null) {
   console.log('         start the app, or set DSH_BRIDGE to the app address')
-  process.exit(0)
+  process.exitCode = 0
 }
 
+if (state !== null) {
 console.log(`browser  ${state.alive === true ? `attached, ${state.headless === true ? 'headless' : 'with a window'}` : 'not running'}`)
 const profileDir = join(PROFILES, String(state.profile ?? ''))
 console.log(`profile  ${state.profile} in ${profileDir}`)
@@ -87,3 +88,4 @@ if (existsSync(portFile)) {
 }
 
 if (String(state.error ?? '') !== '') console.log(`error    ${state.error}`)
+}

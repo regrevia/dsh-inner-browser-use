@@ -65,15 +65,15 @@ try {
   await loaded()
   line('live-open', (await title()) === 'Example Domain', `${Date.now() - openAt} ms to a real page over the network · ${await title()}`)
 
-  const view = tool('sidecar_view')
+  const view = tool('browser_view')
   const read = String((await within(view.execute({ max_chars: 700 }), 20_000))?.text ?? '')
   line('live-read', read.includes('Example Domain') && /\[link\]/.test(read), `${read.length} chars · ${read.split('\n')[1]?.slice(0, 50)}`)
 
   // A page whose only control is a link: click it by its words and land on the
   // page it points at. example.com's own link goes to iana.org, which answers on
   // this network; wikipedia.org was dropped here because its redirect does not.
-  const click = tool('sidecar_click')
-  const nav = tool('sidecar_nav')
+  const click = tool('browser_click')
+  const nav = tool('browser_nav')
   const clickedAt = Date.now()
   const clicked = await within(click.execute({ text: 'Learn more' }), 30_000)
   await loaded(15_000)
@@ -98,8 +98,8 @@ try {
     const quoted = /ERR_[A-Z0-9_]+|can.t be reached|无法访问/.test(deadRead) && !named
     // A read is the obvious case; a click and a batch are the ones that would
     // otherwise press "Reload" on Chrome's page and call it progress.
-    const deadClick = String((await within(tool('sidecar_click').execute({ text: '重新加载' }), 20_000))?.text ?? '')
-    const deadBatch = String((await within(tool('sidecar_do').execute({ steps: [{ tap: 'Reload' }], read: 'none' }), 20_000))?.text ?? '')
+    const deadClick = String((await within(tool('browser_click').execute({ text: '重新加载' }), 20_000))?.text ?? '')
+    const deadBatch = String((await within(tool('browser_do').execute({ steps: [{ tap: 'Reload' }], read: 'none' }), 20_000))?.text ?? '')
     const allNamed = [deadRead, deadClick, deadBatch].every((said) => /the network could not reach that address/.test(said))
     line('live-dead-host', named && !quoted && allNamed, `${Date.now() - deadAt} ms · ${String(page.url).slice(0, 40)} · read/click/batch all refused · ${deadRead.split('\n')[0].slice(0, 70)}`)
     // The recovery is the other half of the promise: a real address still works.
@@ -119,7 +119,7 @@ try {
     line('live-search', false, 'bing.com did not answer in 30 s')
   } else {
     await loaded()
-    const batch = tool('sidecar_do')
+    const batch = tool('browser_do')
     const typedStart = Date.now()
     const wrote = String((await within(batch.execute({ steps: [{ field: '搜索词', text: 'browser automation', submit: true }], read: 'text', max_chars: 500 }), 45_000))?.text ?? '')
     await loaded(15_000)
@@ -129,7 +129,7 @@ try {
     line('live-search', results, `${Date.now() - typedStart} ms · ${landedOn.slice(0, 60)} · ${wrote.split('\n')[0].slice(0, 40)}`)
 
     // Rows of results with links in them: a real list to read as rows.
-    const extract = tool('sidecar_extract')
+    const extract = tool('browser_extract')
     const listedAt = Date.now()
     const rows = String((await within(extract.execute({ select: '#b_results > li', limit: 10 }), 30_000))?.text ?? '')
     const count = Number((rows.match(/^(\d+) of/) ?? [])[1] ?? 0)
@@ -141,7 +141,7 @@ try {
     const resultState = { last: undefined }
     const resultTools = sidecarTools(sidecar, resultState)
     const before = Date.now()
-    await resultTools.find((each) => each.name === 'sidecar_view').execute({ mode: 'text', max_chars: 500 })
+    await resultTools.find((each) => each.name === 'browser_view').execute({ mode: 'text', max_chars: 500 })
     const link = (resultState.refs ?? []).find((each) => each.kind === 'link' && each.href.startsWith('http'))
     const moved = link === undefined ? 'no link numbered' : String(await said(`(() => {
       const gone = ${JSON.stringify(String(link.name))}
@@ -151,7 +151,7 @@ try {
       found.replaceWith(found.cloneNode(true))
       return 'redrew a'
     })()`))
-    const carried = link === undefined ? 'nothing to use' : String((await within(resultTools.find((each) => each.name === 'sidecar_click').execute({ ref: link.ref, read: false }), 30_000))?.text ?? '')
+    const carried = link === undefined ? 'nothing to use' : String((await within(resultTools.find((each) => each.name === 'browser_click').execute({ ref: link.ref, read: false }), 30_000))?.text ?? '')
     line('live-redraw-survives', moved === 'redrew a' && carried.includes('new number'), `${Date.now() - before} ms · ${moved} · ${carried.replace(/\n/g, ' / ').slice(0, 110)}`)
   }
 } catch (error) {
@@ -160,5 +160,5 @@ try {
   const pass = results.filter((row) => row.ok).length
   console.log(JSON.stringify({ summary: `${pass}/${results.length} live checks`, network: true }))
   await sidecar.shutdown()
-  process.exit(0)
+  process.exitCode = 0
 }

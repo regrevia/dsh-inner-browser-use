@@ -10,6 +10,7 @@ const dir = mkdtempSync(join(tmpdir(), 'dshib-tabs-'))
 process.env.DSH_INNER_BROWSER_STATE_DIR = dir
 
 const { Sidecar } = await import('../sidecar.js')
+const { sidecarTools } = await import('../tools.js')
 
 function driver() {
   /* Nothing here starts Chrome: only the note file is under test. */
@@ -33,4 +34,20 @@ test('a file left by an older run is not restored for a non-chat key', () => {
   writeFileSync(join(dir, 'tabs.json'), JSON.stringify({ 'chat-a': 'https://example.com/old' }))
   const sidecar = driver()
   assert.equal(sidecar.rememberedTab('chat-a'), '')
+})
+
+test('closing a tab says which page was closed, not which is left', async () => {
+  const closed = []
+  const sidecar = {
+    alive: true,
+    ensure: async () => ({}),
+    tabs: async () => [{ url: 'http://x/dense', title: 'Dense' }, { url: 'http://x/light', title: 'Light' }],
+    closeTab: async (index) => { closed.push(index) },
+    pageFor: () => ({ url: 'about:blank' }),
+    page: { url: 'about:blank' },
+  }
+  const tabsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_tabs')
+  const said = String((await tabsTool.execute({ action: 'close', index: 1 })).text)
+  assert.deepEqual(closed, [1])
+  assert.match(said, /closed tab 1 · http:\/\/x\/light/)
 })

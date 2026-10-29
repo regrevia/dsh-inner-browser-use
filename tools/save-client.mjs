@@ -11,17 +11,19 @@ const body = readFileSync(0, 'utf8')
 
 if (body.trim() === '') {
   console.error('empty input: refused')
-  process.exit(1)
-}
+  process.exitCode = 1
+} else {
 writeFileSync(stage, body)
 try {
   execFileSync(process.execPath, ['--check', stage], { stdio: 'pipe' })
 } catch (error) {
   console.error('syntax error, nothing saved:')
   console.error(String(error.stderr ?? error.message).slice(0, 600))
-  process.exit(1)
+  process.exitCode = 1
+  throw error
 }
 /* A copy of what worked, so a bad save is undone with one command. */
 copyFileSync(target, new URL('../.client.known-good.js', import.meta.url).pathname)
 renameSync(stage, target)
 console.log('saved', body.length, 'bytes')
+}

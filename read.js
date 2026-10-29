@@ -22,7 +22,7 @@ const REGISTRY = '__dshRead'
 const VERSION = 2
 
 /** Interactive elements worth numbering, in the order a reader would meet them. */
-const SELECTOR = [
+export const SELECTOR = [
   'a[href]',
   'button',
   'input:not([type="hidden"])',
@@ -67,7 +67,7 @@ const SIGIL = { // ui-copy-ignore
  * @param {number} version - registry version.
  * @returns {string} an expression to evaluate.
  */
-function seed(selector, version) {
+export function seed(selector, version) {
   return `(() => {
   const w = window
   const current = w.${REGISTRY}
@@ -118,7 +118,7 @@ function seed(selector, version) {
  * @param {number} max - controls to number at most.
  * @returns {string} an expression to evaluate.
  */
-function snapshot(mode, budget, max) {
+export function snapshot(mode, budget, max) {
   const wanted = JSON.stringify(mode)
   return `(() => {
   const reg = window.${REGISTRY}
@@ -129,10 +129,10 @@ function snapshot(mode, budget, max) {
   const name = (el) => {
     const label = el.labels && el.labels[0] ? String(el.labels[0].innerText ?? '') : ''
     const pointing = String(el.getAttribute?.('aria-labelledby') ?? '')
-    const named = pointing.split(/\s+/).filter(Boolean).map((id) => {
+    const named = pointing.split(/\\s+/).filter(Boolean).map((id) => {
       const other = el.ownerDocument.getElementById(id)
       return other === null ? '' : String(other.innerText ?? other.textContent ?? '')
-    }).join(' ').replace(/\s+/g, ' ').trim()
+    }).join(' ').replace(/\\s+/g, ' ').trim()
     const own = named || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.getAttribute?.('placeholder') || ''
     const text = String(el.innerText ?? '').replace(/\\s+/g, ' ').trim()
     const value = el.tagName === 'INPUT' && el.type !== 'password' ? String(el.value ?? '') : ''
@@ -270,7 +270,7 @@ function snapshot(mode, budget, max) {
          generated image goes missing, and it is silent by default. */
       if (el.tagName === 'IMG' && el.complete && el.naturalWidth === 0) {
         missing.push({ width: Math.round(wide), height: Math.round(high) })
-        missing[missing.length - 1].name = String(el.getAttribute('alt') ?? '').replace(/\s+/g, ' ').trim().slice(0, 60)
+        missing[missing.length - 1].name = String(el.getAttribute('alt') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 60)
         continue
       }
       const w = el.tagName === 'CANVAS' ? el.width : el.naturalWidth || Math.round(b.width)
@@ -279,7 +279,7 @@ function snapshot(mode, budget, max) {
     }
     if (best === null) return missing.length === 0 ? null : { missing }
     /* What the read hands back about one picture: not a screen of fields. */
-    const said = { name: String(best.el.getAttribute?.('alt') ?? best.el.getAttribute?.('aria-label') ?? '').replace(/\s+/g, ' ').trim().slice(0, 60) }
+    const said = { name: String(best.el.getAttribute?.('alt') ?? best.el.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 60) }
     said.kind = best.kind
     said.width = best.w
     said.height = best.h
@@ -342,21 +342,21 @@ function snapshot(mode, budget, max) {
        can say it out loud. */
     for (const el of document.querySelectorAll('embed, object')) {
       const said = String(el.getAttribute?.('type') ?? el.getAttribute?.('src') ?? el.getAttribute?.('data') ?? el.getAttribute?.('classid') ?? '')
-      if (!/shockwave|flash|application\/x-swf/i.test(said) && el.tagName !== 'EMBED') continue
+      if (!/shockwave|flash|application\\/x-swf/i.test(said) && el.tagName !== 'EMBED') continue
       if (el.tagName === 'EMBED' && !/shockwave|flash|swf/i.test(said)) continue
       if (shows(el)) out.flash += 1
     }
     if (out.flash === 0) {
       const asked = Array.from(document.querySelectorAll('a[href], iframe[src], script[src], link[href]'))
         .map((el) => String(el.getAttribute?.('href') ?? el.getAttribute?.('src') ?? ''))
-        .filter((said) => /\.swf(\?|$)/i.test(said)).length
+        .filter((said) => /\\.swf(\\?|$)/i.test(said)).length
       if (asked > 0) out.flash = asked
     }
     if (out.flash === 0) {
       /* Many sites build the movie in a script or load it inside a frame, so
          nothing in the tree names it. The scripts still do. */
       const scripts = Array.from(document.scripts).map((el) => String(el.textContent ?? '')).join(' ')
-      const hits = scripts.match(/\.swf(\?|["'\\]|\s|$)/gi)
+      const hits = scripts.match(/\\.swf(?=["'\\s?]|$)/gi)
       if (hits !== null && hits.length > 0) out.flash = Math.min(9, hits.length)
     }
     if (out.flash === 0) {
@@ -368,7 +368,7 @@ function snapshot(mode, budget, max) {
           if (inside === null || inside === undefined) continue
           const movies = inside.querySelectorAll('embed, object').length
           const inner = Array.from(inside.scripts ?? []).map((el) => String(el.textContent ?? '')).join(' ')
-          const found = inner.match(/\.swf(\?|["'\\]|\s|$)/gi)
+          const found = inner.match(/\\.swf(?=["'\\s?]|$)/gi)
           out.flash = Math.min(9, out.flash + movies + (found === null ? 0 : found.length))
         }
       } catch {
@@ -410,7 +410,22 @@ export function resolve(ref) {
   const el = hit.el
   const b = el.getBoundingClientRect()
   if (b.width < 2 || b.height < 2) return JSON.stringify({ gone: true, off: true })
-  if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth) el.scrollIntoView({ block: 'center', inline: 'center' })
+  /* A control inside a scrolling panel can be outside the panel while still
+     inside the window: the point would land on the panel's other content, and
+     the click would be reported against the wrong thing. Ask every clipping
+     ancestor, not only the window. */
+  const clipped = () => {
+    const me = el.getBoundingClientRect()
+    for (let up = el.parentElement; up; up = up.parentElement) {
+      const css = getComputedStyle(up)
+      const flow = css.overflowX + ' ' + css.overflowY
+      if (!/auto|scroll|hidden|clip/.test(flow)) continue
+      const box = up.getBoundingClientRect()
+      if (me.top < box.top - 1 || me.bottom > box.bottom + 1 || me.left < box.left - 1 || me.right > box.right + 1) return true
+    }
+    return false
+  }
+  if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center' })
   const after = el.getBoundingClientRect()
   const s = getComputedStyle(el)
   return JSON.stringify({ gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true })
@@ -690,12 +705,57 @@ function asRoute(route) {
  * @param {number|{contextId?: number, sessionId?: string}} [route] - where to run it.
  * @returns {Promise<any>} the JSON-safe value.
  */
-async function evaluateIn(page, expression, route) {
+/**
+ * Ask the page, but never forever. A navigation whose last request hangs can
+ * leave the renderer unable to answer: without a ceiling every read, click and
+ * type on such a page waits on the network, and the tool is killed instead of
+ * reporting. Timing out says so.
+ * @param {any} page - sidecar page.
+ * @param {any} params - Runtime.evaluate parameters.
+ * @param {string|undefined} sessionId - out-of-process frame, if any.
+ * @param {number} raceMs - ceiling in milliseconds.
+ * @returns {Promise<any>} the protocol answer.
+ */
+async function answer(page, params, sessionId, raceMs) {
+  let timer = null
+  const call = page.cdp.send('Runtime.evaluate', params, sessionId)
+  const raced = await Promise.race([call, new Promise((done) => { timer = setTimeout(() => done(null), raceMs) })])
+  clearTimeout(timer)
+  if (raced !== null) return raced
+  /* The page is probably stuck on a request of its own. A person presses Esc
+     and works with what arrived; stopping the load is the same move, and it is
+     what makes the next look answer at all. */
+  const began = Number(page.navStarted ?? 0)
+  const fired = Number(page.loadFired ?? 0)
+  if (began > 0 && began > fired) await page.cdp.send('Page.stopLoading', {}).catch(() => {})
+  let after = null
+  const retry = page.cdp.send('Runtime.evaluate', params, sessionId)
+  const again = await Promise.race([retry, new Promise((done) => { after = setTimeout(() => done(null), 600) })])
+  clearTimeout(after)
+  if (again !== null) return again
+  throw new Error(`the page did not answer within ${raceMs} ms (it is stuck loading)`)
+}
+
+async function evaluateIn(page, expression, route, raceMs = 3000) {
   const where = asRoute(route)
   const params = { expression, returnByValue: true }
   if (where.contextId !== undefined) params.contextId = where.contextId
-  const { result } = await page.cdp.send('Runtime.evaluate', params, where.sessionId)
-  return result?.value
+  let said
+  try {
+    said = await answer(page, params, where.sessionId, raceMs)
+  } catch (error) {
+    /* The world or the frame is gone: the caller needs to say so, not read an
+       empty page as a page that is empty. */
+    throw new Error(`the page did not answer (${String(error?.message ?? error).split('\n')[0]})`)
+  }
+  /* A page script that throws answers with no value and one line of why. Read
+     as an empty result, that is indistinguishable from a page with nothing on
+     it, and a broken page then looks empty instead of broken. */
+  if (said?.exceptionDetails !== undefined) {
+    const why = String(said.exceptionDetails.exception?.description ?? said.exceptionDetails.text ?? 'unknown error')
+    throw new Error(`the page's own script failed (${why.split('\n')[0].slice(0, 160)})`)
+  }
+  return said?.result?.value
 }
 
 /** @param {any} page - sidecar page. @param {any} [route] - world to seed. */
@@ -845,16 +905,37 @@ export async function contextFor(page, ref) {
  * @param {{mode?: string, maxChars?: number, max?: number}} [options] - how much to read.
  * @returns {Promise<{url: string, title: string, text: string, textChars: number, scroll?: any, focused?: any, controls: any[]}>} the read.
  */
+const EMPTY_BLIND = { pictures: 0, canvases: 0, videos: 0, frames: 0, flash: 0 }
+
+/**
+ * A read that failed: the address and the reason, with nothing invented.
+ * @param {any} page - sidecar page.
+ * @param {string} fault - why the page could not be read.
+ * @returns {any} the read.
+ */
+export function faultRead(page, fault) {
+  const empty = { text: '', textChars: 0, controls: [], picture: null, scroll: undefined, focused: null, blind: EMPTY_BLIND }
+  return Object.assign({ url: String(page.url ?? ''), title: String(page.title ?? ''), fault: String(fault) }, empty)
+}
+
 export async function readPage(page, options = {}) {
   const mode = String(options.mode ?? 'text')
   const maxChars = Number.isFinite(Number(options.maxChars)) ? Math.max(400, Math.min(24_000, Number(options.maxChars))) : 6000
   const max = Number.isFinite(Number(options.max)) ? Math.max(5, Math.min(200, Number(options.max))) : 90
-  await seedPage(page)
-  let read = await evaluateSnapshot(page, mode, maxChars, max)
-  if (read?.broken === true) {
-    await seedPage(page)
-    read = await evaluateSnapshot(page, mode, maxChars, max)
+  /* A page that refuses to run the reader gets two tries and then one line
+     saying why; an empty page must not be confused with a broken one. */
+  let fault = ''
+  let read = {}
+  for (let attempt = 0; attempt < 2 && fault === ''; attempt += 1) {
+    try {
+      await seedPage(page)
+      read = await evaluateSnapshot(page, mode, maxChars, max)
+      if (read?.broken === true) fault = attempt === 1 ? 'the page replied with something that was not a read' : ''
+    } catch (error) {
+      fault = String(error?.message ?? error)
+    }
   }
+  if (fault !== '') return faultRead(page, fault)
   const framed = await readFrames(page, mode, Math.min(maxChars, 1200))
   if (framed.controls.length > 0) read = { ...read, controls: [...(read.controls ?? []), ...framed.controls] }
   if (framed.text !== '') read = { ...read, text: `${String(read.text ?? '')}${String(read.text ?? '') === '' ? '' : '\n'}${framed.text}` }
@@ -954,15 +1035,43 @@ function sigilOf(control) {
 export function renderPage(read, options = {}) {
   const mode = String(options.mode ?? 'text')
   const maxChars = Number(options.maxChars ?? 6000)
+  const maxControls = Number(options.maxControls ?? 140)
   const lines = [read.url]
   /* A browser error page is not a site with nothing on it: it is a site that
      never arrived. Saying so is the only way the reader stops looking for the
      content that would have been there. */
-  if (String(read.url).startsWith('chrome-error://')) lines.push('the page did not load — sidecar_nav to open the address again, or sidecar_open if the browser is gone')
+  if (String(read.url).startsWith('chrome-error://')) lines.push('the page did not load — browser_nav to open the address again, or browser_open if the browser is gone')
+  if (String(read.fault ?? '') !== '') lines.push(`the page did not answer when read — ${String(read.fault).slice(0, 200)}`)
   if (read.title !== '') lines.push(`# ${read.title}`)
   const shown = read.controls.filter((control) => control.view !== false || mode === 'full')
   const hidden = read.controls.length - shown.length
-  for (const control of shown) {
+  /* A page with hundreds of rows would spend the whole budget on numbers and
+     leave no room for the words that say what the page is; the rest keep their
+     refs and come back with a narrower mode or after a scroll. */
+  const listed = shown.length > maxControls ? shown.slice(0, maxControls) : shown
+  /* A listing page repeats the same word down the page: thirty "Add to cart",
+     a header menu repeated in the footer. A person reading it sees one idea,
+     so it gets one line with a count; the first ref still clicks, and mode
+     links or forms lists every one when a caller needs a particular row. */
+  const tally = new Map()
+  if (mode === 'text') {
+    for (const control of listed) {
+      const key = `${sigilOf(control)}|${control.name}|${control.checked ? 1 : 0}`
+      const seen = tally.get(key)
+      if (seen === undefined) tally.set(key, { first: control, count: 1 })
+      else seen.count += 1
+    }
+  }
+  const repeated = (control) => tally.get(`${sigilOf(control)}|${control.name}|${control.checked ? 1 : 0}`)
+  const done = new Set()
+  for (const control of listed) {
+    const group = mode === 'text' ? repeated(control) : undefined
+    if (group !== undefined && group.count > 2) {
+      if (done.has(group)) continue
+      done.add(group)
+      lines.push(`${control.ref} [${sigilOf(control)}] ${control.name === '' ? '(unnamed)' : control.name} ×${group.count}`)
+      continue
+    }
     let line = `${control.ref} [${sigilOf(control)}] ${control.name === '' ? '(unnamed)' : control.name}`
     if (control.kind === 'checkbox' || control.kind === 'radio') line += control.checked ? ' (checked)' : ' (unchecked)'
     else if (control.value !== '' && control.value !== control.name) line += ` = ${control.value}`
@@ -971,12 +1080,32 @@ export function renderPage(read, options = {}) {
     lines.push(line)
   }
   if (hidden > 0 && mode !== 'links' && mode !== 'forms') lines.push(`… ${hidden} more controls off screen`)
+  if (shown.length > listed.length) lines.push(`… ${shown.length - listed.length} more controls on this screen — browser_scroll, or ask for mode links or forms`)
   if (read.focused) lines.push(`focus ${read.focused.ref} [${read.focused.kind}] ${read.focused.name}`)
-  const body = read.text
+  let body = read.text
+  /* A listing page's words are its button labels again: printing them twice
+     doubles the cost of the read. Only when most of the screen's words came
+     from controls — an article's prose stays. */
+  if (mode === 'text' && body.length > 200 && listed.length > 1) {
+    let covered = 0
+    for (const control of listed) {
+      const name = String(control.name ?? '')
+      if (name.length < 3) continue
+      let at = body.indexOf(name)
+      while (at !== -1 && covered < body.length) {
+        covered += name.length
+        at = body.indexOf(name, at + name.length)
+      }
+    }
+    if (covered / body.length > 0.55) body = ''
+  }
   if (body !== '') {
     lines.push('')
     lines.push(body)
     if (read.textChars > body.length) lines.push(`… ${read.textChars - body.length} more characters`)
+  } else if (read.text !== '') {
+    lines.push('')
+    lines.push(`the words here are the ${listed.length} controls above — browser_view {mode:'full'} for the page's own wording`)
   }
   if (read.blind !== undefined && read.blind !== null) {
     const bits = []
@@ -987,7 +1116,7 @@ export function renderPage(read, options = {}) {
     if (read.blind.flash > 0) bits.push(`${read.blind.flash} Flash movie(s) this browser cannot play — look for the site's own H5 or micro-client version`)
     /* Only when something is actually out of reach: a line saying "nothing is
        hidden" on every read is a line the reader learns to skip. */
-    if (bits.length > 0) lines.push(`text cannot show: ${bits.join(', ')} — sidecar_grab takes the picture, sidecar_shot shows the screen`)
+    if (bits.length > 0) lines.push(`text cannot show: ${bits.join(', ')} — browser_grab takes the picture, browser_shot shows the screen`)
     /* Almost no words but frames on screen is the shape of a plugin game. Saying
        it here is the difference between "blank page" and "this needs Flash". */
     if (read.blind.flash === 0 && read.blind.frames > 0 && Number(read.textChars ?? 0) < 400) {
@@ -1004,7 +1133,7 @@ export function renderPage(read, options = {}) {
     const pic = read.picture
     const look = Number(pic.flat) >= 0.9 ? 'mostly one colour' : Number(pic.colors) <= 3 ? 'a few colours' : 'a picture with detail'
     const size = `${Math.round(Number(pic.width) || 0)}x${Math.round(Number(pic.height) || 0)}`
-    lines.push(`picture ${size} ${look}${pic.name === '' ? '' : ` "${pic.name}"`} — sidecar_grab saves it as a file`)
+    lines.push(`picture ${size} ${look}${pic.name === '' ? '' : ` "${pic.name}"`} — browser_grab saves it as a file`)
   }
   if (read.scroll && read.scroll.height > read.scroll.viewport + 40) {
     lines.push(`scroll ${read.scroll.y}/${read.scroll.height - read.scroll.viewport}`)
@@ -1013,7 +1142,7 @@ export function renderPage(read, options = {}) {
 }
 
 /** A ref that was valid on the previous read and is no longer here. */
-export const REF_GONE = 'That control is gone: the page changed since the read. Call sidecar_view and use the new number.'
+export const REF_GONE = 'That control is gone: the page changed since the read. Call browser_view and use the new number.'
 
 /**
  * The control itself, not its number: what it is, what it is called, and where

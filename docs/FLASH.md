@@ -35,11 +35,46 @@ SWF ──▶ 摄入(读取标签流, 建 IR) ──▶ 显示列表 + 时间线
 | 传输 | 屏幕像素 | 损伤区域 + 增量 | 每帧 KB |
 | 回放 | 无 | 事件日志可重放 | 重放一致率 |
 
+## 已落地：PPAPI 分支做成插件里的开关（本版）
+
+「兼容层」和「能立刻玩」不是二选一。插件现在有两套运行时，同一个 CDP 管线、同一个镜像、同一套工具，切换只是一次重启：
+
+```
+browser_open({ flash: true, url: 'http://aola.100bt.com/play/play.html?from_h5=true' })
+```
+
+开的时候宿主用 Electron 11.3.0（Chromium 87，最后一个还认 PPAPI 的 Chromium）当浏览器，关的时候切回 Chrome。输入注入、导航、读页面、镜像全都不用改，因为两边都说 CDP。
+
+三条必须同时成立的条件（缺一条就报「Flash 缺失」，且症状会骗人）：
+
+1. `--ppapi-flash-path` 指向 bundle **里的 Mach-O 可执行文件** `PepperFlashPlayer.plugin/Contents/MacOS/PepperFlashPlayer`，不是 `.plugin` 目录。指错目录时插件报 `No PPP_GetInterface in plugin library`——那是假象，不是导出缺失。
+2. 必须加 `--no-sandbox`。否则 ppapi 进程报 `dlopen(...) (file system sandbox blocked open())`，页面提示没有 Flash。沙箱只对这一个隐藏的独立 profile 关，正常浏览器不关。
+3. 宿主必须是 x86_64（Apple 芯片跑 Rosetta）：插件只有 i386/x86_64 切片，arm64 Electron 装不进它。所以下载固定取 `darwin-x64`。
+
+Electron 11 的两个真实限制，代码里已按它们写：
+
+- 它不会用当前 Chrome 的 profile 目录（会降级并上锁），Flash 分支固定用 `<profile>-flash` 独立目录；两边登录态各自独立。
+- `/json/new` 在 Chromium 87 上是 404，单窗口应用也没有第二个窗口，所以 Flash 分支不建新页签：会话要页签时把唯一那个窗口导航过去。
+
+实测数字（Apple 芯片 + Rosetta，1440×900）：
+
+| 指标 | 值 |
+|---|---|
+| 冷启动到能驱动页面 | 1389 ms（首次含解压；同机热启 545–927 ms） |
+| 页面首帧出图 | 约 8–10 s（SWF 自己的加载），之前是 11 KB 白帧 |
+| 单帧 JPEG q72 | 96–103 KB |
+| `capturePage` 取一帧 | 16 ms |
+| 镜像 SSE 节奏 | 15 fps（66 ms 一轮），4 s 收 60 帧，均值 97.8 KB |
+| PC 版判定 | 页面里出现 `EMBED .../weblogin/20171026_1.swf`、登录框是「多多号/手机/邮箱」而不是 H5 的样式 |
+
+**不能随包分发 Adobe Flash Player**：插件本体留在本机状态目录（`~/.dsh/inner-browser-use/flash/plugin/`），由 `npm run flash:setup` 从本机已有的安装里找/拷，找不到就明说；Ruffle 那条路（MIT/BSD）仍是可分发的那条。
+
 ## 分阶段
 
-- **M0 摄入（本版）**：读 SWF 标签流，给出尺寸/帧率/AVM/资源构成。`runtime/swf.mjs` + `npm run swf`。
+- **M0 摄入（已发布）**：读 SWF 标签流，给出尺寸/帧率/AVM/资源构成。`runtime/swf.mjs` + `npm run swf`。
+- **MP 立刻能玩（本版）**：PPAPI 分支 + 插件开关，见上节；`npm run flash:setup` 备运行时。
 - **M1 能跑**：自托管 Ruffle + 宿主路由 + `embed/object` 自动 polyfill，在一个真实 SWF 上量首帧、fps、字节数。
-- **M2 能读**：把 Ruffle 的 player 对象与显示列表接到 `sidecar_eval`，agent 直接读游戏状态，不用截图。
+- **M2 能读**：把 Ruffle 的 player 对象与显示列表接到 `browser_eval`，agent 直接读游戏状态，不用截图。
 - **M3 更快**：损伤跟踪 + 增量帧传输；对同一游戏给出「Flash 版 vs 这里」的毫秒与 CPU 对比。
 
 ## 诚实边界

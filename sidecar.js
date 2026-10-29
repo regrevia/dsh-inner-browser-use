@@ -9,6 +9,8 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { readyFlash } from './runtime/flash-setup.mjs'
 
 /**
  * Windows keeps a browser under Program Files (machine-wide) or LocalAppData
@@ -50,10 +52,23 @@ export const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Apple
  * the sharpness is what makes the mirror feel like the page. Quality stops
  * short of lossless so a moving picture still arrives on the next frame.
  */
-const MIRROR = { width: VIEW.width, height: VIEW.height }
+/* The mirror runs at a rate the eye reads as live without spending CPU on
+   frames nobody asked for. */
+const MIRROR = { width: VIEW.width, height: VIEW.height, interval: 66, busy: 40 }
+
 
 /** Frames are dropped rather than queued: a lagging viewer must not slow the page. */
 const MAX_INFLIGHT_FRAMES = 2
+/* The pane is watched by a person, not recorded: a 60 fps page forwarded frame
+   for frame doubles the downlink and the client's decode work for a picture no
+   eye can tell apart at 30 fps. Kept below one screen refresh. */
+/* How long a click waits for a tab to be announced before answering: enough
+   for the tabs a click opens directly, not for the page's own timers. */
+const POPUP_GRACE_MS = 25
+/* How long after a click an announced tab is still followed with no call
+   waiting: the page may open it from a timer or a promise. */
+const FOLLOW_WINDOW_MS = 2000
+const FRAME_GAP_MS = 28
 
 /** Idle lifetime, so a forgotten sidecar does not sit on a login forever. */
 const IDLE_MS = 15 * 60_000
@@ -66,15 +81,58 @@ function firstBinary() {
   return CHROME_BINARIES.find((path) => existsSync(path))
 }
 
+/* A movie page needs a Flash runtime, and current Chrome has none. Electron 11
+   still carries Chromium 87, the last build that took PPAPI, so the same
+   debugging protocol drives a browser that can play the page. Neither the
+   browser nor the plugin is in this package: the switch fetches one and reuses
+   the other, both on the person's own machine. */
+const FLASH_APP = fileURLToPath(new URL('./runtime/flash-app/', import.meta.url))
+
+/**
+ * Everything a Flash page needs, or nothing when this machine cannot play one.
+ * @returns {{binary: string, plugin: string, version: string} | null} the runtime.
+ */
+export function flashRuntime() {
+  const ready = readyFlash()
+  if (ready === null) return null
+  const version = String(process.env.DSH_INNER_BROWSER_FLASH_VERSION ?? '32.0.0.371')
+  return { binary: ready.electron, plugin: ready.plugin, version }
+}
+
 /* A chat's tab address outlives a plugin reload: the browser is still running
    with that tab, and the chat that returns should get its page back, not a
    blank one. */
 const tabsDir = process.env.DSH_INNER_BROWSER_STATE_DIR || join(homedir(), '.dsh', 'inner-browser-use')
 const tabsFile = join(tabsDir, 'tabs.json')
+/* Which runtime the person chose outlives a plugin reload for the same reason
+   the tab address does: a reload must not quietly turn the game window back
+   into a Chrome window that cannot play it. */
+const flashFile = join(tabsDir, 'flash.json')
+
+/** @returns {boolean} true when the Flash runtime was chosen last time. */
+function readFlashChoice() {
+  try {
+    return JSON.parse(readFileSync(flashFile, 'utf8')).on === true
+  } catch {
+    return false
+  }
+}
+
+/** @param {boolean} on - record the runtime choice. */
+function writeFlashChoice(on) {
+  try {
+    mkdirSync(tabsDir, { recursive: true })
+    writeFileSync(flashFile, JSON.stringify({ on: on === true }))
+  } catch {}
+}
 
 /** Root of everything this plugin keeps for the sidecar. */
-function rootDir() {
-  const dir = join(homedir(), '.dsh', 'inner-browser-use', 'chrome')
+export function rootDir() {
+  /* A probe, a test or a second app that was told to keep its files elsewhere
+     keeps its browsers elsewhere too. Pointing this at the person's directory
+     would let it find and drive the browser they are looking at. */
+  const base = process.env.DSH_INNER_BROWSER_STATE_DIR || join(homedir(), '.dsh', 'inner-browser-use')
+  const dir = join(base, 'chrome')
   mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -186,6 +244,32 @@ export function deathNote(gone) {
  * @param {string} [dir] - where the log lives; the state directory by default.
  * @returns {void}
  */
+/**
+ * Whether this process is the one that started this browser. A browser found on
+ * a profile may have been started by another process — a second app, a script
+ * that forgot to quit — and closing it would take the person's own window with
+ * it. Only the process that wrote the marker may ask it to close.
+ * @param {{pid?: number, owner?: number}} said - this process, and the marker's pid.
+ * @returns {boolean} true while this process started it.
+ */
+export function ownsBrowser(said) {
+  const mine = Number(said?.pid ?? 0)
+  const owner = Number(said?.owner ?? 0)
+  if (!Number.isInteger(mine) || mine <= 0) return false
+  return mine === owner
+}
+
+/** @param {string} dir - profile directory. @returns {number} the pid that started this browser, or 0. */
+function markerPid(dir) {
+  try {
+    const said = JSON.parse(readFileSync(join(dir, 'owner.json'), 'utf8')) // ui-copy-ignore
+    const pid = Number(said?.pid ?? 0) // ui-copy-ignore
+    return Number.isInteger(pid) && pid > 0 ? pid : 0
+  } catch {
+    return 0
+  }
+}
+
 export function noteDeath(gone, dir = tabsDir) {
   if (gone.asked === true) return
   try {
@@ -291,7 +375,15 @@ class Cdp {
         else entry.resolve(message.result ?? {})
         return
       }
-      for (const listener of this.listeners) listener(message)
+      for (const listener of this.listeners) {
+        try {
+          listener(message)
+        } catch {
+          /* A listener that throws — a frame handler calling something the page
+             no longer has — costs that one event. It must not take the host
+             process with it. */
+        }
+      }
     })
     this.socket.addEventListener('close', () => {
       this.closed = true
@@ -344,8 +436,13 @@ class Cdp {
  */
 export class SidecarPage {
   /** @param {Cdp} cdp - the page session. @param {string} profile - profile name. */
-  constructor(cdp, profile, port) { // ui-copy-ignore
+  constructor(cdp, profile, port, hold = () => 0) { // ui-copy-ignore
     this.cdp = cdp
+    /* Whether the person is driving. The page cannot reach the sidecar that
+       owns this person record, so the answer arrives as a callable and this
+       class never assumes it has a `holding` of its own. Anything that is not
+       a callable is not a reason to throw from a paint or input callback. */
+    this.holdOf = typeof hold === 'function' ? hold : () => 0
     this.profile = profile
     this.port = port // ui-copy-ignore
     this.epoch = 0
@@ -356,10 +453,24 @@ export class SidecarPage {
     this.latest = ''
     this.seq = 0
     this.lastFrameAt = 0
+    this.sentAt = 0
     /* Total JPEG bytes seen, for the bench and for noticing when a page got
        expensive to watch. */
     this.bytes = 0
+    /* The page lays out at the size of the column it is shown in, not at a
+       fixed desktop size: a mirror with letterbox bands is a page that does
+       not fill its frame. */
+    this.view = { width: VIEW.width, height: VIEW.height }
+    /* What the pane already has: an unchanged picture is not worth a second
+       copy, but silence still needs a heartbeat or the pane thinks the stream
+       died. */
+    this.lastShot = null
+    this.lastShotAt = 0
+    this.quiet = 0
     this.pointer = { x: VIEW.width / 2, y: VIEW.height / 2 }
+    this.lastPointerAt = 0
+    /* Set when this page is drawn by the Flash runtime instead of a screencast. */
+    this.flashBridge = null
     this.url = ''
     this.lastUrl = ''
     this.crashed = false
@@ -372,6 +483,21 @@ export class SidecarPage {
     this.dialog = null
     this.console = []
     this.failed = []
+    /* A page that stops working usually says why in its console or its network
+       log, and the model only looks there after guessing. Each entry carries a
+       number so the next read can mention what happened since the last one. */
+    this.troubleSeq = 0
+    this.troubleSeen = 0
+    /* When a frame last began or finished loading. A click that started no load
+       changed the page in place, and waiting on it would be wasted time. */
+    this.navStarted = 0
+    this.navStopped = 0
+    /* When the main frame's load last finished. A navigation that is over is
+       known from this event, without asking a renderer that a page's own
+       scripts may be holding. */
+    this.loadFired = 0
+    /* A browser reset a crashed tab to about:blank; that is not a new tab. */
+    this.blanked = false
     /* What the page asked for, so a page that fills itself from addresses can
        be understood without a screenshot or a retry. */
     this.network = []
@@ -385,6 +511,20 @@ export class SidecarPage {
        follows it, because a person looking at the column expects that too. */
     this.children = new Map()
     this.opened = null
+    /* Woken when discovery announces a popup, so a click without one does not
+       wait the whole fallback window to learn there is nothing to follow. */
+    this.popupDoor = null
+    /* A popup is announced before it knows where it will go; the address
+       arrives a moment later. Waiting for it is what lets the click follow. */
+    this.urlDoor = null
+    /* A popup that shows up after the click has already answered is still the
+       page the click opened: for a moment after a click, an announced tab is
+       followed even though no call is waiting for it. */
+    this.followUntil = 0
+    this.followTimer = null
+    /* When the address was last asked for: how long a failure took tells a
+       browser still starting up apart from a network that said no. */
+    this.navAt = 0
     /* The tab this page drives, and the tabs other chats drive. A tab another
        chat owns is never a popup of this one: closing it, or navigating this
        page to its address, would take a page away from somebody else. */
@@ -432,8 +572,33 @@ export class SidecarPage {
       this.children.delete(String(message.params?.sessionId ?? ''))
       return
     }
+    if (message.method === 'Target.targetCreated') {
+      const info = message.params?.targetInfo ?? {}
+      /* A page target that is not this tab is a popup this click opened:
+         remember it while it is still blank, so no polling is needed later. */
+      if (String(info.type ?? '') === 'page' && String(info.targetId ?? '') !== String(this.targetId ?? '')) {
+        const siblings = typeof this.siblings === 'function' ? this.siblings().map(String) : []
+        if (!siblings.includes(String(info.targetId ?? ''))) {
+          this.opened = { targetId: String(info.targetId ?? ''), url: String(info.url ?? ''), at: Date.now() }
+          this.wakePopup()
+          if (Date.now() < Number(this.followUntil ?? 0)) {
+            void this.adoptOpened().catch(() => '')
+          }
+        }
+      }
+      return
+    }
     if (message.method === 'Target.targetInfoChanged') {
       const info = message.params?.targetInfo ?? {}
+      if (this.opened !== null && this.opened !== undefined && String(info.targetId ?? '') === this.opened.targetId) this.opened = { targetId: String(this.opened.targetId), url: String(info.url ?? this.opened.url) }
+      const door = this.urlDoor
+      if (door !== null && door !== undefined && String(info.url ?? '') !== '') {
+        try {
+          door({ id: String(info.targetId ?? ''), url: String(info.url) })
+        } catch {
+          /* the wait is already gone */
+        }
+      }
       const targetId = String(info.targetId ?? '')
       for (const child of this.children.values()) if (child.targetId === targetId) child.url = String(info.url ?? '')
       return
@@ -448,14 +613,16 @@ export class SidecarPage {
     }
     if (message.method === 'Runtime.exceptionThrown') {
       const detail = message.params?.exceptionDetails ?? {}
-      this.console.push({ type: 'error', text: String(detail.exception?.description ?? detail.text ?? '').slice(0, 300) })
+      this.troubleSeq += 1
+      this.console.push({ type: 'error', text: String(detail.exception?.description ?? detail.text ?? '').slice(0, 300), seq: this.troubleSeq })
       if (this.console.length > 200) this.console.splice(0, 50)
       return
     }
     if (message.method === 'Runtime.consoleAPICalled') {
       const params = message.params ?? {}
       const text = (params.args ?? []).map((arg) => String(arg.value ?? arg.description ?? '')).join(' ').slice(0, 300)
-      this.console.push({ type: String(params.type ?? 'log'), text })
+      this.troubleSeq += 1
+      this.console.push({ type: String(params.type ?? 'log'), text, seq: this.troubleSeq })
       if (this.console.length > 200) this.console.splice(0, 50)
       return
     }
@@ -478,6 +645,8 @@ export class SidecarPage {
       const known = this.requests.get(String(params.requestId ?? ''))
       if (known === undefined) return
       known.status = Number(params.response?.status ?? 0)
+      this.troubleSeq += 1
+      known.seq = this.troubleSeq
       this.network.push(known)
       if (this.network.length > 120) this.network.splice(0, 40)
       return
@@ -485,7 +654,8 @@ export class SidecarPage {
     if (message.method === 'Network.loadingFailed') {
       const params = message.params ?? {}
       if (params.canceled === true) return
-      this.failed.push({ error: String(params.errorText ?? ''), type: String(params.type ?? '') })
+      this.troubleSeq += 1
+      this.failed.push({ error: String(params.errorText ?? ''), type: String(params.type ?? ''), seq: this.troubleSeq })
       if (this.failed.length > 100) this.failed.splice(0, 25)
     }
   }
@@ -552,26 +722,136 @@ export class SidecarPage {
   async adoptOpened() {
     const foreign = typeof this.siblings === 'function' ? this.siblings().map(String) : []
     const theirs = new Set(foreign)
-    let target = this.opened === null || this.opened === undefined ? null : { targetId: this.opened.targetId, url: this.opened.url }
+    /* A tab someone opened for another reason is not what this click opened:
+       only a target announced in the last couple of seconds counts. */
+    const fresh = this.opened !== null && this.opened !== undefined && Date.now() - Number(this.opened.at ?? 0) < 2000
+    let target = fresh ? { targetId: this.opened.targetId, url: this.opened.url } : null
     this.opened = null
+    if (target !== null && String(target.url ?? '') === '') {
+      const said = await this.waitUrl(target.targetId, 250)
+      if (said !== '') target = { targetId: target.targetId, url: said }
+    }
     if (target !== null && isForeign(target.targetId, this.targetId, foreign)) target = null
+    /* A popup is announced by discovery the moment it exists; the fallback
+       probe is only for the case where the click never made one, so it gets a
+       single short look instead of the old half-second of polling. */
     if (target === null) {
-      /* The target list is written before the popup finished loading, so give a
-         click that opens one a moment to say where it is going. */
-      for (let attempt = 0; attempt < 3 && target === null; attempt += 1) {
-        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 150))
+      /* Look, wait for the announcement, look again: a new tab is announced
+         before the browser lists it, so one look is not enough. */
+      const deadline = Date.now() + POPUP_GRACE_MS
+      while (target === null && Date.now() < deadline) {
         const found = await this.findPopup(foreign)
-        if (found !== null && found.url !== '') target = found
-        else if (found !== null && attempt === 2) target = found
+        if (found !== null) {
+          target = found
+          break
+        }
+        const left = deadline - Date.now()
+        if (left <= 0) break
+        await this.waitPopup(Math.min(8, left))
       }
     }
-    if (target === null) return ''
+    if (target === null) {
+      /* Nothing yet: it may still come. Following it then costs no latency. */
+      this.armFollow()
+      return ''
+    }
+    this.disarmFollow()
     const url = String(target.url ?? '')
-    await this.cdp.send('Target.closeTarget', { targetId: target.targetId }).catch(() => {})
-    if (this.port > 0) await fetch(`http://127.0.0.1:${this.port}/json/close/${target.targetId}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
+    /* Close the tab the click opened, then use its own page for the visit. The
+       CDP close is the one that works; the HTTP door is only for a browser that
+       refused it, because waiting on it costs a round trip per popup click. */
+    let closed = false
+    try {
+      await this.cdp.send('Target.closeTarget', { targetId: target.targetId })
+      closed = true
+    } catch {
+      /* the target is already gone; the HTTP door below can still try */
+    }
+    if (!closed && this.port > 0) await fetch(`http://127.0.0.1:${this.port}/json/close/${target.targetId}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
     if (!/^https?:|^file:/.test(url)) return ''
     await this.cdp.send('Page.navigate', { url }).catch(() => {})
     return `opened ${url}`
+  }
+
+  /** Wake a pending popup wait: discovery has news. */
+  wakePopup() {
+    const door = this.popupDoor
+    if (door === null || door === undefined) return
+    this.popupDoor = null
+    try {
+      door()
+    } catch {
+      /* the wait is already gone */
+    }
+  }
+
+  /**
+   * Follow announced tabs for a while even though the click already answered.
+   * A page that opens its window from a timer is still doing what the click
+   * meant; the person would have ended up there too.
+   *
+   * @param {number} [ms] - how long to keep following.
+   */
+  armFollow(ms = FOLLOW_WINDOW_MS) {
+    this.followUntil = Date.now() + Math.max(0, ms)
+    if (this.followTimer !== null) clearTimeout(this.followTimer)
+    this.followTimer = setTimeout(() => {
+      this.followTimer = null
+      this.followUntil = 0
+    }, Math.max(0, ms))
+    if (typeof this.followTimer?.unref === 'function') this.followTimer.unref()
+  }
+
+  /** A call is starting: whatever the last click might still open is not ours. */
+  disarmFollow() {
+    this.followUntil = 0
+    if (this.followTimer !== null) clearTimeout(this.followTimer)
+    this.followTimer = null
+  }
+
+  /**
+   * Wait for a popup to say where it is going. Chrome announces a new tab with
+   * an empty address and fills it in a moment later; a click that closes the tab
+   * because the address is not there yet loses the page the click meant to open.
+   *
+   * @param {string} targetId - the tab to wait for.
+   * @param {number} ms - the ceiling.
+   * @returns {Promise<string>} the address, or '' when the window ends.
+   */
+  waitUrl(targetId, ms) {
+    return new Promise((done) => {
+      const wanted = String(targetId ?? '')
+      const finish = (url) => {
+        this.urlDoor = null
+        done(String(url ?? ''))
+      }
+      const timer = setTimeout(() => finish(''), Math.max(0, ms))
+      this.urlDoor = ({ id, url }) => {
+        if (String(id ?? '') !== wanted) return
+        clearTimeout(timer)
+        finish(url)
+      }
+    })
+  }
+
+  /**
+   * Wait for a popup announcement, no longer than `ms`: a page that opens
+   * nothing costs the window, a page that does is followed at once.
+   *
+   * @param {number} ms - the ceiling.
+   * @returns {Promise<void>} settles when a popup arrives or the window ends.
+   */
+  waitPopup(ms) {
+    return new Promise((done) => {
+      const timer = setTimeout(() => {
+        this.popupDoor = null
+        done()
+      }, Math.max(0, ms))
+      this.popupDoor = () => {
+        clearTimeout(timer)
+        done()
+      }
+    })
   }
 
   /**
@@ -675,42 +955,63 @@ export class SidecarPage {
     mkdirSync(folder, { recursive: true })
     this.downloadsFolder = folder
     this.cdp.on((message) => {
-      this.watch(message)
-      if (message.method !== 'Page.screencastFrame') return
-      const { data, sessionId, metadata } = message.params ?? {}
-      void this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
-      if (typeof data !== 'string' || data === '') return
-      this.latest = data
-      this.lastFrameAt = Date.now()
-      this.seq += 1
-      this.bytes += data.length
-      if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
-      if (this.inflight >= MAX_INFLIGHT_FRAMES) return
-      this.inflight += 1
-      const frame = {
-        seq: this.seq, // ui-copy-ignore
-        w: VIEW.width, // ui-copy-ignore
-        h: VIEW.height, // ui-copy-ignore
-        jpeg: data, // ui-copy-ignore
-        url: this.url, // ui-copy-ignore
-        title: this.title, // ui-copy-ignore
-        pointer: this.pointer, // ui-copy-ignore
-      }
-      for (const sink of this.frames) {
-        try {
-          sink(frame)
-        } catch {
-          /* a closed viewer is dropped by its own stream handler */
+      /* A CDP event is an event: one bad frame must not take the application
+         down with it, so the whole handler is a fault boundary. */
+      try {
+        this.watch(message)
+        if (message.method !== 'Page.screencastFrame') return
+        const { data, sessionId, metadata } = message.params ?? {}
+        void this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
+        if (typeof data !== 'string' || data === '') return
+        this.latest = data
+        this.lastFrameAt = Date.now()
+        this.seq += 1
+        this.bytes += data.length
+        if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
+        /* A page that is not moving sends the same bytes again and again; the
+           pane already shows that picture, so it is acked and dropped. */
+        if (this.frames.size > 0 && this.repeats(data) === true) return
+        if (this.tooSoon()) return
+        this.inflight += 1
+        const frame = {
+          seq: this.seq, // ui-copy-ignore
+          w: this.view.width, // ui-copy-ignore
+          h: this.view.height, // ui-copy-ignore
+          jpeg: data, // ui-copy-ignore
+          url: this.url, // ui-copy-ignore
+          title: this.title, // ui-copy-ignore
+          pointer: this.pointer, // ui-copy-ignore
+          /* Whether the person is driving right now: the pane hides the agent's
+             arrow while they are, so two cursors never claim the same hand. */
+          hold: this.holdOf(), // ui-copy-ignore
         }
+        for (const sink of this.frames) {
+          try {
+            sink(frame)
+          } catch {
+            /* a closed viewer is dropped by its own stream handler */
+          }
+        }
+        this.inflight -= 1
+      } catch (error) {
+        this.fault = String(error?.message ?? error) // ui-copy-ignore
       }
-      this.inflight -= 1
     })
     this.cdp.on((message) => {
       if (message.method === 'Page.frameNavigated' && message.params?.frame?.parentId === undefined) {
-        this.url = String(message.params.frame.url ?? '')
+        const next = String(message.params.frame.url ?? '')
+        if ((next === '' || next === 'about:blank') && this.url !== '' && this.url !== 'about:blank') this.blanked = true
+        this.url = next
         void this.readTitle()
       }
-      if (message.method === 'Page.loadEventFired') void this.readTitle()
+      if (message.method === 'Page.loadEventFired') {
+        this.loadFired = Date.now()
+        void this.readTitle()
+      }
+      /* A click that starts a navigation and a click that only changes the page
+         are different: the first needs waiting on, the second does not. */
+      if (message.method === 'Page.frameStartedLoading') this.navStarted = Date.now()
+      if (message.method === 'Page.frameStoppedLoading') this.navStopped = Date.now()
     })
     /* None of these settings depends on another: asking for all of them at
        once is one round trip instead of four, and a cold start is where it
@@ -722,6 +1023,9 @@ export class SidecarPage {
       /* Popups and out-of-process frames are separate targets. Attaching without
          waiting keeps them usable, and lets the mirror follow a new tab. */
       this.cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }).catch(() => {}),
+      /* Discovery is what makes a popup visible the instant it is created,
+         instead of after the click has already returned. */
+      this.cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => {}),
     ])
     /* An instance left behind by a stopped app can still be sitting on a
        dialog; a paused renderer answers nothing, so clear it first. */
@@ -734,8 +1038,8 @@ export class SidecarPage {
     const [, version] = await Promise.all([
       this.cdp.send('Runtime.enable').then(() =>
         this.cdp.send('Emulation.setDeviceMetricsOverride', {
-          width: VIEW.width, // ui-copy-ignore
-          height: VIEW.height, // ui-copy-ignore
+          width: this.view.width, // ui-copy-ignore
+          height: this.view.height, // ui-copy-ignore
           deviceScaleFactor: 1,
           mobile: false, // ui-copy-ignore
         }),
@@ -775,6 +1079,12 @@ export class SidecarPage {
 
   /** @returns {Promise<void>} resolves once the page is casting. */
   async cast() {
+    if (this.flashBridge !== null) {
+      if (this.casting) return
+      this.casting = true
+      void this.pollBridge()
+      return
+    }
     if (this.casting) {
       /* A page nobody repaints still owes the pane a picture, so silence for a
          few seconds means the cast died rather than being idle. */
@@ -787,8 +1097,8 @@ export class SidecarPage {
     await this.cdp.send('Page.startScreencast', {
       format: 'jpeg', // ui-copy-ignore
       quality: 72, // ui-copy-ignore
-      maxWidth: MIRROR.width, // ui-copy-ignore
-      maxHeight: MIRROR.height,
+      maxWidth: this.view.width, // ui-copy-ignore
+      maxHeight: this.view.height,
       optimizeForSpeed: true,
       everyNthFrame: 1,
     }).catch(() => {
@@ -797,26 +1107,95 @@ export class SidecarPage {
     void this.still()
   }
 
-  /** Sends one full-frame picture now: a mirror that waits for motion shows an empty pane on a page that is not moving. */
-  async still() {
-    let data = ''
+  /**
+   * The column changed size: lay the page out at that size so the picture fills
+   * the frame instead of sitting letterboxed inside it.
+   * @param {number} width - CSS pixels of the frame. @param {number} height - CSS pixels of the frame.
+   */
+  async setViewport(width, height) {
+    const w = Math.round(Number(width))
+    const h = Math.round(Number(height))
+    /* A narrow column with a long page is still a browser: refusing its size
+       leaves the picture letterboxed in the pane, which is what makes a mirror
+       look like it does not fill the column. */
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 200 || h < 200) return this.view
+    if (w > 2560 || h > 2560) return this.view
+    if (w === this.view.width && h === this.view.height) return this.view
+    this.view = { width: w, height: h }
+    this.touched = Date.now()
+    if (this.flashBridge !== null) {
+      /* The Flash window is the picture: resize it so the game fills the pane
+         instead of sitting letterboxed in a landscape window. */
+      await fetch(`http://127.0.0.1:${this.flashBridge}/resize?w=${w}&h=${h}`).catch(() => {})
+      return this.view
+    }
+    await this.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: w,
+      height: h,
+      deviceScaleFactor: 1,
+      mobile: false, // ui-copy-ignore
+    }).catch(() => {})
+    /* A Flash window is captured from a hidden app: there is no screencast to
+       restart, and its own resize path owns the picture. */
+    if (this.casting === true) {
+      await this.cdp.send('Page.stopScreencast').catch(() => {})
+      this.casting = false
+      await this.cast()
+    }
+    return this.view
+  }
+
+  /** @returns {Promise<string>} one JPEG of the page, base64, or empty. */
+  async picture() {
+    if (this.flashBridge !== null) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${this.flashBridge}/frame.jpg`) // ui-copy-ignore
+        if (!response.ok) return ''
+        return Buffer.from(await response.arrayBuffer()).toString('base64')
+      } catch {
+        return ''
+      }
+    }
     try {
       const shot = await this.cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 72, fromSurface: true })
-      data = String(shot?.data ?? '')
+      return String(shot?.data ?? '')
     } catch {
-      return
+      return ''
     }
+  }
+
+  /**
+   * Whether the pane was sent a picture a moment ago. Frames still update
+   * `latest` and the counters; only the downlink is paced.
+   * @returns {boolean} true when this frame should not be forwarded.
+   */
+  tooSoon() {
+    const now = Date.now()
+    /* Someone moving the mouse or holding the page is watching closely: their
+       frame goes out at full rate. A page animating on its own is paced. */
+    const busy = now - this.lastPointerAt < 1500
+    const gap = busy ? 0 : FRAME_GAP_MS
+    if (this.frames.size > 0 && now - this.sentAt < gap) return true
+    this.sentAt = now
+    return false
+  }
+
+  /** Feeds one picture to every viewer of this browser. @param {string} data - base64 JPEG. */
+  publish(data) {
     if (data === '' || this.frames.size === 0) return
     this.latest = data
+    if (this.repeats(data) === true) return
+    if (this.tooSoon()) return
     this.lastFrameAt = Date.now()
     this.seq += 1
     const frame = {
       seq: this.seq, // ui-copy-ignore
-      w: VIEW.width, // ui-copy-ignore
-      h: VIEW.height, // ui-copy-ignore
+      w: this.view.width, // ui-copy-ignore
+      h: this.view.height, // ui-copy-ignore
       jpeg: data, // ui-copy-ignore
       url: this.url, // ui-copy-ignore
       title: this.title, // ui-copy-ignore
+      hold: this.holdOf(), // ui-copy-ignore
       pointer: this.pointer, // ui-copy-ignore
     }
     for (const sink of this.frames) {
@@ -828,10 +1207,53 @@ export class SidecarPage {
     }
   }
 
+  /**
+   * Whether this picture repeats the one the pane is already showing.
+   * @param {string} jpeg - base64 JPEG of the new frame.
+   * @returns {boolean} true when sending it would just cost bytes.
+   */
+  repeats(jpeg, gap = 1000) {
+    const prev = this.lastShot
+    const same = prev !== null && prev === jpeg
+    const quietFor = Date.now() - this.lastShotAt
+    this.lastShot = jpeg
+    if (same === true && quietFor < gap) {
+      this.quiet += 1
+      return true
+    }
+    this.lastShotAt = Date.now()
+    return false
+  }
+
+  /** Sends one full-frame picture now: a mirror that waits for motion shows an empty pane on a page that is not moving. */
+  async still() {
+    this.publish(await this.picture())
+  }
+
+  /** Keeps a Flash page's mirror moving at a browser-like rate without a screencast. */
+  async pollBridge() {
+    while (this.casting) {
+      const started = Date.now()
+      if (Date.now() - this.lastFrameAt > 1500) this.publish(await this.picture())
+      else {
+        const frame = await this.picture()
+        if (frame !== this.latest) this.publish(frame)
+      }
+      const spent = Date.now() - started
+      /* The Flash bridge answers from a ready JPEG, so its ceiling is the
+         bridge's own pump rather than the browser's repaint interval. Poll
+         fast while the page is moving, slowly when it is still: a still page
+         costs one fetch per beat for nothing, a moving one is the mirror. */
+      const moving = Date.now() - this.lastFrameAt < 400
+      const interval = moving ? MIRROR.busy : MIRROR.interval
+      await wait(Math.max(0, interval - spent))
+    }
+  }
+
   async stopCast() {
     if (!this.casting) return
     this.casting = false
-    await this.cdp.send('Page.stopScreencast').catch(() => {})
+    if (this.flashBridge === null) await this.cdp.send('Page.stopScreencast').catch(() => {})
   }
 
   /**
@@ -840,6 +1262,7 @@ export class SidecarPage {
    */
   async navigate(url) {
     this.touched = Date.now()
+    this.navAt = Date.now()
     this.lastUrl = String(url)
     await this.cdp.send('Page.navigate', { url })
     /* A blank page is where the wait ends, not a place still to arrive: asking
@@ -859,10 +1282,13 @@ export class SidecarPage {
        own error page: the network stack is still coming up. One reload of that
        address is the difference between the chat seeing the site and the chat
        seeing a browser error in the mirror. */
-    if (this.url.startsWith('chrome-error://')) {
+    /* Only a browser that was still starting up answers instantly with its own
+       error page; one that took seconds to fail is the network's answer, and
+       asking it again costs another ten seconds of the same. */
+    if (this.url.startsWith('chrome-error://') && Date.now() - this.navAt < 2500) {
       await wait(300)
       await this.cdp.send('Page.reload', {}).catch(() => {})
-      for (let i = 0; i < 80; i += 1) {
+      for (let i = 0; i < 40; i += 1) {
         await wait(100)
         await this.readTitle()
         if (this.url !== '' && !this.url.startsWith('chrome-error://') && this.url !== 'about:blank') break
@@ -891,6 +1317,35 @@ export class SidecarPage {
     }
   }
 
+  /**
+   * What went wrong since the last time this was asked: failed requests, error
+   * statuses and JS exceptions, in one line. Silently empty when nothing did.
+   * @returns {string} a line to append to a read, or ''.
+   */
+  troubleOf() {
+    const after = Number(this.troubleSeen ?? 0)
+    const errors = (this.console ?? []).filter((row) => row.type === 'error' && Number(row.seq ?? 0) > after)
+    const bad = (this.network ?? []).filter((row) => Number(row.seq ?? 0) > after && Number(row.status ?? 0) >= 400)
+    const lost = (this.failed ?? []).filter((row) => Number(row.seq ?? 0) > after && !String(row.error ?? '').includes('ERR_ABORTED'))
+    const newest = [errors, bad, lost].reduce((top, rows) => rows.reduce((best, row) => Math.max(best, Number(row.seq ?? 0)), top), 0)
+    if (newest === 0) return ''
+    this.troubleSeen = newest
+    /* A raw address is mostly origin noise; the path is what names the request. */
+    const where = (url) => {
+      try {
+        const parsed = new URL(String(url))
+        return `${parsed.pathname}${parsed.search}`.slice(0, 70)
+      } catch {
+        return String(url ?? '').slice(0, 70)
+      }
+    }
+    const says = []
+    if (bad.length > 0) says.push(`${bad.length} request${bad.length === 1 ? '' : 's'} failed (${String(bad[bad.length - 1].method ?? 'GET')} ${where(bad[bad.length - 1].url)} → ${bad[bad.length - 1].status})`)
+    if (lost.length > 0) says.push(`${lost.length} request${lost.length === 1 ? '' : 's'} did not load (${String(lost[lost.length - 1].error ?? '').slice(0, 40)})`)
+    if (errors.length > 0) says.push(`${errors.length} JS error${errors.length === 1 ? '' : 's'} (${String(errors[errors.length - 1].text ?? '').split('\n')[0].slice(0, 90)})`)
+    return `page trouble: ${says.join(' · ')} — browser_network for the full list`
+  }
+
   async reload() {
     this.touched = Date.now()
     await this.cdp.send('Page.reload', {})
@@ -910,11 +1365,28 @@ export class SidecarPage {
     return { url: this.url, moved: true }
   }
 
+  /**
+   * Say the hand changed owners without waiting for the next picture: on a
+   * still page the agent's arrow used to sit there until the idle repaint, and
+   * a person who took the mouse saw it on top of their own cursor.
+   */
+  announceHold() {
+    const message = { type: 'pointer', w: this.view.width, h: this.view.height, pointer: this.pointer, hold: this.holdOf() } // ui-copy-ignore
+    for (const sink of this.pointerSinks) {
+      try {
+        sink(message)
+      } catch {
+        /* a closed viewer is dropped by its own stream handler */
+      }
+    }
+  }
+
   /** @param {{x: number, y: number}} point - where the pointer goes. */
   movePointer(point) {
     this.pointer = { x: Math.round(point.x), y: Math.round(point.y) }
+    this.lastPointerAt = Date.now()
     this.touched = Date.now()
-    const message = { type: 'pointer', w: VIEW.width, h: VIEW.height, pointer: this.pointer }
+    const message = { type: 'pointer', w: this.view.width, h: this.view.height, pointer: this.pointer, hold: this.holdOf() } // ui-copy-ignore
     for (const sink of this.pointerSinks) {
       try {
         sink(message)
@@ -967,6 +1439,7 @@ export class SidecarPage {
   }
 
   async hover(point) {
+    if (this.flashBridge !== null && (await this.flashInput('mouseMove', point)) === true) return this.cursorAt(point)
     await this.input('Input.dispatchMouseEvent', {
       type: 'mouseMoved', // ui-copy-ignore
       x: Math.round(point.x),
@@ -984,8 +1457,32 @@ export class SidecarPage {
    * @param {{x: number, y: number, button?: string, clickCount?: number}} point - CSS pixels.
    * @returns {Promise<void>} resolves when Chrome took the event.
    */
+  /**
+   * Hands one mouse event to the Flash window directly, skipping the debugging
+   * protocol on the way in.
+   * @param {string} kind - mouseDown, mouseUp or mouseMove.
+   * @param {{x: number, y: number, button?: string, clickCount?: number}} point - CSS pixels.
+   * @returns {Promise<boolean>} true when the window took it.
+   */
+  async flashInput(kind, point) {
+    const started = Date.now()
+    try {
+      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }),
+        signal: AbortSignal.timeout(1200),
+      })
+      this.inputMs = Date.now() - started
+      return reply.ok
+    } catch {
+      return false
+    }
+  }
+
   async mouse(type, point) {
     this.movePointer(point)
+    if (this.flashBridge !== null && (await this.flashInput(type === 'mousePressed' ? 'mouseDown' : type === 'mouseReleased' ? 'mouseUp' : 'mouseMove', point)) === true) return
     await this.input('Input.dispatchMouseEvent', {
       type,
       x: point.x,
@@ -1003,6 +1500,19 @@ export class SidecarPage {
    */
   async wheel(args) {
     this.movePointer(args)
+    if (this.flashBridge !== null) {
+      try {
+        const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ type: 'mouseWheel', x: Math.round(args.x), y: Math.round(args.y), deltaX: Math.round(args.dx ?? 0), deltaY: Math.round(args.dy ?? 0) }),
+          signal: AbortSignal.timeout(1200),
+        })
+        if (reply.ok === true) return
+      } catch {
+        /* the debugging protocol below is the fallback */
+      }
+    }
     await this.input('Input.dispatchMouseEvent', {
       type: 'mouseWheel', // ui-copy-ignore
       x: args.x, // ui-copy-ignore
@@ -1014,12 +1524,48 @@ export class SidecarPage {
   }
 
   /**
+   * One keystroke into the Flash window: a key name for control keys, a
+   * character for text, both carrying the modifiers a person holds.
+   * @param {string} type - keyDown or keyUp.
+   * @param {{key: string, text?: string, modifiers?: number}} key - one key.
+   * @returns {Promise<boolean>} true when the window took it.
+   */
+  async flashKey(type, key) {
+    const bits = Number(key.modifiers ?? 0)
+    const modifiers = []
+    if ((bits & 1) !== 0) modifiers.push('alt')
+    if ((bits & 2) !== 0) modifiers.push('control')
+    if ((bits & 4) !== 0) modifiers.push('meta')
+    if ((bits & 8) !== 0) modifiers.push('shift')
+    const char = String(key.text ?? '')
+    const named = String(key.key ?? '')
+    const code = char !== '' ? char : named
+    const events = [{ type, keyCode: code, modifiers }]
+    if (type === 'keyDown' && char !== '') events.push({ type: 'char', keyCode: char, modifiers })
+    try {
+      for (const event of events) {
+        const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(event),
+          signal: AbortSignal.timeout(1200),
+        })
+        if (reply.ok !== true) return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * @param {string} type - `keyDown` or `keyUp`.
    * @param {{key: string, code?: string, keyCode?: number, text?: string, modifiers?: number}} key - one key.
    * @returns {Promise<void>} resolves when Chrome took it.
    */
   async key(type, key) {
     this.touched = Date.now()
+    if (this.flashBridge !== null && (await this.flashKey(type, key)) === true) return
     const virtual = key.keyCode ?? key.windowsVirtualKeyCode ?? 0
     await this.input('Input.dispatchKeyEvent', {
       type: key.text === undefined || key.text === '' ? type : (type === 'keyDown' ? 'keyDown' : type),
@@ -1030,6 +1576,7 @@ export class SidecarPage {
       text: key.text, // ui-copy-ignore
       unmodifiedText: key.text,
       modifiers: key.modifiers ?? 0,
+      ...(Array.isArray(key.commands) && key.commands.length > 0 ? { commands: key.commands } : {}),
     })
   }
 
@@ -1050,8 +1597,11 @@ export class SidecarPage {
        fingers, but nobody wants to wait fifteen seconds for a paragraph. */
     const long = chars.length > 160
     const burst = Math.max(1, Number(options.burst ?? (long ? 8 : 3)))
-    const min = Number(options.min ?? (long ? 10 : 26))
-    const max = Math.max(min + 1, Number(options.max ?? (long ? 46 : 110)))
+    /* A keystroke's *shape* is what a page can check (keyDown with its own
+       text, a real focus, the right input events); the gaps between keys only
+       cost the caller time. A short word still gets human-sized jitter. */
+    const min = Number(options.min ?? (long ? 6 : 10))
+    const max = Math.max(min + 1, Number(options.max ?? (long ? 14 : 28)))
     const gap = () => min + Math.random() * (max - min)
     let at = 0
     while (at < chars.length) {
@@ -1065,6 +1615,10 @@ export class SidecarPage {
         await this.input('Input.insertText', { text: chunk })
       } else {
         for (const one of Array.from(chunk)) {
+          if (this.flashBridge !== null && (await this.flashKey('keyDown', { key: one, text: one })) === true) {
+            await this.flashKey('keyUp', { key: one })
+            continue
+          }
           await this.input('Input.dispatchKeyEvent', {
             type: 'keyDown', // ui-copy-ignore
             key: one, // ui-copy-ignore
@@ -1078,9 +1632,32 @@ export class SidecarPage {
       at += size
       const last = chars[at - 1] ?? ''
       /* Stop longer after a full stop or a comma, the way a person does. */
-      const pause = /[。！？，、；：\n.,!?;:]/.test(last) ? gap() * 2.2 + 90 : gap()
+      const pause = /[。！？，、；：\n.,!?;:]/.test(last) ? gap() * 2 + 30 : gap()
       await wait(at < chars.length ? pause : 0)
     }
+  }
+
+  /**
+   * Types a long text in one event, the way a paste does.
+   * @param {string} text - any unicode, including Chinese.
+   * @returns {Promise<boolean>} whether the focused box really took the text.
+   */
+  async quickType(text) {
+    this.touched = Date.now()
+    /** @returns {Promise<string>} what the focused box holds now. */
+    const holds = async () => {
+      const said = await this.cdp.send('Runtime.evaluate', {
+        expression: '(() => { const el = document.activeElement; return el === null ? "" : String(el.value ?? el.innerText ?? "") })()',
+        returnByValue: true,
+      }).catch(() => null)
+      return String(said?.result?.value ?? '')
+    }
+    const before = await holds()
+    await this.input('Input.insertText', { text }).catch(() => {})
+    const after = await holds()
+    /* The box is the judge: an editor that only listens to key events ignores
+       this, and the caller types the slow way instead. */
+    return after !== before && after.includes(String(text).trim().slice(0, 12))
   }
 
   /** @param {string} text - any unicode, including Chinese. @returns {Promise<void>} resolves when typed. */
@@ -1234,6 +1811,7 @@ export class Sidecar {
   constructor(options = {}) {
     this.logger = options.logger
     this.child = null
+    this.owns = false
     this.stopping = false
     this.cdp = null
     this.page = null
@@ -1246,6 +1824,11 @@ export class Sidecar {
     /* A measurement or a test may want a profile of its own; the person's
        browser keeps the default one. */
     this.profile = String(options.profile ?? 'default')
+    /* A movie page needs a runtime Chrome no longer has; the switch is the
+       person's, and it swaps the browser rather than the protocol. */
+    this.flash = options.flash === undefined ? process.env.DSH_INNER_BROWSER_FLASH === '1' || readFlashChoice() : options.flash === true
+    /* The Flash app serves its own frames; the screencast cannot see a plugin. */
+    this.flashBridge = null
     this.headless = true
     this.starting = null
     this.idle = null
@@ -1416,13 +1999,23 @@ export class Sidecar {
        browser was already showing, rather than at a blank page nobody asked for. */
     const remembered = this.rememberedTab(id)
     const address = url === undefined || url === '' ? String(remembered !== '' ? remembered : this.page?.lastUrl ?? this.lastUrl ?? 'about:blank') : String(url)
+    /* The Flash-era app is one window and cannot open another, so a chat asking
+       for a tab is handed that window, moved to the address it asked for. */
+    if (this.flash) {
+      const page = this.page
+      await page.navigate(address)
+      this.pages.set(id, page)
+      this.touch()
+      this.rememberTab(id, address)
+      return page
+    }
     const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
     if (!created.ok) throw new Error('sidecar: could not open a tab')
     const target = await created.json()
     if (typeof target.webSocketDebuggerUrl !== 'string') throw new Error('sidecar: new tab has no socket')
     const cdp = new Cdp(target.webSocketDebuggerUrl)
     await cdp.ready
-    const page = await this.bind(await new SidecarPage(cdp, this.profile, port).start()) // ui-copy-ignore
+    const page = await this.bind(await new SidecarPage(cdp, this.profile, port, () => this.holding()).start()) // ui-copy-ignore
     this.pages.set(id, page)
     this.touch()
     this.rememberTab(id, address)
@@ -1469,12 +2062,18 @@ export class Sidecar {
     const wanted = options.headless === undefined ? this.headless : options.headless !== false
     const modeChanged = wanted !== this.headless
     this.headless = wanted
+    /* Flash is another runtime, not another flag: the page has to move to the
+       browser that still speaks PPAPI, and back when the switch goes off. */
+    const wantFlash = options.flash === undefined ? this.flash : options.flash === true
+    const flashChanged = wantFlash !== this.flash
+    this.flash = wantFlash
+    writeFlashChoice(wantFlash)
     /* A windowless browser and a windowed one are different processes, so asking
        for the other one has to restart it. Setting the flag alone left the request
        with no effect at all: a site that refuses a windowless browser stayed out
        of reach until the browser happened to close for an unrelated reason. */
-    if (this.alive && modeChanged) {
-      const wasAt = options.url ?? this.page?.lastUrl ?? this.lastUrl
+    if (this.alive && (modeChanged || flashChanged)) {
+      const wasAt = options.url || this.page?.lastUrl || this.lastUrl
       await this.shutdown()
       return this.ensure({ ...options, url: wasAt })
     }
@@ -1490,7 +2089,9 @@ export class Sidecar {
       if (!probe.ok) {
         page.crashed = true
         this.note('renderer stopped answering; opening a fresh tab')
-        const wasAt = options.url ?? page.lastUrl ?? this.lastUrl
+        /* An empty string is a page that never got an address, not a decision to
+           stay blank: fall through to whatever this browser last showed. */
+        const wasAt = options.url || page.lastUrl || this.lastUrl
         /* The browser itself is usually fine: only the renderer died. Opening a
            fresh tab in it is much faster than starting Chrome again. */
         try {
@@ -1500,7 +2101,24 @@ export class Sidecar {
           return this.ensure({ ...options, url: wasAt })
         }
       }
+      const wasBlanked = page.blanked === true && (String(page.url ?? '') === '' || String(page.url ?? '') === 'about:blank')
+      if (wasBlanked) {
+        page.blanked = false
+        page.crashed = true
+        this.note('renderer stopped answering; opening a fresh tab')
+        try {
+          return await this.recover(page.lastUrl || this.lastUrl)
+        } catch {
+          await this.shutdown()
+          return this.ensure({ ...options, url: page.lastUrl || this.lastUrl })
+        }
+      }
       this.touch()
+      /* Keep the last real address the browser was seen on: a renderer crash
+         can blank the tab's own record before anyone asks, and coming back to
+         about:blank loses the page the person was reading. */
+      const seen = String(this.page?.url ?? '')
+      if (seen !== '' && seen !== 'about:blank') this.lastUrl = seen
       const id = String(options.session ?? '')
       if (id !== '') {
         /* Another chat may be looking at another tab: this one gets its own. */
@@ -1514,7 +2132,7 @@ export class Sidecar {
     /* A page whose connection closed on its own (a renderer crash closes the
        tab's session) can be replaced in the browser that is still running. */
     if (this.page !== null && this.page.cdp?.closed === true) {
-      const wasAt = options.url ?? this.page.lastUrl ?? this.lastUrl
+      const wasAt = options.url || this.page.lastUrl || this.lastUrl
       this.page.crashed = true
       this.note('renderer stopped answering; opening a fresh tab')
       this.starting = this.recover(wasAt).catch((error) => {
@@ -1533,18 +2151,22 @@ export class Sidecar {
 
   /** @param {string | undefined} url - first address. @returns {Promise<SidecarPage>} the page. */
   async launch(url) {
-    const dir = profileDir(this.profile)
+    /* Chromium 87 opening the profile a current Chrome owns would downgrade it
+       and lock it, so the Flash-era browser keeps a profile of its own. The two
+       never share a directory; a game signed into one is signed in there only. */
+    const dir = this.flash ? `${profileDir(this.profile)}-flash` : profileDir(this.profile)
     /* A profile whose cookie store went missing would look signed out at the
        next step even though the person never signed out, so the working copy
        is put back before the browser is asked to read it. */
     restoreLogin(dir)
     let port = await this.runningPort(dir) // ui-copy-ignore
     if (port === 0) port = await this.spawnChrome(dir) // ui-copy-ignore
+    else this.owns = ownsBrowser({ pid: process.pid, owner: markerPid(dir) })
     const ws = await this.pageSocket(port) // ui-copy-ignore
     const cdp = new Cdp(ws)
     await cdp.ready
     this.cdp = cdp
-    this.page = await this.bind(await new SidecarPage(cdp, this.profile, port).start()) // ui-copy-ignore
+    this.page = await this.bind(await new SidecarPage(cdp, this.profile, port, () => this.holding()).start()) // ui-copy-ignore
     if (url !== undefined && url !== '') this.lastUrl = String(url)
     await this.restoreSessionCookies()
     await this.page.cast()
@@ -1588,7 +2210,9 @@ export class Sidecar {
    * @returns {Promise<number>} the port Chrome opened. // ui-copy-ignore
    */
   async spawnChrome(dir) {
-    const binary = firstBinary()
+    const flash = this.flash ? flashRuntime() : null
+    if (this.flash && flash === null) throw new Error('sidecar: no Flash runtime on this machine')
+    const binary = flash === null ? firstBinary() : flash.binary
     if (binary === undefined) throw new Error('sidecar: no Chrome found on this machine')
     const args = [
       `--user-data-dir=${dir}`,
@@ -1628,11 +2252,31 @@ export class Sidecar {
       '--window-position=-3000,-3000',
       'about:blank',
     ]
-    if (this.headless) args.unshift('--headless=new')
+    if (flash !== null) {
+      /* Electron takes these switches through its own command line, not the
+         argv it hands the app, so the runtime app reads them from here. */
+      flash.port = Number(process.env.DSH_INNER_BROWSER_FLASH_PORT ?? 9200 + Math.floor(Math.random() * 400))
+      flash.bridgePort = flash.port + 1
+      args.length = 0
+      args.push(FLASH_APP)
+    } else if (this.headless) args.unshift('--headless=new')
     /* A browser started again after a stop is a new one: its death is news
        again, and the flag left behind by the stop must not silence it. */
     this.stopping = false
-    const child = spawn(binary, args, { detached: false, stdio: 'ignore' })
+    const flashEnv = flash === null ? undefined : {
+      ...process.env,
+      DSH_FLASH_PORT: String(flash.port),
+      DSH_FLASH_BRIDGE_PORT: String(flash.bridgePort),
+      DSH_FLASH_UDD: dir,
+      DSH_FLASH_PLUGIN: flash.plugin,
+      DSH_FLASH_VERSION: flash.version,
+      DSH_FLASH_URL: 'about:blank',
+    }
+    if (flashEnv !== undefined) {
+      /* The harness runs Node with this set; Electron would start as Node. */
+      delete flashEnv.ELECTRON_RUN_AS_NODE
+    }
+    const child = spawn(binary, args, { detached: false, stdio: 'ignore', env: flashEnv })
     const born = Date.now()
     child.on('exit', (code, signal) => {
       /* A browser that ends without being asked is the one case nobody can see:
@@ -1646,6 +2290,30 @@ export class Sidecar {
       }
     })
     this.child = child
+    /* Leave behind who started it: a browser found on this profile by another
+       process must not be closed by that process on its way out. */
+    try {
+      writeFileSync(join(dir, 'owner.json'), JSON.stringify({ pid: process.pid, at: Date.now() })) // ui-copy-ignore
+      this.owns = true
+    } catch {
+      /* A profile that cannot take a marker is still usable, but it counts as
+         somebody else's browser: no closing it from here. */
+    }
+    if (flash !== null) {
+      for (let i = 0; i < 150; i += 1) {
+        await wait(100)
+        try {
+          const response = await fetch(`http://127.0.0.1:${flash.port}/json/version`, { signal: AbortSignal.timeout(800) }) // ui-copy-ignore
+          if (response.ok) {
+            this.flashBridge = flash.bridgePort
+            return flash.port // ui-copy-ignore
+          }
+        } catch {
+          /* not up yet */
+        }
+      }
+      throw new Error('sidecar: the Flash runtime did not open a debugging port') // ui-copy-ignore
+    }
     const file = join(dir, 'DevToolsActivePort')
     for (let i = 0; i < 150; i += 1) {
       await wait(100)
@@ -1686,6 +2354,10 @@ export class Sidecar {
    * @returns {SidecarPage} the same page.
    */
   bind(page) {
+    page.flashBridge = this.flashBridge
+    /* The launch window is landscape; shrink it to the capture budget before
+       anyone asks, so the first judged frame is not a 2 fps one. */
+    if (this.flashBridge !== null) void page.setViewport(page.view.width, page.view.height).catch(() => {})
     page.siblings = () =>
       [...this.pages.values(), this.page]
         .filter((other) => other !== null && other !== undefined && other !== page)
@@ -1709,7 +2381,7 @@ export class Sidecar {
     if (mine !== null) {
       const cdp = new Cdp(tab.webSocketUrl)
       await cdp.ready
-      const page = await this.bind(await new SidecarPage(cdp, this.profile, mine.port).start()) // ui-copy-ignore
+      const page = await this.bind(await new SidecarPage(cdp, this.profile, mine.port, () => this.holding()).start()) // ui-copy-ignore
       this.pages.set(String(session), page)
       mine.cdp.send('Page.stopScreencast').catch(() => {})
       mine.cdp.close()
@@ -1719,7 +2391,7 @@ export class Sidecar {
     }
     const cdp = new Cdp(tab.webSocketUrl)
     await cdp.ready
-    const page = await this.bind(await new SidecarPage(cdp, this.profile, was.port).start()) // ui-copy-ignore
+    const page = await this.bind(await new SidecarPage(cdp, this.profile, was.port, () => this.holding()).start()) // ui-copy-ignore
     this.cdp = cdp
     this.page = page
     this.lastUrl = tab.url
@@ -1762,7 +2434,12 @@ export class Sidecar {
   async recover(url) {
     const port = this.page?.port ?? 0 // ui-copy-ignore
     if (port === 0) throw new Error('sidecar: no browser to recover into') // ui-copy-ignore
-    const address = url === '' || url === undefined ? 'about:blank' : String(url)
+    let address = url === '' || url === undefined ? 'about:blank' : String(url)
+    if (address === 'about:blank' && String(this.lastUrl ?? '') !== '' && this.lastUrl !== 'about:blank') address = String(this.lastUrl)
+    if (this.flash) {
+      await this.page.navigate(address)
+      return this.page
+    }
     const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
     if (!created.ok) throw new Error('sidecar: could not open a tab to recover into')
     const target = await created.json()
@@ -1770,7 +2447,17 @@ export class Sidecar {
     const cdp = new Cdp(target.webSocketDebuggerUrl)
     await cdp.ready
     this.cdp = cdp
-    this.page = await this.bind(await new SidecarPage(cdp, this.profile, port).start()) // ui-copy-ignore
+    this.page = await this.bind(await new SidecarPage(cdp, this.profile, port, () => this.holding()).start()) // ui-copy-ignore
+    /* The new tab may have finished loading before we attached, in which case
+       no navigation event ever reaches us and the page would report the blank
+       address it was created with. Ask it where it actually is. */
+    let here = ''
+    try {
+      const out = await cdp.send('Runtime.evaluate', { expression: 'location.href', returnByValue: true })
+      here = String(out?.result?.value ?? '')
+    } catch {}
+    if (here !== '' && here !== 'about:blank') this.page.lastUrl = here
+    else if (address !== 'about:blank') await this.page.navigate(address)
     await this.page.cast()
     this.touch()
     return this.page
@@ -1905,13 +2592,21 @@ export class Sidecar {
   }
 
   async shutdown() {
-    /* Ask Chrome to close first: a browser that is killed outright may lose the
-       last minute of cookies, and keeping the person signed in is the point. */
-    if (this.page !== null) await this.saveSessionCookies()
+    /* A browser this process did not start belongs to somebody else — another
+       app on the same profile, or a script that connected to it — and closing
+       it would close the person's window. Let go of it instead: drop the socket
+       and leave the browser running. */
+    const mine = this.owns === true
+    if (mine && this.page !== null) {
+      /* Ask Chrome to close first: a browser that is killed outright may lose
+         the last minute of cookies, and keeping the person signed in is the
+         point. */
+      await this.saveSessionCookies()
+      snapshotLogin(profileDir(this.profile))
+    }
     if (this.backup !== undefined) clearInterval(this.backup)
     this.backup = undefined
-    snapshotLogin(profileDir(this.profile))
-    if (this.cdp !== null) {
+    if (this.cdp !== null && mine) {
       await this.cdp.send('Browser.close').catch(() => {})
       await new Promise((resolve) => setTimeout(resolve, 400))
     }
@@ -1920,14 +2615,32 @@ export class Sidecar {
     this.cdp?.close()
     this.cdp = null
     if (this.child !== null) {
+      const child = this.child
       try {
         /* A browser on Windows is a process tree: terminating the launcher alone
            leaves renderers and the profile lock behind. Browser.close above is
            the graceful path; this is the one for a browser that ignored it. */
-        if (process.platform === 'win32' && Number.isInteger(this.child.pid)) {
-          spawnSync('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { stdio: 'ignore' })
+        if (process.platform === 'win32' && Number.isInteger(child.pid)) {
+          spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
         } else {
-          this.child.kill('SIGTERM')
+          child.kill('SIGTERM')
+          /* Electron with an offscreen window can ignore SIGTERM while a plugin
+             paints; a leftover helper keeps the profile locked and shows up as a
+             stray process on the person's desktop. Escalate by pid. */
+          await new Promise((resolve) => {
+            const timer = setTimeout(() => {
+              try {
+                child.kill('SIGKILL')
+              } catch {
+                /* already gone */
+              }
+              resolve()
+            }, 1500)
+            child.once('exit', () => {
+              clearTimeout(timer)
+              resolve()
+            })
+          })
         }
       } catch {
         /* already gone */
@@ -2034,6 +2747,12 @@ export class Sidecar {
       frames: this.page?.seq ?? 0,
       crashed: this.page?.crashed === true,
       pointer: this.page?.pointer ?? null,
+      /* Frames that repeated the pane's picture and were dropped instead of
+         sent: the number a static page spends on nothing. */
+      quiet: this.page?.quiet ?? 0,
+      /* Layout size of the page the pane is showing: a coordinate from a
+         screenshot is in this space, not in the window's. */
+      viewport: this.page?.view ?? null,
       profiles,
       error: this.alive ? '' : this.lastError,
     }

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readStateFor, SHOT_OUTPUT } from '../tools.js'
 import { readFileSync } from 'node:fs'
-import { blindSpots, differs, renderPage } from '../read.js'
+import { blindSpots, bounds, clickInDom, covering, differs, pictures, renderPage, resolve, seed, snapshot, SELECTOR, writeInDom } from '../read.js'
 
 test('a number whose control says the same words is still good', () => {
   assert.equal(differs({ name: 'Send' }, { name: 'Send' }), '')
@@ -64,7 +64,7 @@ test('a read says what its text could not show', () => {
   const read = { url: 'https://x.test/', title: '', text: '', textChars: 0, controls: [], blind: blindSpots({ pictures: 2, canvases: 1, videos: 0, frames: 1 }) }
   const said = renderPage(read)
   assert.match(said, /text cannot show: 2 picture\(s\) with no words, 1 drawing surface\(s\), 1 embedded frame\(s\)/)
-  assert.match(said, /sidecar_grab/)
+  assert.match(said, /browser_grab/)
 })
 
 test('a read with nothing out of reach adds no line about it', () => {
@@ -84,7 +84,7 @@ test('a page that needs Flash says so instead of looking blank', () => {
 
 test('a browser error page reads as a page that never arrived', () => {
   const read = { url: 'chrome-error://chromewebdata/', title: '', text: '', textChars: 0, controls: [] }
-  assert.match(renderPage(read), /the page did not load — sidecar_nav/)
+  assert.match(renderPage(read), /the page did not load — browser_nav/)
 })
 
 test('every read that changes a baseline changes this chat\'s own baseline', () => {
@@ -96,4 +96,35 @@ test('every read that changes a baseline changes this chat\'s own baseline', () 
   assert.equal(source.includes('await remember(page, refs,'), false)
   assert.ok(source.includes('remember(page, state, options)'))
   assert.ok(source.includes('remember(page, refsFor(), options)'))
+})
+
+test('a page of hundred rows does not spend the read on numbers alone', () => {
+  const controls = Array.from({ length: 300 }, (_, at) => ({ ref: at + 1, kind: 'link', name: `row ${at + 1}`, view: true, href: '' }))
+  const read = { url: 'https://example.com', title: 'rows', controls, text: 'the words that say what this page is' }
+  const lean = renderPage(read)
+  assert.equal(lean.split('\n').filter((line) => /^\d+ \[/.test(line)).length, 140)
+  assert.match(lean, /… 160 more controls on this screen/)
+  assert.match(lean, /the words that say what this page is/, 'the words survive the numbers')
+  const whole = renderPage(read, { maxControls: 1000 })
+  assert.doesNotMatch(whole, /more controls on this screen/)
+  assert.ok(whole.split('\n').filter((line) => /^\d+ \[/.test(line)).length > 140, 'more rows when the caller asks for them')
+})
+
+test('the page-side scripts the browser runs are valid JavaScript', () => {
+  const scripts = {
+    seed: seed(SELECTOR, 2),
+    read: snapshot('text', 6000, 90),
+    resolve: resolve(1),
+    click: clickInDom(1, {}),
+    write: writeInDom(1, 'x', {}),
+    bounds: bounds(1),
+    pictures: pictures(1, 2),
+    covering: covering(1),
+  }
+  for (const [name, src] of Object.entries(scripts)) assert.doesNotThrow(() => new Function(src), `${name} parses`)
+  const read = scripts.read
+  /* A regex written with one backslash inside the template loses it, and the
+     page then collapses runs of "s" instead of runs of space. */
+  assert.match(read, /\\s\+/, 'whitespace regexes keep their backslash')
+  assert.ok(read.includes('application\\/x-swf'), 'a slash inside a regex is escaped')
 })

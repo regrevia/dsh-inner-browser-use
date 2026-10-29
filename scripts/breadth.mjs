@@ -131,6 +131,14 @@ const PAGES = {
     <textarea id="box" placeholder="Message the assistant" style="width:520px;height:60px"></textarea></body></html>`,
   '/dense': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <h1>Catalog</h1>${Array.from({ length: 40 }, (_, at) => `<p>Item ${at + 1}: a plain sentence about a thing worth reading, long enough to fill a line.</p>`).join('')}</body></html>`,
+  '/late': `<!doctype html><html><head><title>late page</title></head><body><div id="box"></div>
+    <script>setTimeout(() => { document.getElementById('box').innerHTML = '<h1>Late</h1><button>Late button</button><p>' + 'filled in after hydration '.repeat(8) + '</p>' }, 700)</script></body></html>`,
+  '/trouble': `<!doctype html><html><head><title>trouble page</title></head><body style="font:16px system-ui;padding:24px">
+    <h1>Trouble</h1>
+    <script>setTimeout(() => { fetch('/missing-x').catch(() => {}); throw new Error('boom-trouble') }, 80)</script></body></html>`,
+  '/hostile': `<!doctype html><html><head><title>hostile page</title></head><body><h1>Hostile</h1>
+    <button>Real button</button>
+    <script>document.querySelectorAll = () => { throw new Error('hostile page broke the DOM reader') }</script></body></html>`,
   '/words': `<!doctype html><html><body style="font:16px system-ui;padding:24px">
     <button onclick="document.title='alpha clicked'">Alpha</button>
     <button onclick="document.title='beta clicked'">Beta sent</button>
@@ -299,13 +307,13 @@ try {
     await page.insertText('a@b.c')
     line('form-type', (await js(page, 'document.querySelector("input[name=email]").value')) === 'a@b.c')
     const formTools = sidecarTools(sidecar, { last: undefined })
-    const typeTool = formTools.find((tool) => tool.name === 'sidecar_type')
-    const keyTool = formTools.find((tool) => tool.name === 'sidecar_key')
+    const typeTool = formTools.find((tool) => tool.name === 'browser_type')
+    const keyTool = formTools.find((tool) => tool.name === 'browser_key')
     await typeTool.execute({ ref: email.ref, text: 'q', clear: true })
     await keyTool.execute({ key: 'Backspace' })
     line('backspace', (await js(page, 'document.querySelector("input[name=email]").value')) === '')
     await typeTool.execute({ ref: email.ref, text: 'a@b.c', clear: true })
-    const doFill = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+    const doFill = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_do')
     const said = await doFill.execute({ steps: [{ field: 'Email', text: 'a@b.c', clear: true }], read: 'none' })
     line('do-clear', (await js(page, 'document.querySelector("input[name=email]").value')) === 'a@b.c', String(said.text).slice(0, 60))
   }
@@ -348,17 +356,17 @@ try {
   /* A label in a div, a bare input under it: clicking the words must still put
      the typing in the field the words belong to, not wherever focus was. */
   await page.navigate(`${base}/bare`)
-  const bareDo = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  const bareDo = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_do')
   const bareSaid = await bareDo.execute({ steps: [{ field: 'Work email', text: 'me@x.y' }], read: 'none' })
   const bareValue = await js(page, 'document.querySelector("input[name=wk]").value')
   const teamValue = await js(page, 'document.querySelector("input[name=tm]").value')
   line('do-field-bare', bareValue === 'me@x.y' && teamValue === '', `${bareValue} | ${teamValue} | ${String(bareSaid.text).replace(/\n/g, ' / ').slice(0, 80)}`)
   const teamSaid = await bareDo.execute({ steps: [{ field: 'Team name', text: 'core' }], read: 'none' })
   line('do-field-bare-second', (await js(page, 'document.querySelector("input[name=tm]").value')) === 'core', String(teamSaid.text).slice(0, 80))
-  const typeBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_type')
+  const typeBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_type')
   const typed = String((await typeBare.execute({ field: 'Work email', text: 'z@z.z', clear: true })).text)
   line('type-by-words', (await js(page, 'document.querySelector("input[name=wk]").value')) === 'z@z.z' && typed.includes('typed into "Work email"'), typed.replace(/\n/g, ' / ').slice(0, 100))
-  const selectBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_select')
+  const selectBare = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_select')
   const picked = String((await selectBare.execute({ field: 'Seats', value: 'Two' })).text)
   line('select-by-words', (await js(page, 'document.querySelector("select[name=seats]").value')) === '2' && picked.includes('chose Two in Seats'), picked.replace(/\n/g, ' / ').slice(0, 110))
   const dateSaid = await bareDo.execute({ steps: [{ field: 'Birthday', text: '2001-02-03' }], read: 'none' })
@@ -373,17 +381,17 @@ try {
     line('canvas-numbered', sign.kind === 'canvas', `${sign.kind} ${sign.name}`)
     await click(page, sign.ref)
     line('canvas-click', String(await js(page, 'document.title')).startsWith('sig '), String(await js(page, 'document.title')))
-    const shotTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_shot')
+    const shotTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_shot')
     const saved = await shotTool.execute({ ref: sign.ref, name: 'canvas-check' })
-    const file = typeof saved === 'string' ? saved : String(saved?.text)
-    const png = readFileSync(String(file.trim()))
+    const file = (typeof saved === 'string' ? saved : String(saved?.text)).split(/\s+/)[0]
+    const png = readFileSync(String(file))
     const shotWide = png.readUInt32BE(16)
     const shotHigh = png.readUInt32BE(20)
     line('canvas-shot', Math.abs(shotWide - 316) <= 4 && Math.abs(shotHigh - 136) <= 4, `${shotWide}x${shotHigh} ${String(file).slice(-24)}`)
   }
 
   await page.navigate(`${base}/pic`)
-  const grabTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_grab')
+  const grabTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_grab')
   const grabbedAt = Date.now()
   const grabbed = String((await grabTool.execute({ name: 'picture-check' })).text).trim()
   const grabbedFile = grabbed.split(' ')[0]
@@ -391,7 +399,7 @@ try {
   const grabWide = grabbedPng.readUInt32BE(16)
   const grabHigh = grabbedPng.readUInt32BE(20)
   const picRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
-  line('picture-in-read', /^picture 140x90 a picture with detail/m.test(picRead) && picRead.includes('sidecar_grab saves it as a file'), String(picRead.split('\n').filter((row) => row.startsWith('picture'))[0] ?? 'no line').slice(0, 80))
+  line('picture-in-read', /^picture 140x90 a picture with detail/m.test(picRead) && picRead.includes('browser_grab saves it as a file'), String(picRead.split('\n').filter((row) => row.startsWith('picture'))[0] ?? 'no line').slice(0, 80))
   line('grab-picture', grabWide === 140 && grabHigh === 90 && grabbed.includes('140x90'), `${Date.now() - grabbedAt} ms | ${grabbedFile.split('/').pop()} ${grabWide}x${grabHigh}`)
   line('grab-detail', grabbed.includes('picture with detail'), grabbed.slice(grabbed.indexOf('140x90')))
   await page.navigate(`${base}/movie`)
@@ -421,12 +429,12 @@ try {
 
   await page.navigate(`${base}/words`)
   const wordsRead = renderPage(await readPage(page, { mode: 'text' }), { mode: 'text' })
-  line('no-picture-noise', !wordsRead.includes('sidecar_grab saves it'), wordsRead.split('\n').length + ' lines')
+  line('no-picture-noise', !wordsRead.includes('browser_grab saves it'), wordsRead.split('\n').length + ' lines')
 
   /* The change travels with the request, because the reviewer cannot open the repo. */
   {
     const refs = { refs: [], at: 0 }
-    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_review') // ui-copy-ignore
+    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'browser_review') // ui-copy-ignore
     await page.navigate(`${base}/chat`)
     const told = await review.execute({ repo: 'https://github.com/example/repo', diff: '--- a/read.js\n+++ b/read.js\n+const cap = 60', timeout_ms: 12_000 })
     const body = String(told?.text ?? '')
@@ -437,7 +445,7 @@ try {
   /* A wall is not a review: it is named, not passed off as prose. */
   {
     const refs = { refs: [], at: 0 }
-    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_review') // ui-copy-ignore
+    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'browser_review') // ui-copy-ignore
     await page.navigate(`${base}/wall`)
     const told = await review.execute({ repo: 'https://github.com/example/repo', timeout_ms: 8000 })
     const body = String(told?.text ?? '')
@@ -447,7 +455,7 @@ try {
   /* A page that keeps the words says so, instead of pretending an answer came. */
   {
     const refs = { refs: [], at: 0 }
-    const ask = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_ask') // ui-copy-ignore
+    const ask = sidecarTools(sidecar, refs).find((tool) => tool.name === 'browser_ask') // ui-copy-ignore
     await page.navigate(`${base}/nochat`)
     const told = await ask.execute({ text: 'please look at the diff', timeout_ms: 4200 })
     const body = String(told?.text ?? '')
@@ -457,7 +465,7 @@ try {
   /* A review round: brief in, a list out, and the round written down. */
   {
     const refs = { refs: [], at: 0 }
-    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_review') // ui-copy-ignore
+    const review = sidecarTools(sidecar, refs).find((tool) => tool.name === 'browser_review') // ui-copy-ignore
     await page.navigate(`${base}/chat`)
     const started = Date.now()
     const told = await review.execute({ repo: 'https://github.com/example/repo', commit: 'abc123def456', focus: 'token cost', timeout_ms: 8000 })
@@ -468,7 +476,7 @@ try {
   /* One call carries a question and the answer back. */
   {
     const refs = { refs: [], at: 0 }
-    const ask = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_ask') // ui-copy-ignore
+    const ask = sidecarTools(sidecar, refs).find((tool) => tool.name === 'browser_ask') // ui-copy-ignore
     await page.navigate(`${base}/chat`)
     const started = Date.now()
     const told = await ask.execute({ text: 'review the read output', timeout_ms: 8000 })
@@ -479,7 +487,7 @@ try {
   /* Reading the same page twice should not cost the page twice. */
   {
     const refs = { refs: [], at: 0 }
-    const view = sidecarTools(sidecar, refs).find((tool) => tool.name === 'sidecar_view') // ui-copy-ignore
+    const view = sidecarTools(sidecar, refs).find((tool) => tool.name === 'browser_view') // ui-copy-ignore
     await page.navigate(`${base}/dense`)
     const first = await view.execute({ mode: 'text' })
     const started = Date.now()
@@ -489,13 +497,13 @@ try {
   }
 
   await page.navigate(`${base}/login`)
-  const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  const doTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_do')
   const doSaid = await doTool.execute({ steps: [{ field: 'Username', text: 'ada' }, { field: 'Password', text: 'pw' }, { tap: 'Log in' }], read: 'none' })
   await sleep(250)
   line('do-by-words', (await js(page, 'document.title')) === 'in as ada' && String(doSaid.text).includes('typed into "Username"'), String(doSaid.text).replace(/\n/g, ' / ').slice(0, 120))
 
   await page.navigate(`${base}/words`)
-  const wordsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
+  const wordsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_click')
   const wordsSaid = await wordsTool.execute({ text: 'Beta sent' })
   await sleep(250)
   line('click-by-words', (await js(page, 'document.title')) === 'beta clicked' && String(wordsSaid.text).startsWith('ok click'), String(wordsSaid.text).slice(0, 80))
@@ -638,18 +646,21 @@ try {
   const tabPort = sidecar.page.port
   await fetch(`http://127.0.0.1:${tabPort}/json/new?${encodeURIComponent(`${base}/light`)}`, { method: 'PUT' }).catch(() => null)
   await sleep(400)
-  const tabsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_tabs')
+  const tabsTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_tabs')
   const listed = await tabsTool.execute({ action: 'list' })
   const rows = String(listed.text).split('\n')
   const otherRow = rows.findIndex((row) => row.includes('/light'))
   const switched = otherRow < 0 ? { text: 'unlisted' } : await tabsTool.execute({ action: 'switch', index: otherRow })
   const onLight = String(sidecar.page?.url ?? '').includes('/light')
-  const closed = otherRow < 0 ? { text: '' } : await tabsTool.execute({ action: 'close', index: 0 })
+  /* The list can hold an about:blank the browser started with, so close the
+     row that is actually the page left behind, not row zero by assumption. */
+  const denseRow = rows.findIndex((row) => row.includes('/dense'))
+  const closed = denseRow < 0 ? { text: '' } : await tabsTool.execute({ action: 'close', index: denseRow })
   page = sidecar.page
   line('tabs', rows.length >= 2 && otherRow >= 0 && onLight && String(closed.text).includes('/dense'), `${rows.length} rows | ${switched.text} | ${closed.text} | ${String(listed.text).replace(/\n/g, ' / ').slice(0, 160)}`)
 
   await page.navigate(`${base}/list`)
-  const extractTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_extract')
+  const extractTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_extract')
   const extracted = String((await extractTool.execute({ select: '#rows li' })).text)
   const wholeList = renderPage(await readPage(page, { mode: 'text', maxChars: 4000 }), { mode: 'text', maxChars: 4000 })
   const budgetList = renderPage(await readPage(page, { mode: 'text', maxChars: 500 }), { mode: 'text', maxChars: 500 })
@@ -658,20 +669,20 @@ try {
   await page.navigate(`${base}/cover`)
   const coverRead = await readPage(page, { mode: 'text', maxChars: 2000 })
   const under = control(coverRead, 'Under the banner')
-  const clickTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_click')
+  const clickTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_click')
   const covered = String((await clickTool.execute({ ref: under.ref })).text)
   const through = (await js(page, 'document.title')) === 'under clicked'
-  line('covered-click', covered.includes('covers it') && covered.includes('We use cookies') && covered.includes('clicked Accept on it first') && through, `${through ? 'click went through' : 'click stayed under'} | ${covered.replace(/\n/g, ' / ').slice(0, 130)}`)
+  line('covered-click', covered.includes('covers it') && covered.includes('We use cookies') && covered.includes('clicked Accept on it first') && through, `${through ? 'click went through' : 'click stayed under'} | ${covered.replace(/\n/g, ' / ').slice(0, 220)} `)
 
   await page.navigate(`${base}/cover`)
   const fieldRead = await readPage(page, { mode: 'forms', maxChars: 2000 })
   const note = control(fieldRead, 'Note')
-  const typeTool0 = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_type')
+  const typeTool0 = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_type')
   const typedThrough = String((await typeTool0.execute({ ref: note.ref, text: 'held' })).text)
   line('type-through-overlay', typedThrough.includes('clicked Accept on it first') && (await js(page, 'document.querySelector("#note").value')) === 'held', typedThrough.replace(/\n/g, ' / ').slice(0, 130))
 
   await page.navigate(`${base}/cover`)
-  const doTool0 = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_do')
+  const doTool0 = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_do')
   const batch = String((await doTool0.execute({ steps: [{ tap: 'Under the banner' }], read: 'none' })).text)
   const batchThrough = (await js(page, 'document.title')) === 'under clicked'
   line('do-through-overlay', batchThrough && batch.includes('after Accept on a banner, clicked "Under the banner"'), `${batchThrough ? 'click went through' : 'click stayed under'} | ${batch.replace(/\n/g, ' / ').slice(0, 120)}`)
@@ -685,7 +696,7 @@ try {
   const underGuard = control(guardRead, 'Under the banner')
   const guarded = String((await clickTool.execute({ ref: underGuard.ref })).text)
   const untouched = (await js(page, 'document.title')) === '' && String(await js(page, 'document.getElementById("modal") === null')) === 'false'
-  line('guarded-overlay', guarded.includes('covers it') && guarded.includes('Delete this account') && guarded.includes('clicked') === false && untouched, guarded.replace(/\n/g, ' / ').slice(0, 120))
+  line('guarded-overlay', guarded.includes('covers it') && guarded.includes('Delete this account') && guarded.startsWith('Not clicked') === true || guarded.includes('the click landed') === false && untouched, guarded.replace(/\n/g, ' / ').slice(0, 120))
 
   /* A ref the page invalidated by redrawing is not a dead end: the words are
      still on screen, so the click goes where the control is now. A control that
@@ -693,24 +704,24 @@ try {
   await page.navigate(`${base}/redraw`)
   const followState = { last: undefined }
   const followTools = sidecarTools(sidecar, followState)
-  await followTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 400 })
+  await followTools.find((tool) => tool.name === 'browser_view').execute({ mode: 'text', max_chars: 400 })
   const keepControl = followState.refs.find((c) => c.name.toLowerCase().includes('keep going'))
   await js(page, 'window.repaint()')
   const staleNow = await locate(page, keepControl.ref)
-  const followed = String((await followTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: keepControl.ref })).text)
+  const followed = String((await followTools.find((tool) => tool.name === 'browser_click').execute({ ref: keepControl.ref })).text)
   const keptTitle = String(await js(page, 'document.title'))
   line('ref-follows-redraw', staleNow.gone === true && keptTitle === 'kept clicked' && followed.includes('has a new number'), `${staleNow.gone === true ? 'ref was stale' : 'ref still pointed at something'} | title=${keptTitle} | ${followed.replace(/\n/g, ' / ').slice(0, 150)}`)
 
   await page.navigate(`${base}/redraw`)
   const refuseState = { last: undefined }
   const refuseTools = sidecarTools(sidecar, refuseState)
-  await refuseTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 400 })
+  await refuseTools.find((tool) => tool.name === 'browser_view').execute({ mode: 'text', max_chars: 400 })
   const keepGone = refuseState.refs.find((c) => c.name.toLowerCase().includes('keep going'))
   await js(page, "document.getElementById('list').innerHTML = '<button>Something else</button>'")
-  const reallyGone = String((await refuseTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: keepGone.ref })).text)
-  line('ref-refuses-really-gone', reallyGone.includes('Call sidecar_view'), reallyGone.replace(/\n/g, ' / ').slice(0, 150))
+  const reallyGone = String((await refuseTools.find((tool) => tool.name === 'browser_click').execute({ ref: keepGone.ref })).text)
+  line('ref-refuses-really-gone', reallyGone.includes('Call browser_view'), reallyGone.replace(/\n/g, ' / ').slice(0, 150))
 
-  const stateTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_state')
+  const stateTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_state')
   const stateSaid = await stateTool.execute({})
   const counted = Number(String(stateSaid.text).match(/refs followed (\d+)/)?.[1] ?? -1)
   line('follow-counted', counted >= 1, `${String(counted)} | ${String(stateSaid.text).replace(/\n/g, ' / ').slice(0, 160)}`)
@@ -720,43 +731,63 @@ try {
   line('mirror-honest', unseenSaid, unseenSaid ? 'says nothing is drawing it, and how to fix it' : String(stateSaid.text).replace(/\n/g, ' / ').slice(0, 160))
 
   /* The person takes the mirror by hand: actions wait for them and say so,
-     reads still work (looking helps), and sidecar_resume hands the page back. */
+     reads still work (looking helps), and browser_resume hands the page back. */
   const holdState = { last: undefined }
   const holdTools = sidecarTools(sidecar, holdState)
-  await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })
+  await holdTools.find((tool) => tool.name === 'browser_view').execute({ mode: 'text', max_chars: 300 })
   const holdTarget = holdState.refs.find((c) => ['btn', 'button'].includes(c.kind))
   sidecar.humanUse({ kind: 'click', x: 12, y: 12 })
-  const heldRead = String((await holdTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 200 })).text)
+  const heldRead = String((await holdTools.find((tool) => tool.name === 'browser_view').execute({ mode: 'text', max_chars: 200 })).text)
   line('hold-allows-read', /Something else/.test(heldRead) || heldRead.includes('button'), heldRead.replace(/\n/g, ' / ').slice(0, 120))
-  const heldText = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
-  line('hold-refuses-action', heldText.includes('person is using the mirror') && heldText.includes('sidecar_resume'), heldText.replace(/\n/g, ' / ').slice(0, 150))
-  await holdTools.find((tool) => tool.name === 'sidecar_resume').execute({})
-  const afterResume = String((await holdTools.find((tool) => tool.name === 'sidecar_click').execute({ ref: holdTarget.ref })).text)
+  const heldText = String((await holdTools.find((tool) => tool.name === 'browser_click').execute({ ref: holdTarget.ref })).text)
+  line('hold-refuses-action', heldText.includes('person is using the mirror') && heldText.includes('browser_resume'), heldText.replace(/\n/g, ' / ').slice(0, 150))
+  await holdTools.find((tool) => tool.name === 'browser_resume').execute({})
+  const afterResume = String((await holdTools.find((tool) => tool.name === 'browser_click').execute({ ref: holdTarget.ref })).text)
   line('resume-lets-go', afterResume.startsWith('ok '), afterResume.replace(/\n/g, ' / ').slice(0, 150))
 
   await page.navigate(`${base}/check`)
   const checkTools = sidecarTools(sidecar, { last: undefined })
-  const checkSaid = String((await checkTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })).text)
+  const checkSaid = String((await checkTools.find((tool) => tool.name === 'browser_view').execute({ mode: 'text', max_chars: 300 })).text)
   await page.navigate(`${base}/words`)
-  const plainSaid = String((await checkTools.find((tool) => tool.name === 'sidecar_view').execute({ mode: 'text', max_chars: 300 })).text)
+  const plainSaid = String((await checkTools.find((tool) => tool.name === 'browser_view').execute({ mode: 'text', max_chars: 300 })).text)
   const checkWords = 'headless false'
   line('check-page-named', checkSaid.includes(checkWords) && !plainSaid.includes(checkWords), `check page says ${checkSaid.includes(checkWords)} | a real page says ${plainSaid.includes(checkWords)} | ${checkSaid.split('\n').pop().slice(0, 110)}`)
 
   sidecar.person = { at: Date.now() - 2000, kind: 'click', x: 40, y: 60, seen: false }
-  const lookTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_view')
+  const lookTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_view')
   const viewSaid = await lookTool.execute({ mode: 'text', max_chars: 400 })
   line('person-note', String(viewSaid.text).includes('the person also used the page: click at 40,60'), String(viewSaid.text).trim().split(/\n/).pop().slice(0, 90))
+
+  await page.navigate(`${base}/trouble`)
+  await sleep(400)
+  const troubleTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_view')
+  const firstLook = String((await troubleTool.execute({ mode: 'text', max_chars: 600 })).text)
+  const secondLook = String((await troubleTool.execute({ mode: 'text', max_chars: 600 })).text)
+  line('page-trouble', firstLook.includes('page trouble') && firstLook.includes('/missing-x') && firstLook.includes('boom-trouble') && !secondLook.includes('page trouble'), `${firstLook.split('\n').pop().slice(0, 170)} | repeats ${secondLook.includes('page trouble')}`)
+
+  await page.navigate(`${base}/late`)
+  const lateAt = Date.now()
+  const lateView = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_view')
+  const lateLook = String((await lateView.execute({ mode: 'text', max_chars: 1200 })).text)
+  line('late-fill', lateLook.includes('Late button') && Date.now() - lateAt < 2600, `${Date.now() - lateAt} ms | ${lateLook.split('\n').slice(-1)[0].slice(0, 90)}`)
+  /* A page that breaks the DOM APIs the reader calls must read as broken, not
+     as empty: an empty page invites the model to look for content that is there. */
+  await page.navigate(`${base}/hostile`)
+  const hostileView = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_view')
+  const hostileLook = String((await hostileView.execute({ mode: 'text', max_chars: 800 })).text)
+  line('hostile-page', hostileLook.includes('did not answer when read') && !hostileLook.includes('Real button'), hostileLook.split('\n').slice(-1)[0].slice(0, 140))
+  await page.navigate(`${base}/words`)
 
   const beforeCrash = sidecar.page
   await Promise.race([beforeCrash.cdp.send('Page.crash').catch(() => {}), sleep(1200)])
   await sleep(500)
   const crashAt = Date.now()
-  const viewTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'sidecar_view')
+  const viewTool = sidecarTools(sidecar, { last: undefined }).find((tool) => tool.name === 'browser_view')
   const recovered = await viewTool.execute({ max_chars: 400 })
   page = sidecar.page
   await sleep(200)
   const backUrl = String(page?.url ?? '')
-  line('crash-recovery', String(recovered.text).length > 20 && backUrl.includes('/words'), `${Date.now() - crashAt} ms back | ${backUrl} | ${String(sidecar.lastError).slice(0, 60)}`)
+  line('crash-recovery', String(recovered.text).length > 20 && backUrl.includes('/words'), `${Date.now() - crashAt} ms back | ${backUrl} | ${String(recovered.text).replace(/\n/g, ' / ').slice(0, 120)}`)
 } catch (error) {
   /* A run that breaks should say where, not just what: the stack is the only
      thing that turns a red line into a fix. */
@@ -765,5 +796,5 @@ try {
 } finally {
   await sidecar.shutdown()
   server.close()
-  process.exit(0)
+  process.exitCode = 0
 }

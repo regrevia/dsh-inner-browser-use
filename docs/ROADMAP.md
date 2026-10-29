@@ -50,7 +50,7 @@ stealing the column from other chats.
 
 ## Phase 2 — one call, many steps (target: a login flow in 1 tool call)
 
-- `sidecar_do`: ordered steps with per-step waits (`wait_text`, `wait_gone`,
+- `browser_do`: ordered steps with per-step waits (`wait_text`, `wait_gone`,
   `wait_idle`, `wait_url`), one result: what changed, the final URL, tokens spent
   on one read instead of five.
 - Auto-wait after every action: navigation start/finish, DOM quiet, and
@@ -65,7 +65,7 @@ stealing the column from other chats.
 - File upload (`DOM.setFileInputFiles`), download capture with a returned path,
   print-to-PDF, full-page and element screenshots.
 - Tabs: new / switch / close / list; iframes addressed by frame id; dialog
-  accept/dismiss; `sidecar_eval` for the last 1% of cases; cookies read/write for
+  accept/dismiss; `browser_eval` for the last 1% of cases; cookies read/write for
   debugging; console + failed requests surfaced in the state read.
 - Keyboard: modifiers, shortcuts, clipboard paste, IME composition unchanged.
 
@@ -86,14 +86,14 @@ stealing the column from other chats.
 
 - Human takeover (0.17.1): real input in the pane (click / text / wheel / key)
   holds the agent's next action for 6 s and says so; hover and move do not count;
-  reads stay open; `sidecar_resume` takes the page back at once.
+  reads stay open; `browser_resume` takes the page back at once.
 - Guarded actions (upload, download, close tab, buy-ish submits) can require a
   confirm flag. Shipped in 0.14.0 for the narrow case that matters most: an
   overlay in the way is cleared only when its own way out is a safe word
   (accept / agree / close / 同意 / 关闭 …) and the overlay says nothing about
   deleting, paying or signing out; otherwise it is reported, never taken.
   Since 0.15.0 the same clearing runs before every control-naming step of a
-  `sidecar_do` batch, so a multi-step flow through a cookie wall fails zero times.
+  `browser_do` batch, so a multi-step flow through a cookie wall fails zero times.
 - Crash recovery: attach to a still-running Chrome, rebuild the page, keep the
   profile; a killed host never leaves a zombie Chrome.
 - Every failure names what happened, what state the page is in, and the next
@@ -124,10 +124,10 @@ finding the control again by identity (kind + exact words + link destination),
 refusing when the words are not unique. Measured at 462 ms against 445 ms for a
 fresh control — 17 ms when needed, nothing when not.
 
-Since 0.16.1 the count is visible: `sidecar_state` reports `refs followed N`,
+Since 0.16.1 the count is visible: `browser_state` reports `refs followed N`,
 and breadth asserts it moved after a redraw, so the next rounds can tell from
 real sites whether redrawing is frequent enough to justify more work here.
-Next in this direction: the same identity recovery for `sidecar_do` steps that
+Next in this direction: the same identity recovery for `browser_do` steps that
 name a field by its label when the label element is rebuilt (today the step
 falls back to a fresh read).
 
@@ -142,7 +142,7 @@ then repeat the loop with whatever the numbers say is worst.
 Two things were wrong at the edge of the tool surface, and both were only
 reachable on real sites.
 
-The first was that the shape of the browser could not change. `sidecar_open`
+The first was that the shape of the browser could not change. `browser_open`
 accepted `headless: false` and answered success; when a browser was already
 running nothing happened, because the flag was only read at launch. A site that
 refuses a windowless browser (chatgpt.com on this machine: a "just a moment"
@@ -150,7 +150,7 @@ page forever, versus a login page in a windowed one) therefore had no way out
 except killing a process by hand. Since 0.17.0 a request for the other shape
 restarts the browser on the same profile, cookie jar and address — 21.6 s
 windowless → windowed, 22.1 s back, 0 ms when the shape already matches — and
-both `sidecar_open` and `sidecar_state` say which shape is in front of the
+both `browser_open` and `browser_state` say which shape is in front of the
 person.
 
 The second was silence on a check page. A site asking for proof of a person is
@@ -181,7 +181,7 @@ The tool used to treat "the control that says Email" as "the field called
 Email". Real forms separate the two, so the writing step now resolves the words
 to the element that takes text, and says which one it used.
 
-Next in this direction: the same resolution for `sidecar_type` when the caller
+Next in this direction: the same resolution for `browser_type` when the caller
 names a field by its words instead of a ref, and for date/time pickers where the
 visible box is a div and the real input is hidden beside it.
 
@@ -189,15 +189,15 @@ visible box is a div and the real input is hidden beside it.
 
 Typing by name is in. The same resolution is what other steps should be able to
 use when the caller knows the destination but not the number — the next place
-worth doing this is `sidecar_select` (choose an option by the field it belongs
+worth doing this is `browser_select` (choose an option by the field it belongs
 to), and after that the date/time case where the visible box is a div and the
 real input sits hidden beside it.
 
 ## Phase 12 — the same words, the same place, 0.21.0
 
-`sidecar_select` joined `sidecar_type` and `sidecar_do` on the shared resolver.
+`browser_select` joined `browser_type` and `browser_do` on the shared resolver.
 Left in this direction: the date/time case where the box the user sees is a div
-and the real input is hidden beside it, and `sidecar_click` on a control whose
+and the real input is hidden beside it, and `browser_click` on a control whose
 words are split across sibling nodes (`<span>Sign</span><span>in</span>`).
 
 ## Phase 13 — the page's spelling is not the caller's, 0.22.0
@@ -216,7 +216,7 @@ name, so the fallback has to be a picture plus a click, not a name lookup.
 
 ## Phase 16 — a file, not a path, 0.25.0
 
-`sidecar_grab` returns a path. Next: say one line about the picture (size, and
+`browser_grab` returns a path. Next: say one line about the picture (size, and
 whether it is mostly one colour) so a model that cannot open files still learns
 "the chart is blank" without a full read.
 
@@ -248,7 +248,7 @@ at -3000,-3000, and the column shows the only picture.
 
 ## Phase 21 — a review round that closes the loop, 0.30.0
 
-`sidecar_ask` sends and returns an answer. Next: a round trip that carries the
+`browser_ask` sends and returns an answer. Next: a round trip that carries the
 repository address there and the review back, and records in the round log which
 commit the review was about, so a later round can tell whether the advice was
 already taken.
@@ -298,9 +298,9 @@ The phases above were written one at a time as the work happened; the run from
 
 ## 页游这一档（2026-10-28 起）
 
-- 操作方式已分叉（0.34.29）：`sidecar_mode` 每个聊天记一种，`human` / `dom` 单次可覆盖。页游默认 human，登录/表单默认 dom 更省事。
+- 操作方式已分叉（0.34.29）：`browser_mode` 每个聊天记一种，`human` / `dom` 单次可覆盖。页游默认 human，登录/表单默认 dom 更省事。
 - Flash 判死：headless Chrome 里 Ruffle 交得上 swf 但起不了画面（26 秒，canvas 0、metadata 0），不承诺。真页游只能走站方 H5 / 微端 / 老 360 浏览器，页面上线前先用 `scripts/probe-flash.mjs` 问一句它要不要 Flash。
-- 开玩前先体检：`sidecar_prepare` 一次调用给出输入面、帧率、按键是否真的到得了框架、以及 Flash 结论（0.34.30）。4399《怪物小汽车》实测页面 58 fps、框架 59 fps —— 不少「Flash 小游戏」其实已经是 H5，先体检再下结论；`npm run ready <url>` 可复现。
+- 开玩前先体检：`browser_prepare` 一次调用给出输入面、帧率、按键是否真的到得了框架、以及 Flash 结论（0.34.30）。4399《怪物小汽车》实测页面 58 fps、框架 59 fps —— 不少「Flash 小游戏」其实已经是 H5，先体检再下结论；`npm run ready <url>` 可复现。
 - 读 SWF 标签流（`npm run swf`）：尺寸、帧率、AVM 版本、资源构成，FWS/CWS 都读，ZWS 明确报不支持（0.34.32）。
 - 空白画面的两种原因分开报（`viewers` / `listening chats` / `asks.log`），并在「浏览器在跑、没人画」时自己向所属会话补发一次开页签请求（0.34.31）。
 
@@ -317,7 +317,7 @@ Ranked by what a real task still loses:
    HTTP and by pid, not by a person clicking. A browser-level test that opens the
    column, kills the driver, and clicks restore is the missing evidence.
 2. **One-click "open here" when this chat has no seat.** `state.chats` can lack this
-   chat, and the column then only tells the model to call `sidecar_open`. The button
+   chat, and the column then only tells the model to call `browser_open`. The button
    belongs in the column.
 3. **Competitor behaviours still unmatched.** Playwright MCP's accessibility refs are
    ours, and the blind line covers the vision-less read; Stagehand v4's

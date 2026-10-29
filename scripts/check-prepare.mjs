@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * What `sidecar_prepare` says about a real page, and how long it takes to say it.
+ * What `browser_prepare` says about a real page, and how long it takes to say it.
  *
  *   node scripts/check-prepare.mjs                       # 奥拉星
  *   node scripts/check-prepare.mjs https://www.4399.com/flash/16613.htm
@@ -26,7 +26,7 @@ try {
   await wait(3000)
   chrome = sidecar.child?.pid ?? 0
   const tools = sidecarTools(sidecar, { refs: [], at: 0 }, { want: () => {} })
-  const prepare = tools.find((tool) => tool.name === 'sidecar_prepare')
+  const prepare = tools.find((tool) => tool.name === 'browser_prepare')
   const at = Date.now()
   const out = await prepare.execute({}, { agent: { id: 'prepare-check' } })
   console.log(JSON.stringify({ url, ms: Date.now() - at, says: out.text }, null, 1))
