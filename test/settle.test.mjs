@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { oncePerPage, withoutSeenAddress, pageMark } from '../tools.js?v=1'
 
-import { settle } from '../tools.js'
+import { settle, outcome } from '../tools.js'
 
 /** A page that answers every Runtime.evaluate with the same readyState. */
 function fakePage({ ready, href, navStarted }) {
@@ -128,4 +128,32 @@ test('a click can tell the page did nothing', async () => {
   assert.notEqual(await pageMark({ flashBridge: 1234, seq: 3, lastFrameAt: 90 }), await pageMark({ flashBridge: 1234, seq: 4, lastFrameAt: 120 }))
   /* A page that will not answer says nothing rather than a wrong answer. */
   assert.equal(await pageMark({ flashBridge: null, cdp: { send: async () => { throw new Error('gone') } } }), '')
+})
+
+/** A page whose mark is fixed, for asking what an action did. */
+function markedPage(mark, { flashBridge } = { flashBridge: null }) {
+  return { flashBridge, seq: 3, lastFrameAt: 90, cdp: { send: async () => ({ result: { value: mark } }) } }
+}
+
+test('an action says whether the page moved, and where it went', async () => {
+  assert.equal(await outcome(markedPage('Title|https://a.example/x|100|50'), 'Title|https://a.example/x|100|50'), ' · no visible change')
+  assert.equal(await outcome(markedPage('Title|https://a.example/y|100|50'), 'Title|https://a.example/x|100|50'), ' · navigated to https://a.example/y')
+  assert.equal(await outcome(markedPage('Title|https://a.example/x|260|50'), 'Title|https://a.example/x|100|50'), ' · content changed')
+  assert.equal(await outcome(markedPage('New|https://a.example/x|100|50'), 'Title|https://a.example/x|100|50'), ' · page moved on')
+  /* A movie has no DOM: its frame counter is the answer, not a false "no change". */
+  assert.equal(await outcome({ flashBridge: 4321, seq: 4, lastFrameAt: 120 }, 'flash:3:90'), ' · screen updated')
+  assert.equal(await outcome({ flashBridge: 4321, seq: 3, lastFrameAt: 90 }, 'flash:3:90'), ' · no frame change')
+  /* No mark before the action is not a claim about after it. */
+  assert.equal(await outcome(markedPage('Title|https://a.example/x|100|50'), ''), '')
+})
+
+test('settle waits until the page text stops growing', async () => {
+  /* A page that says complete while its own script is still filling it: the
+     first two looks see different text, the third sees the page at rest. */
+  const looks = [{ ready: 'complete', href: 'https://a.example/s', n: 40, c: 100 }, { ready: 'complete', href: 'https://a.example/s', n: 44, c: 160 }, { ready: 'complete', href: 'https://a.example/s', n: 44, c: 160 }]
+  let at = 0
+  const page = { url: 'https://a.example/s', dialog: null, navStarted: 0, navStopped: 0, loadFired: 0, cdp: { send: async () => ({ result: { value: looks[Math.min(at++, looks.length - 1)] } }) } }
+  const landed = await settle(page, 5_000)
+  assert.equal(landed, 'https://a.example/s')
+  assert.ok(at >= 3, `looked ${at} times`)
 })

@@ -1365,6 +1365,32 @@ export function renderPage(read, options = {}) {
   if (String(read.url).startsWith('chrome-error://')) lines.push('the page did not load — browser_nav to open the address again, or browser_open if the browser is gone')
   if (String(read.fault ?? '') !== '') lines.push(`the page did not answer when read — ${String(read.fault).slice(0, 200)}`)
   if (read.title !== '') lines.push(`# ${read.title}`)
+  /* A map is for a page too big to read: what it is made of and where the
+     things worth clicking are, without the words. One screen of landmarks
+     instead of forty thousand characters of page. */
+  if (mode === 'map') {
+    const kinds = new Map()
+    for (const control of read.controls) kinds.set(sigilOf(control), Number(kinds.get(sigilOf(control)) ?? 0) + 1)
+    const kindsText = [...kinds].map(([kind, count]) => `${kind}×${count}`).join(', ')
+    lines.push(`map: ${String(read.controls.length)} controls${kindsText === '' ? '' : ` — ${kindsText}`}`)
+    const seenNames = new Set()
+    let listedNames = 0
+    for (const control of read.controls) {
+      const key = `${sigilOf(control)}|${control.name}`
+      if (seenNames.has(key)) continue
+      seenNames.add(key)
+      lines.push(`${String(control.ref)} [${sigilOf(control)}] ${control.name === '' ? '(unnamed)' : control.name}`)
+      listedNames += 1
+      if (listedNames >= 24) break
+    }
+    const rest = read.controls.length - listedNames
+    if (rest > 0) lines.push(`… ${String(rest)} more, counted above — browser_view mode links or forms lists every one`)
+    const words = Number(read.textChars ?? String(read.text ?? '').length)
+    if (words > 0) lines.push(`words: ${String(words)} characters — browser_read for the text, or browser_read with query for one answer`)
+    if (read.focused) lines.push(`focus ${String(read.focused.ref)} [${String(read.focused.kind)}] ${String(read.focused.name)}`)
+    const out = lines.join('\n')
+    return out.length > maxChars ? `${out.slice(0, Math.max(0, maxChars - 40))}\n… (cut at ${String(maxChars)} characters)` : out
+  }
   const shown = read.controls.filter((control) => control.view !== false || mode === 'full')
   const hidden = read.controls.length - shown.length
   /* A page with hundreds of rows would spend the whole budget on numbers and

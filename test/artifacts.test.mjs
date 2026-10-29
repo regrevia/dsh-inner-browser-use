@@ -11,7 +11,7 @@ const { ARTIFACT_KEEP, artifactDir, pruneArtifacts, saveArtifact, sessionScope, 
 const inChat = (cwd, chat, body) => sessionScope.run(chat, () => workScope.run(cwd, body))
 
 test('a file lands under its project and its chat, never in the project folder', async () => {
-  const file = await inChat('/Users/apple/Desktop/DSH/dsh-inner-browser-use', 'session-72557d6e-7be0-451a-88f6-09ec5f0ec1c5', () => saveArtifact('shots', Buffer.from('x').toString('base64'), { name: 'landing' }))
+  const file = await inChat('/work/checkout/dsh-inner-browser-use', 'session-72557d6e-7be0-451a-88f6-09ec5f0ec1c5', () => saveArtifact('shots', Buffer.from('x').toString('base64'), { name: 'landing' }))
   assert.ok(file.startsWith(root))
   /* A path is compared in one shape so the assertion reads the same on Windows. */
   const flat = file.replaceAll('\\', '/')
@@ -20,12 +20,12 @@ test('a file lands under its project and its chat, never in the project folder',
 })
 
 test('two projects and two chats do not share a folder', async () => {
-  const one = await inChat('/Users/apple/a/one', 'session-aaaaaaaa-1', () => artifactDir('shots'))
-  const two = await inChat('/Users/apple/b/two', 'session-bbbbbbbb-2', () => artifactDir('shots'))
-  const same = await inChat('/Users/apple/a/one', 'session-aaaaaaaa-1', () => artifactDir('shots'))
+  const one = await inChat('/work/one', 'session-aaaaaaaa-1', () => artifactDir('shots'))
+  const two = await inChat('/work/two', 'session-bbbbbbbb-2', () => artifactDir('shots'))
+  const same = await inChat('/work/one', 'session-aaaaaaaa-1', () => artifactDir('shots'))
   assert.notEqual(one, two)
   assert.equal(one, same)
-  assert.notEqual(one, await inChat('/Users/apple/a/one-other', 'session-aaaaaaaa-1', () => artifactDir('shots')))
+  assert.notEqual(one, await inChat('/work/one-other', 'session-aaaaaaaa-1', () => artifactDir('shots')))
 })
 
 test('a call outside a known project and chat still gets a folder', async () => {
@@ -34,8 +34,8 @@ test('a call outside a known project and chat still gets a folder', async () => 
 })
 
 test('the folder keeps the newest files and drops the rest', async () => {
-  const dir = await inChat('/Users/apple/a/one', 'session-cccccccc-3', () => artifactDir('shots'))
-  await inChat('/Users/apple/a/one', 'session-cccccccc-3', async () => {
+  const dir = await inChat('/work/one', 'session-cccccccc-3', () => artifactDir('shots'))
+  await inChat('/work/one', 'session-cccccccc-3', async () => {
     for (let i = 0; i < ARTIFACT_KEEP + 5; i += 1) {
       await saveArtifact('shots', Buffer.from('x').toString('base64'), { name: `shot-${i}` })
       await new Promise((settle) => setTimeout(settle, 2))
@@ -47,7 +47,7 @@ test('the folder keeps the newest files and drops the rest', async () => {
 })
 
 test('a name cannot walk out of its folder', async () => {
-  const file = await inChat('/Users/apple/a/one', 'session-aaaaaaaa-1', () => saveArtifact('shots', Buffer.from('x').toString('base64'), { name: '../../escape' }))
+  const file = await inChat('/work/one', 'session-aaaaaaaa-1', () => saveArtifact('shots', Buffer.from('x').toString('base64'), { name: '../../escape' }))
   assert.equal(file.startsWith(root), true)
   assert.equal(dirname(file).startsWith(join(root, 'one-')), true)
   assert.equal(basename(file).includes('/'), false)

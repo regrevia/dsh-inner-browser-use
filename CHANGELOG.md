@@ -1,3 +1,26 @@
+## 0.34.95
+
+- **PDF 不再是空白页**：Chrome 无头进程画不出 PDF，右栏只会是一张白图，模型会以为地址是空的。现在识别主文档的 `application/pdf`，把字节用带会话 cookie 的请求取回归档到该 profile 的 `downloads/`（实测 13 KB 样例 554 ms，首字节 `%PDF-`），读取结果直接写明文件绝对路径，可交 `envoy_read` 或本地阅读器。
+- **新元素提示**：`browser_view` 与上一次读比对，附一行 `new since the read before: 12, 13`；超过 12 个不列（说明整页都在变，不是增量），省下为找新按钮再读整页。
+- **人机协同延迟实测**（后台 Chrome，输入到下一帧 JPEG 就绪）：点击派发 2 ms，出帧中位 13 ms、最坏 17 ms；悬停 8 ms。镜像里手动操作与本地浏览器同一量级，这组数字进 README 而不是形容词。
+- **兼容性**：PDF 状态跨查看器导航保持（PDF 查看器把同一页签导航到自己的 `chrome-extension://` 页，此前会被当成"换了文档"清空）。
+- **调研对齐**（2025–2026 开源 browser-agent）：行业已统一到"文本/a11y + 编号 ref + 按需截图"；步数比截图毫秒更值钱（planning 占 >50% 延迟）；本插件已有稳定 ref、`changed_only` 差异、`map` 地标、查询读，无视觉模型是优势而非妥协。后续照抄优先级：ref 用稳定节点 id 跨步不变、丢 ignored/不可见节点、步间缓存失效按导航/滚动/焦点判定。
+- **可回归**：新增 `npm run pdf`（`scripts/check-pdf.mjs`），真实打开 PDF 并断言识别、落盘、首字节 `%PDF`；本次实测 `{"ok":true,"ms":783,"kb":13,"head":"%PDF"}`。
+- **本轮数字**：单测 211 pass / 0 fail；bench 11 项预算全过（click 4 ms、hard-forms 326 ms、do-session 52 ms/步、20 步 1,429 tokens、shot 76 ms/114 KB、crash-recovery 1,443 ms）。
+- `ui-copy-lint` 34 error 与 HEAD 基线逐条一致（均为非 UI 代码上的 dev-term/status-dump 误报），`style-lint` 通过，`zh-lint` 0 error。
+
+## 0.34.94
+
+读和动作都不再为「跟上一次一样」付第二遍钱，点完也知道到底发生没发生。
+
+- `browser_read` 带缓存：同一页（地址 + 标题 + 正文长度 + 节点数一致）本会话读过，再读只回一行「unchanged … (4520 chars)」，正文不重发；`force: true` 拿全文。实测 nodejs.org/about 整页 4,520 字符，缓存命中回 190 字符，**约 4%**。
+- `browser_read` 的 `query` 一个块都没命中时，自动降级为整页读并标明「没命中，所以给整页」，模型不用再猜一次词、再来一轮。
+- 点 / 输入 / 按键的结果行多了结论：`· navigated to …`、`· reloaded`、`· content changed`、`· no visible change`；Flash 页按帧计数说 `· screen updated` / `· no frame change`。判据用已有的 `pageMark`（标题|地址|正文长度|节点数），一次取样 **1 ms**。
+- `settle` 的稳态判据把节点数与正文长度也算进去：`readyState` 说 complete 但页面还在自己填内容时，不再提前返回。
+- `browser_view` 新增 `map` 模式，给大页面先看地标：各类控件各多少个、去重后带编号的控件、正文多少字，不带正文。rust-lang/rust 实测 **1,100 字符 / 18 ms**，整页读是 6,000 字符（还在截断处），**约 18%**。
+- 跨 frame/shadow root 的 ref 早在 0.34.79–0.34.93 就在同一套编号里（frame 起点 900000），本轮补了测试与说明，不再单列。
+- 单测 205 pass / 0 fail；`bench.mjs` 11 项全过（click 4 ms、mirror 30 fps / 327 KB/s、do-session 60 ms/步）。
+
 ## 0.34.87
 
 一个链接不再自动开浏览器，多会话也不再各养一个渲染进程。

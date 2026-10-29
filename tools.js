@@ -255,6 +255,72 @@ const saidUrls = new WeakMap()
  * @param {string} briefText - address, title and focus as `brief` built them.
  * @returns {string} the line to send.
  */
+/**
+ * A PDF is a document, not a blank page: say so, and put its bytes somewhere a
+ * reader can open them. The mirror cannot draw a PDF, and a model looking at an
+ * empty screen would otherwise think the address had nothing on it.
+ * @param {any} page - the tab.
+ * @returns {Promise<string>} a line to append to the read, or ''.
+ */
+async function pdfNote(page) {
+  const found = page?.pdf
+  if (found === null || found === undefined) return ''
+  let file = { path: '', bytes: 0 }
+  try {
+    file = await page.documentFile()
+  } catch (error) {
+    file = { path: '', bytes: 0 }
+  }
+  const size = file.bytes > 0 ? ` (${String(Math.max(1, Math.round(file.bytes / 1024)))} KB)` : ''
+  return file.path === ''
+    ? `\nthis address is a PDF${size}: the mirror cannot draw it, and its bytes could not be saved. browser_downloads lists what the browser has downloaded.`
+    : `\nthis address is a PDF${size}: the mirror cannot draw it. Saved to ${file.path} — envoy_read can read that file, or another document reader.`
+}
+
+/**
+ * The numbered controls that were not on the page at the read before this one.
+ * A model that just acted cares about what its action brought in, and saying so
+ * costs a few numbers instead of a whole second read.
+ * @param {any} before - the read before this one, or undefined.
+ * @param {any} after - the read now.
+ * @returns {number[]} refs in `after` that `before` did not have.
+ */
+export function freshRefs(before, after) {
+  if (before === undefined || before === null) return []
+  if (after === undefined || after === null) return []
+  const had = new Set((Array.isArray(before.controls) ? before.controls : []).map((control) => Number(control?.ref ?? -1)))
+  const fresh = []
+  for (const control of Array.isArray(after.controls) ? after.controls : []) {
+    const ref = Number(control?.ref ?? -1)
+    if (ref < 0 || had.has(ref)) continue
+    if (!fresh.includes(ref)) fresh.push(ref)
+  }
+  return fresh
+}
+
+/** What an action did, in one line: where it went, whether the page moved at all. */
+export async function outcome(page, before) {
+  if (typeof before !== 'string' || before === '') return ''
+  const after = await pageMark(page)
+  if (after === '') return ''
+  /* A movie has no DOM to compare: its frame counter is the whole answer. */
+  if (before.startsWith('flash:') && after.startsWith('flash:')) {
+    return before === after ? ' · no frame change' : ' · screen updated'
+  }
+  const [wasTitle, wasUrl, wasText, wasNodes] = before.split('|')
+  const [nowTitle, nowUrl, nowText, nowNodes] = after.split('|')
+  if (after === before) return ' · no visible change'
+  if (nowUrl !== wasUrl) return ` · navigated to ${String(nowUrl).slice(0, 300)}`
+  const words = Math.abs(Number(nowText ?? 0) - Number(wasText ?? 0))
+  const nodes = Math.abs(Number(nowNodes ?? 0) - Number(wasNodes ?? 0))
+  if (nowTitle !== wasTitle) return ' · page moved on'
+  if (words >= 20 || nodes >= 3) return ' · content changed'
+  return ' · no visible change'
+}
+
+/** Read results this chat already paid for, keyed by what the page looks like. */
+const readSeen = new WeakMap()
+
 export function oncePerPage(page, briefText) {
   const parts = String(briefText).split(' · ')
   const url = String(parts[0] ?? '')
@@ -910,11 +976,11 @@ export async function settle(page, timeout = 5000, since = 0) {
       await page.cdp.send('Page.stopLoading', {}).catch(() => {})
       return String(page.url ?? '')
     }
-    const state = await evaluate(page, '({ ready: document.readyState, href: location.href })', null, 400)
+    const state = await evaluate(page, '({ ready: document.readyState, href: location.href, n: document.getElementsByTagName("*").length, c: (document.body?.textContent ?? "").length })', null, 400)
     /* Nothing began loading since the action, and the page is complete: the
        click changed state without navigating, so there is nothing to wait for. */
     if (since > 0 && state?.ready === 'complete' && Number(page.navStarted ?? 0) <= since) return String(state?.href ?? '')
-    const key = `${String(state?.ready)}|${String(state?.href)}`
+    const key = `${String(state?.ready)}|${String(state?.href)}|${String(state?.n)}|${String(state?.c)}`
     steady = key === last ? steady + 1 : 0
     last = key
     /* A page that already says complete needs one steady poll, not two: the
@@ -1746,7 +1812,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         /* The column may still be drawing nothing: say so here, where the
            person is looking for a picture, rather than only in browser_state. */
         const unseen = who === '' ? '' : viewerNote(await watchForViewer(sidecar, page, 1200))
-        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + await look(page, { mode: 'text' }) }
+        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + await look(page, { mode: 'text' }) + (await pdfNote(page)) }
       },
     },
     {
@@ -1934,6 +2000,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         properties: {
           max_chars: { type: 'integer', description: 'Character ceiling. Default 6000; the result says when it was cut.' },
           query: { type: 'string', description: 'What you want to know. With a query, only the passages that answer it come back, ranked — the cheapest way to read a long page. Without one, the whole page comes back.' },
+          force: { type: 'boolean', description: 'Read again even if the page has not changed since this chat last read it.' },
         },
         additionalProperties: false,
       },
@@ -1943,27 +2010,53 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the words, as Markdown. */
       execute: async (args) => withRead(async (page) => {
         const asked = String(args?.query ?? '').trim()
-        if (asked !== '') {
-          const found = await readRelevant(page, asked, { maxChars: Number(args?.max_chars ?? 4000) })
-          if (found.fault !== undefined) return `the page did not answer when read — ${String(found.fault).split('\n')[0].slice(0, 200)}`
-          if (found.text === '') return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read). Call browser_view for the whole page, or try other words.`
-          return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\n${found.text}\n\n(${String(found.matched)} of ${String(found.total)} blocks, ranked for ${JSON.stringify(asked)})`
+        const ceiling = Number(args?.max_chars ?? (asked === '' ? 6000 : 4000))
+        const mark = await pageMark(page)
+        const key = mark === '' ? '' : `${mark}|${asked}|${ceiling}`
+        const seen = page === null || page === undefined ? undefined : readSeen.get(page)
+        /* The text this chat already has is not worth sending twice: a page that
+           looks the same answers with where it is, not the same four thousand
+           characters. force is for a caller that lost the earlier answer. */
+        if (args?.force !== true && key !== '' && seen !== undefined && seen.key === key) {
+          return `${mark.split('|')[1] ?? ''} · unchanged since this chat last read it (${String(seen.text.length)} chars) — the text is the one above. Call browser_view with changed_only to see what moved, or pass force for it again.`
         }
-        const read = await readArticle(page, { maxChars: Number(args?.max_chars ?? 6000) })
+        const keep = (text) => {
+          if (key !== '' && page !== null && page !== undefined) readSeen.set(page, { key, text })
+          return text
+        }
+        if (asked !== '') {
+          const found = await readRelevant(page, asked, { maxChars: ceiling })
+          if (found.fault !== undefined) return `the page did not answer when read — ${String(found.fault).split('\n')[0].slice(0, 200)}`
+          if (found.text === '') {
+            /* The question missed every block: the page is still the answer, so
+               hand it over whole rather than make the caller guess again. */
+            const whole = await readArticle(page, { maxChars: ceiling })
+            if (whole.fault === undefined && whole.text !== '') {
+              return keep(`${whole.url}\n# ${whole.title === '' ? '(untitled)' : whole.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read), so the whole page follows:\n\n${whole.text}${whole.truncated ? `\n\n(cut at ${String(whole.chars)} characters; raise max_chars for more)` : ''}`)
+            }
+            return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read). Call browser_view for the whole page, or try other words.`
+          }
+          return keep(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\n${found.text}\n\n(${String(found.matched)} of ${String(found.total)} blocks, ranked for ${JSON.stringify(asked)})`)
+        }
+        const read = await readArticle(page, { maxChars: ceiling })
         if (read.fault !== undefined) return `the page did not answer when read — ${read.fault.split('\n')[0].slice(0, 200)}`
-        if (read.text === '') return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}\n\nnothing to read here: the page draws its content, or it is still loading. Call browser_view to see what is on screen.`
+        if (read.text === '') {
+          const pdf = await pdfNote(page)
+          if (pdf !== '') return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}${pdf}`
+          return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}\n\nnothing to read here: the page draws its content, or it is still loading. Call browser_view to see what is on screen.`
+        }
         const head = `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}`
         const tail = read.truncated ? `\n\n(cut at ${String(read.chars)} characters; raise max_chars for more)` : ''
-        return `${head}\n\n${read.text}${tail}`
+        return keep(`${head}\n\n${read.text}${tail}`)
       }),
     },
     {
       name: 'browser_view', // ui-copy-ignore
-      description: 'Read the sidecar browser: numbered controls and the words on screen. Numbers stay valid across reads and actions until the page navigates. Narrow it with mode (text, links, forms, full) and max_chars; ask for changed_only after an action to spend fewer tokens.',
+      description: 'Read the sidecar browser: numbered controls and the words on screen. Numbers stay valid across reads and actions until the page navigates. Narrow it with mode (text, links, forms, full, map) and max_chars; ask for changed_only after an action to spend fewer tokens. Use map first on a page too big to read.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
-          mode: { type: 'string', enum: ['text', 'links', 'forms', 'full'], description: 'What to include. Default text: controls plus the visible words.' },
+          mode: { type: 'string', enum: ['text', 'links', 'forms', 'full', 'map'], description: 'What to include. Default text: controls plus the visible words. map: a landmark summary of a big page — how many controls of each kind, the distinct ones with their numbers, and how many words there are, without the words.' },
           max_chars: { type: 'integer', description: 'Character budget for the page text. Default 4600.' },
           changed_only: { type: 'boolean', description: 'Only what changed since the last read.' },
         },
@@ -1989,8 +2082,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           state.lastShape = JSON.stringify(options)
           return text
         }
+        /* The read before this one answers two questions: what is new on this
+           one, and whether the page moved at all. Keep it before either answer
+           is overwritten. */
         const before = state.last
         state.last = read
+        const fresh = freshRefs(before, read)
+        const freshLine = fresh.length === 0 || fresh.length > 12 ? '' : `\nnew since the read before: ${fresh.map(String).join(', ')}`
         /* Same page, same shape, same words: the numbers above still work, and
            repeating the page would only spend tokens. */
         if (sameRead(before, read) && state.lastShape === JSON.stringify(options)) {
@@ -2003,7 +2101,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         state.lastShape = JSON.stringify(options)
         const said = withoutSeenAddress(page, read.url, renderPage(read, options))
         saidUrls.set(page, String(read.url ?? ''))
-        return said + note
+        return said + freshLine + note + (await pdfNote(page))
       }),
     },
     {
@@ -2069,6 +2167,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
             if (again.gone !== true) point = { x: Number(again.x), y: Number(again.y) }
           }
         }
+        const before = args?.read === true ? '' : await pageMark(page)
         const pressedAt = Date.now()
         await page.mouse('mouseMoved', point)
         await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
@@ -2077,7 +2176,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
         await settle(page, 5000, pressedAt)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
-        return said + cover + (followed === '' ? '' : ` (${followed})`)
+        return said + cover + (followed === '' ? '' : ` (${followed})`) + (await outcome(page, before))
       }),
     },
     {
@@ -2149,13 +2248,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (args?.clear === true) await clearFocus(page)
         if (await dateLikeFocus(page) !== '') return (await fillDateLike(page, String(args?.text ?? ''))) + cover
         const words = String(args?.text ?? '')
+        const before = args?.read === true ? '' : await pageMark(page)
         await typeInto(page, words, String(args?.field ?? ''))
         const dated = await fillDateLike(page, words)
         if (dated !== '') return dated + cover
         if (args?.submit === true) await pressKey(page, 'Enter')
         await settle(page)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), 'type')
-        return said + cover + (followed === '' ? '' : ` (${followed})`) // ui-copy-ignore
+        return said + cover + (followed === '' ? '' : ` (${followed})`) + (await outcome(page, before)) // ui-copy-ignore
       }),
     },
     {

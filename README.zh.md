@@ -11,13 +11,17 @@ profile，不是产品自带的那个浏览页签：右栏放的是它的画面�
 | --- | --- |
 | `browser_open` | 启动浏览器（已在跑就复用）并打开一个地址。传 `headless: false` 会改为在桌面上开真实窗口。 |
 | `browser_view` | 返回地址、标题、编号成 `1 … 120` 的控件，以及可见文字。 |
+| `browser_read` | 按人读文章的方式给 Markdown（标题、段落、列表、链接）。带 `query` 只回能回答的段落；问不到时自动改为整页，不再空手回来。页面和上次读的没变就只回一行，不重发正文（`force: true` 强制重发）。 |
 | `browser_extract` | 按 CSS 选择器把列表项读成一行一条、带链接，比整页读省得多。 |
+| `browser_view` 的 `map` | 大页面先看地标：各类控件各多少个、去重后的控件和编号、正文多少字，但不带回正文。 |
 | `browser_click` | 点编号控件，或点 `x`/`y` 坐标。`double: true` 双击。控件被横幅或弹层挡着时，先关掉它再点。 |
 | `browser_type` | 往焦点输入框输入文字，也可以先点一个编号控件。中文整段送进去。`submit: true` 回车提交。 |
 | `browser_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
 | `browser_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
 | `browser_shot` | 存一张原尺寸 PNG 到 `~/.dsh-inner-browser-use/screenshots`，返回路径。 |
 | `browser_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题，以及有几个右栏在看它。 |
+
+点、输入、按键之后的那一行会多一句结果：`· navigated to …`（换页了）、`· content changed`（页内有变化）、`· no visible change`（点了没动）、Flash 页则是 `· screen updated` / `· no frame change`；`read: true` 时不再多说。
 
 `browser_view` 一次给一页文本：
 
@@ -72,6 +76,7 @@ profile 之外只写一样东西：`~/.dsh-inner-browser-use/screenshots/` 里�
 | 单帧 | 1440×900 JPEG，约 82 KB |
 | 画面 | 约 25 帧每秒 |
 | 指针移动到箭头跟上 | 0.8–7 ms |
+| 右栏里手动点击到画面更新 | 中位 13 ms，最坏 17 ms（点击派发 2 ms、悬停 8 ms） |
 
 ## 安装
 
@@ -108,6 +113,7 @@ dsh plugin install ./dsh-inner-browser-use-0.12.1.tgz
 
 - **iframe 能读，跨站也能。** 不管是和页面共用进程，还是 Chrome 单独给一个进程，里面的控件都和页面自己的控件一样有编号；点击按框架在页面上的实际位置落点。
 - **下载会落到磁盘。** 点一下就下载的文件写在这个浏览器自己的 profile 目录里，`browser_downloads` 报出文件名、大小和到达时间。
+- **PDF 有去处。** Chrome 无头进程画不出 PDF，右栏只会是白图；读到 PDF 时把文件取回归档到该浏览器 profile 的 `downloads/`，结果里直接给绝对路径，交给 `envoy_read` 或本地阅读器。
 - **能看到网络。** `browser_network` 倒序列出页面请求了什么，自己用接口填内容、屏幕上又看不出原因的页面，不用截图去猜。
 - **遮罩不吞动作。** 盖在按钮上的 cookie 横幅会按人的做法先关掉再点下去，同一次调用里完成；`browser_do` 的每一步都一样。写着删除、支付、退出的遮罩只报告，不代按。
 

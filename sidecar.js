@@ -545,6 +545,10 @@ export class SidecarPage {
        be understood without a screenshot or a retry. */
     this.network = []
     this.requests = new Map()
+    /* A PDF is a document the mirror cannot draw: Chrome leaves the page blank
+       and a model looking at it would think the address was empty. What it is
+       and where the bytes went is state, not a guess. */
+    this.pdf = null
     /* frame id -> the world its page script runs in. A control inside an iframe
        is only reachable through that world; the frame list is read when the
        read model needs it. */
@@ -674,6 +678,11 @@ export class SidecarPage {
       const request = params.request ?? {}
       const id = String(params.requestId ?? '')
       if (id === '') return
+      /* A new document replaces whatever document this browser was showing,
+         including a PDF that was never drawn. The PDF viewer is the exception:
+         it navigates the same tab to its own page, and the PDF is still what
+         the tab shows. */
+      if (String(params.type ?? '') === 'Document' && !String(request.url ?? '').startsWith('chrome-extension://')) this.pdf = null
       this.requests.set(id, {
         method: String(request.method ?? 'GET'),
         url: String(request.url ?? '').slice(0, 300), // ui-copy-ignore
@@ -686,6 +695,13 @@ export class SidecarPage {
     if (message.method === 'Network.responseReceived') {
       const params = message.params ?? {}
       const known = this.requests.get(String(params.requestId ?? ''))
+      if (String(params.type ?? '') === 'Document' && String(params.response?.mimeType ?? '').includes('pdf')) {
+        this.pdf = {
+          url: String(params.response?.url ?? '').slice(0, 300), // ui-copy-ignore
+          requestId: String(params.requestId ?? ''),
+          bytes: Number(params.response?.encodedDataLength ?? 0),
+        }
+      }
       if (known === undefined) return
       known.status = Number(params.response?.status ?? 0)
       this.troubleSeq += 1
@@ -1727,6 +1743,65 @@ export class SidecarPage {
     /* The box is the judge: an editor that only listens to key events ignores
        this, and the caller types the slow way instead. */
     return after !== before && after.includes(String(text).trim().slice(0, 12))
+  }
+
+  /**
+   * Save the PDF this tab is showing, so its text is reachable without a render.
+   * @returns {Promise<{path: string, bytes: number, url: string}>} the file, or an empty path.
+   */
+  async documentFile() {
+    const found = this.pdf
+    if (found === null || found === undefined || String(found.url ?? '') === '') return { path: '', bytes: 0, url: '' }
+    if (typeof found.path === 'string' && found.path !== '') {
+      return { path: found.path, bytes: Number(found.bytes ?? 0), url: String(found.url ?? '') }
+    }
+    /* The viewer's own page is what the tab navigated to, so the body Chrome
+       hands back can be that page rather than the document. The file itself
+       has the final say: a PDF starts with %PDF. */
+    let bytes = null
+    try {
+      const answer = await this.cdp.send('Network.getResponseBody', { requestId: String(found.requestId ?? '') })
+      const raw = Buffer.from(String(answer?.body ?? ''), answer?.base64Encoded === true ? 'base64' : 'utf8')
+      if (raw.length > 4 && raw.subarray(0, 4).toString() === '%PDF') bytes = raw
+    } catch (error) {
+      bytes = null
+    }
+    if (bytes === null) {
+      try {
+        const { cookies } = await this.cdp.send('Network.getCookies', { urls: [String(found.url)] })
+        const cookie = (cookies ?? []).map((one) => `${String(one.name)}=${String(one.value)}`).join('; ')
+        const answer = await fetch(String(found.url), {
+          headers: cookie === '' ? {} : { cookie },
+          redirect: 'follow',
+        })
+        if (answer.ok === true) {
+          const said = await answer.arrayBuffer()
+          if (said.byteLength > 0 && said.byteLength <= 64 * 1024 * 1024) bytes = Buffer.from(said)
+        }
+      } catch (error) {
+        bytes = null
+      }
+    }
+    if (bytes === null) return { path: '', bytes: 0, url: String(found.url ?? '') }
+    const folder = this.downloadsFolder ?? downloadsDir(profileDir(this.profile))
+    const name = (() => {
+      try {
+        const last = new URL(String(found.url ?? '')).pathname.split('/').filter((part) => part !== '').pop() ?? ''
+        const clean = decodeURIComponent(last).replace(/[^\w.-]+/g, '-').slice(-60)
+        return clean.toLowerCase().endsWith('.pdf') ? clean : `${clean === '' ? 'document' : clean}.pdf`
+      } catch (error) {
+        return 'document.pdf'
+      }
+    })()
+    try {
+      mkdirSync(folder, { recursive: true })
+      writeFileSync(join(folder, name), bytes)
+      found.path = join(folder, name)
+      found.bytes = bytes.length
+      return { path: found.path, bytes: found.bytes, url: String(found.url ?? '') }
+    } catch (error) {
+      return { path: '', bytes: 0, url: String(found.url ?? '') }
+    }
   }
 
   /** @param {string} text - any unicode, including Chinese. @returns {Promise<void>} resolves when typed. */

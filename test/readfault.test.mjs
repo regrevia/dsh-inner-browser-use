@@ -146,3 +146,36 @@ test('a query the page never answers says so instead of inventing text', async (
   assert.equal(read.text, '')
   assert.equal(read.matched, 0)
 })
+
+test('a map says what a big page is made of without its words', async () => {
+  const page = {
+    url: 'https://example.com/big',
+    title: 'big page',
+    cdp: {
+      send: async () => ({
+        result: {
+          value: JSON.stringify({
+            url: 'https://example.com/big',
+            title: 'big page',
+            text: 'word '.repeat(2000),
+            textChars: 10000,
+            controls: [
+              { ref: 1, kind: 'link', name: 'Docs', href: '/docs', view: true },
+              { ref: 2, kind: 'link', name: 'Docs', href: '/more', view: true },
+              { ref: 3, kind: 'button', name: 'Install', view: true },
+              { ref: 4, kind: 'input', name: 'Search', view: true },
+            ],
+            scroll: { y: 0, top: true, bottom: false, height: 20000 },
+          }),
+        },
+      }),
+    },
+  }
+  const read = await readPage(page, { mode: 'map', maxChars: 2000 })
+  const text = renderPage(read, { mode: 'map', maxChars: 2000 })
+  assert.match(text, /map: 4 controls — link×2, btn×1, input×1/)
+  assert.match(text, /1 \[link\] Docs/)
+  assert.ok(!text.includes('Docs\n2 [link] Docs'), 'a repeated name is listed once on a map')
+  assert.match(text, /words: 10000 characters/)
+  assert.ok(!text.includes('word word word'), 'the map does not carry the page text')
+})
