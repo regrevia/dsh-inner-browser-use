@@ -464,7 +464,9 @@ test('a child that ignores SIGTERM is killed, so no stray app is left', async ()
     once: () => {},
   }
   await sidecar.shutdown()
-  assert.deepEqual(kills, ['SIGTERM', 'SIGKILL'])
+  /* Windows has no signals: the launcher's tree goes away through taskkill, so
+     the child's own kill() never fires there. */
+  assert.deepEqual(kills, process.platform === 'win32' ? [] : ['SIGTERM', 'SIGKILL'])
   assert.equal(sidecar.child, null)
   rmSync(join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-kill'), { recursive: true, force: true })
 })

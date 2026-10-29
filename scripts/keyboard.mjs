@@ -206,7 +206,29 @@ async function holdAndTiming(page) {
     measure.push(Date.now() - at)
   }
   measure.sort((a, b) => a - b)
-  return { hold, keyMs: measure[Math.floor(measure.length / 2)] }
+  /* A typed character is only felt once its frame reaches the mirror, so the
+     second number is key press to the next delivered frame, not to CDP. */
+  const frames = []
+  for (let i = 0; i < 5; i += 1) {
+    /* Chrome stops the cast after a few quiet frames; each sample starts a
+       fresh one so the number is the key press, not the cast's mood. */
+    await page.stopCast()
+    await page.cast()
+    await run(page, "window.__focus('field')")
+    const before = page.seq
+    const at = Date.now()
+    await pressKey(page, 'x')
+    const deadline = Date.now() + 1000
+    while (page.seq === before && Date.now() < deadline) await wait(4)
+    if (page.seq > before) frames.push(Date.now() - at)
+  }
+  frames.sort((a, b) => a - b)
+  await page.stopCast()
+  return {
+    hold,
+    keyMs: measure[Math.floor(measure.length / 2)],
+    frameMs: frames.length === 0 ? -1 : frames[Math.floor(frames.length / 2)],
+  }
 }
 
 /** Run the whole probe. */
@@ -246,6 +268,7 @@ async function main() {
     caret: summary.shortcuts.caret === true,
     tabMovesFocus: summary.shortcuts.tabMovesFocus === true,
     enterNewline: summary.shortcuts.enterNewline === true,
+    frameMs: summary.timing.frameMs >= 0 && summary.timing.frameMs <= 250,
   }
   summary.ms = Date.now() - startedAt
   summary.ok = failed.length === 0 && Object.values(summary.gates).every((one) => one === true)
@@ -254,7 +277,7 @@ async function main() {
   } else {
     for (const row of failed.slice(0, 20)) console.log(`FAIL ${row.label}: ${row.detail ?? ''}`)
     console.log(JSON.stringify(summary.gates))
-    console.log(`keys ${summary.matched}/${summary.checked} · shortcuts ${JSON.stringify(summary.shortcuts)} · hold ${String(summary.timing.hold.gapMs)} ms · key ${String(summary.timing.keyMs)} ms · ${String(summary.ms)} ms total`)
+    console.log(`keys ${summary.matched}/${summary.checked} · shortcuts ${JSON.stringify(summary.shortcuts)} · hold ${String(summary.timing.hold.gapMs)} ms · key ${String(summary.timing.keyMs)} ms · frame ${String(summary.timing.frameMs)} ms · ${String(summary.ms)} ms total`)
   }
   process.exitCode = summary.ok === true ? 0 : 1
 }

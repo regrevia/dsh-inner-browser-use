@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -44,7 +44,8 @@ test('every file the plugin imports is shipped in the tarball', async () => {
     seen.add(file)
     assert.ok(shipped(file), `${file} is imported but not listed in package.json files`)
     for (const target of importsOf(file)) {
-      const next = relative(root, resolve(root, dirname(file), target))
+      /* Forward slashes: package.json's `files` speaks one shape on every OS. */
+      const next = relative(root, resolve(root, dirname(file), target)).split(sep).join('/')
       queue.push(next)
     }
   }

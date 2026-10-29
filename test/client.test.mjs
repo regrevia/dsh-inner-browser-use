@@ -333,7 +333,8 @@ test('a viewport the browser refused is asked for again', () => {
 })
 
 test('the arrow goes away as soon as a hand lands on the pane, not after a round trip', () => {
-  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* A Windows checkout may hand the file back with CRLF line endings. */
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
   /* The pane's own input is the earliest evidence a person is driving: it hides
      the arrow before the browser reports a hold, and it looks again after. */
   assert.match(source, /const touched = \(\) => \{\n\s+setHand\(true\)/)

@@ -13,8 +13,10 @@ const inChat = (cwd, chat, body) => sessionScope.run(chat, () => workScope.run(c
 test('a file lands under its project and its chat, never in the project folder', async () => {
   const file = await inChat('/Users/apple/Desktop/DSH/dsh-inner-browser-use', 'session-72557d6e-7be0-451a-88f6-09ec5f0ec1c5', () => saveArtifact('shots', Buffer.from('x').toString('base64'), { name: 'landing' }))
   assert.ok(file.startsWith(root))
-  assert.match(file, /dsh-inner-browser-use-[0-9a-f]{6}\/72557d6e\/shots\/landing\.png$/)
-  assert.equal(file.includes('/dsh-inner-browser-use/dsh-inner-browser-use'), false)
+  /* A path is compared in one shape so the assertion reads the same on Windows. */
+  const flat = file.replaceAll('\\', '/')
+  assert.match(flat, /dsh-inner-browser-use-[0-9a-f]{6}\/72557d6e\/shots\/landing\.png$/)
+  assert.equal(flat.includes('/dsh-inner-browser-use/dsh-inner-browser-use'), false)
 })
 
 test('two projects and two chats do not share a folder', async () => {
@@ -28,7 +30,7 @@ test('two projects and two chats do not share a folder', async () => {
 
 test('a call outside a known project and chat still gets a folder', async () => {
   const dir = await artifactDir('pdf')
-  assert.match(dir, /no-project\/no-chat\/pdf$/)
+  assert.match(dir.replaceAll('\\', '/'), /no-project\/no-chat\/pdf$/)
 })
 
 test('the folder keeps the newest files and drops the rest', async () => {
