@@ -791,6 +791,7 @@ export function apply(ctx) {
         '不要用它：读公开文章、单个链接正文、文档、搜索结果摘要、GitHub 仓库或 PR 页面——这些能用 `web_fetch` / envoy 读就不用浏览器；一打开就是一个后台 Chrome 进程加一个页签，会话多了很占内存。',
         '人点名之后不问、不另起外部 Chrome；画面留在本会话右栏，做完保留，不主动关。',
         '先接着用已有的页：`browser_view`（拿编号控件与可见文字）→ `browser_click` / `browser_type` → 再 `browser_view` 直到出现要的结果；页面要等就重复读，不 sleep。`browser_open` 只用于没有页、要换新地址、或要明确刷新；同一个地址不要反复重开。',
+        '要读长文（文章、文档、issue、论坛帖）用 `browser_read`：它回 Markdown，只花几十分之一的 token，链接可点；要动手点、填表才用 `browser_view` 拿编号。',
         '要保存页面样子用 `browser_shot`，它会给出 PNG 绝对路径；要交给人看的文件，把绝对路径写进回复。',
       ].join('\n'),
     }), 'dsh-inner-browser-use: system prompt section')

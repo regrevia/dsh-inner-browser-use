@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, readArticle, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -1897,6 +1897,29 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         lines.push(trouble)
         return { text: lines.join('\n') }
       },
+    },
+    {
+      name: 'browser_read', // ui-copy-ignore
+      description: 'Read the page as a person does: one Markdown block of headings, paragraphs, lists and links, no controls and no markup. Far fewer tokens than browser_view on long pages (articles, docs, threads, issue trackers), and it keeps links so a follow-up can be opened by address. Use browser_view when you need numbers to click or type; use browser_read when you only need the words.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          max_chars: { type: 'integer', description: 'Character ceiling. Default 6000; the result says when it was cut.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 30_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the words, as Markdown. */
+      execute: async (args) => withRead(async (page) => {
+        const read = await readArticle(page, { maxChars: Number(args?.max_chars ?? 6000) })
+        if (read.fault !== undefined) return `the page did not answer when read — ${read.fault.split('\n')[0].slice(0, 200)}`
+        if (read.text === '') return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}\n\nnothing to read here: the page draws its content, or it is still loading. Call browser_view to see what is on screen.`
+        const head = `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}`
+        const tail = read.truncated ? `\n\n(cut at ${String(read.chars)} characters; raise max_chars for more)` : ''
+        return `${head}\n\n${read.text}${tail}`
+      }),
     },
     {
       name: 'browser_view', // ui-copy-ignore

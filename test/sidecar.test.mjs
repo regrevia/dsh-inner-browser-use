@@ -777,3 +777,30 @@ test('tabs an earlier load left behind are closed, aimed pages stay', async () =
      an address on disk is what makes a reaped tab cheap to bring back. */
   assert.deepEqual(shut.map((one) => one.split('/json/close/')[1]).sort(), ['old-1', 'old-2', 'old-3'])
 })
+
+
+test('a tab nobody has watched for ten minutes is closed, the live page is not', async () => {
+  const sidecar = new Sidecar({ logger: null })
+  sidecar.reapedAt = 0
+  const long = 11 * 60_000
+  const mk = (target, at, frames) => ({ targetId: target, port: 1, touched: Date.now() - at, frames, stopCast: async () => {} })
+  const live = mk('live', long, new Set())
+  sidecar.page = live
+  sidecar.pages.set('chat-live', live)
+  sidecar.pages.set('chat-old', mk('old-1', long, new Set()))
+  sidecar.pages.set('chat-new', mk('new-1', 5_000, new Set()))
+  sidecar.pages.set('chat-watched', mk('watched-1', long, new Set(['sink'])))
+  const close = globalThis.fetch
+  const shut = []
+  globalThis.fetch = async (url) => { shut.push(String(url)); return { ok: true, json: async () => ({}) } }
+  try {
+    await sidecar.reapIdleTabs()
+  } finally {
+    globalThis.fetch = close
+  }
+  assert.equal(sidecar.pages.has('chat-old'), false)
+  assert.equal(sidecar.pages.has('chat-live'), true)
+  assert.equal(sidecar.pages.has('chat-new'), true)
+  assert.equal(sidecar.pages.has('chat-watched'), true)
+  assert.deepEqual(shut.map((one) => one.split('/json/close/')[1]).sort(), ['old-1'])
+})

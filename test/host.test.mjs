@@ -163,6 +163,7 @@ test('registers the sidecar tools and nothing else', () => {
     'browser_open',
     'browser_pdf',
     'browser_prepare',
+    'browser_read',
     'browser_resume',
     'browser_review',
     'browser_review_verdict',

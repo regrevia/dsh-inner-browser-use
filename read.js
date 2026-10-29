@@ -918,6 +918,99 @@ export function faultRead(page, fault) {
   return Object.assign({ url: String(page.url ?? ''), title: String(page.title ?? ''), fault: String(fault) }, empty)
 }
 
+/**
+ * The page as a person reads it: headings, paragraphs, list items and links, as
+ * Markdown, with no markup and no controls to number. A long article costs a
+ * fraction of a snapshot, which is what makes reading a real page affordable.
+ * @param {number} budget - character ceiling for the returned text.
+ * @returns {string} a page script that returns JSON.
+ */
+export function article(budget) {
+  return `(() => {
+  const limit = ${budget}
+  const pick = document.querySelector('article, main, [role="main"]') || document.body
+  if (!pick) return JSON.stringify({ text: '', chars: 0, linkCount: 0, truncated: false })
+  const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS', 'VIDEO', 'HEADER', 'FOOTER', 'NAV', 'ASIDE'])
+  const lines = []
+  let length = 0
+  let truncated = false
+  let linkCount = 0
+  const walk = (node) => {
+    if (truncated || node === null || node === undefined) return
+    if (node.nodeType === 3) {
+      const text = String(node.textContent ?? '').replace(/\\s+/g, ' ').trim()
+      if (text !== '') { lines.push(text); length += text.length + 1 }
+      if (length >= limit) truncated = true
+      return
+    }
+    if (node.nodeType !== 1) return
+    const tag = node.tagName
+    if (skip.has(tag) || node.hidden === true || node.getAttribute?.('aria-hidden') === 'true') return
+    const style = getComputedStyle(node)
+    if (style.display === 'none' || style.visibility === 'hidden') return
+    if (/^H[1-6]$/.test(tag)) {
+      const text = String(node.innerText ?? '').replace(/\\s+/g, ' ').trim()
+      if (text !== '') { lines.push('#' .repeat(Number(tag.slice(1))) + ' ' + text); length += text.length + Number(tag.slice(1)) + 2 }
+      if (length >= limit) truncated = true
+      return
+    }
+    if (tag === 'A') {
+      linkCount += 1
+      const text = String(node.innerText ?? '').replace(/\\s+/g, ' ').trim()
+      const href = String(node.href ?? '')
+      if (text !== '' && /^https?:/.test(href)) {
+        const line = '[' + text.slice(0, 120) + '](' + href + ')'
+        lines.push(line); length += line.length + 1
+      } else if (text !== '') { lines.push(text); length += text.length + 1 }
+      if (length >= limit) truncated = true
+      return
+    }
+    if (tag === 'LI') {
+      const text = String(node.innerText ?? '').replace(/\\s+/g, ' ').trim()
+      if (text !== '') { lines.push('- ' + text); length += text.length + 3 }
+      if (length >= limit) truncated = true
+      return
+    }
+    if (tag === 'PRE' || tag === 'CODE') {
+      const text = String(node.innerText ?? '').slice(0, 1200)
+      if (text !== '') { lines.push('~~~'); lines.push(text); lines.push('~~~'); length += text.length + 8 }
+      if (length >= limit) truncated = true
+      return
+    }
+    for (const child of node.childNodes) walk(child)
+  }
+  walk(pick)
+  let text = lines.filter((one) => one !== '').join(String.fromCharCode(10)).trim()
+  if (text.length > limit) { text = text.slice(0, limit); truncated = true }
+  const allLinks = document.querySelectorAll('a[href]').length
+  return JSON.stringify({ text, chars: text.length, linkCount: allLinks, truncated })
+})()`
+}
+
+/**
+ * Read the page as Markdown, through the same deadline as a snapshot.
+ * @param {any} page - sidecar page.
+ * @param {{maxChars?: number}} [options] - character ceiling.
+ * @returns {Promise<{url: string, title: string, text: string, chars: number, linkCount: number, truncated: boolean, fault?: string}>} what it says.
+ */
+export async function readArticle(page, options = {}) {
+  const budget = Math.max(400, Math.min(24_000, Number(options.maxChars ?? 6000)))
+  try {
+    const raw = String((await evaluateIn(page, article(budget))) ?? '{}')
+    const said = JSON.parse(raw)
+    return {
+      url: String(page.url ?? ''),
+      title: String(await evaluateIn(page, 'document.title').catch(() => page.title ?? '') ?? ''),
+      text: String(said?.text ?? ''),
+      chars: Number(said?.chars ?? 0),
+      linkCount: Number(said?.linkCount ?? 0),
+      truncated: said?.truncated === true,
+    }
+  } catch (error) {
+    return { url: String(page.url ?? ''), title: String(page.title ?? ''), text: '', chars: 0, linkCount: 0, truncated: false, fault: String(error?.message ?? error) }
+  }
+}
+
 export async function readPage(page, options = {}) {
   const mode = String(options.mode ?? 'text')
   const maxChars = Number.isFinite(Number(options.maxChars)) ? Math.max(400, Math.min(24_000, Number(options.maxChars))) : 6000

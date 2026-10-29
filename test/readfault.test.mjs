@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { readPage, renderPage } from '../read.js'
+import { readPage, renderPage, article, readArticle } from '../read.js'
 
 /** A page whose Runtime.evaluate answers with a thrown page script. */
 function throwingPage(description = 'Error: hostile page broke the DOM reader\n    at <anonymous>:1:1') {
@@ -42,4 +42,39 @@ test('only the first line of a page error is kept', async () => {
   const read = await readPage(throwingPage('Error: first line\nsecond line\nthird'))
   assert.match(String(read.fault), /first line/)
   assert.doesNotMatch(String(read.fault), /second line/)
+})
+
+
+/** A page that answers the article script with a fixed JSON payload. */
+function articlePage(said) {
+  return {
+    url: 'https://example.com/story',
+    title: 'story',
+    cdp: { send: async (method, params) => {
+      const value = String(params.expression).includes('document.title') ? 'Story' : JSON.stringify(said)
+      return { result: { value } }
+    } },
+  }
+}
+
+test('the article script is valid JavaScript even with quotes in the budget', () => {
+  for (const budget of [400, 6000, 24000]) {
+    assert.doesNotThrow(() => new Function(`return ${article(budget)}`), `budget ${budget}`)
+  }
+})
+
+test('browser_read says what the page says, in Markdown, and says when it was cut', async () => {
+  const said = { text: '## Where\n\nthe words', chars: 18, linkCount: 4, truncated: true }
+  const read = await readArticle(articlePage(said), { maxChars: 900 })
+  assert.equal(read.url, 'https://example.com/story')
+  assert.equal(read.title, 'Story')
+  assert.equal(read.text, '## Where\n\nthe words')
+  assert.equal(read.truncated, true)
+  assert.equal(read.linkCount, 4)
+})
+
+test('a page that will not answer is a fault, not an empty page', async () => {
+  const read = await readArticle(throwingPage(), { maxChars: 900 })
+  assert.equal(read.text, '')
+  assert.match(String(read.fault), /hostile page/)
 })

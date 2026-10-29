@@ -76,6 +76,9 @@ const IDLE_MS = 15 * 60_000
    a full renderer alive for ever: past this many chats the oldest unwatched tab
    is closed, and its address brings it back on the next visit. */
 const MAX_TABS = 6
+/* A tab nobody has watched or driven for this long is closed even under the cap:
+   six chats can stay open for days, and each one is a renderer's worth of memory. */
+const TAB_IDLE_MS = 10 * 60_000
 
 /** @param {number} ms - how long to wait. @returns {Promise<void>} resolves after it. */
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -2077,6 +2080,28 @@ export class Sidecar {
   }
 
   /**
+   * Close tabs nobody is watching that have sat untouched past the idle window.
+   * The cap alone keeps at most six around; this keeps the working set near the
+   * chats actually in use, which is what the memory number follows.
+   * @returns {Promise<void>} done.
+   */
+  async reapIdleTabs() {
+    const now = Date.now()
+    if (now - Number(this.reapedAt ?? 0) < 60_000) return
+    this.reapedAt = now
+    for (const [id, page] of this.pages) {
+      const target = String(page.targetId ?? '')
+      if ((page.frames?.size ?? 0) !== 0 || target === '' || page.port === 0) continue
+      if (page === this.page) continue
+      if (now - Number(page.touched ?? 0) < TAB_IDLE_MS) continue
+      this.pages.delete(id)
+      await page.stopCast().catch(() => {})
+      await fetch(`http://127.0.0.1:${String(page.port)}/json/close/${target}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
+      this.note(`closed an idle tab — its address is kept for the chat`)
+    }
+  }
+
+  /**
    * @param {string} id - chat id.
    * @param {string} [url] - address to open in it.
    * @returns {Promise<SidecarPage>} a new tab for that chat.
@@ -2190,7 +2215,10 @@ export class Sidecar {
         probe = await page.ping()
       }
       if (probe.ok) page.answeredAt = Date.now()
-      if (probe.ok) void this.pruneStrays().catch(() => {})
+      if (probe.ok) {
+        void this.pruneStrays().catch(() => {})
+        void this.reapIdleTabs().catch(() => {})
+      }
       if (!probe.ok) {
         page.crashed = true
         this.note('renderer stopped answering; opening a fresh tab')
