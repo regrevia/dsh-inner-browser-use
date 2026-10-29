@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, noteDeath, ownsBrowser, rootDir } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, nextQuality, noteDeath, ownsBrowser, rootDir } from '../sidecar.js'
 import { findWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
@@ -803,4 +803,15 @@ test('a tab nobody has watched for ten minutes is closed, the live page is not',
   assert.equal(sidecar.pages.has('chat-new'), true)
   assert.equal(sidecar.pages.has('chat-watched'), true)
   assert.deepEqual(shut.map((one) => one.split('/json/close/')[1]).sort(), ['old-1'])
+})
+
+
+test('a heavy frame lowers the cast quality, a light one raises it, a normal one changes nothing', () => {
+  assert.equal(nextQuality(72, 200_000), 64)
+  assert.equal(nextQuality(72, 40_000), 76)
+  assert.equal(nextQuality(72, 80_000), 72)
+  assert.equal(nextQuality(48, 200_000), 44)
+  assert.equal(nextQuality(74, 30_000), 76)
+  assert.equal(nextQuality(72, 0), 72)
+  assert.equal(nextQuality(72, Number.NaN), 72)
 })

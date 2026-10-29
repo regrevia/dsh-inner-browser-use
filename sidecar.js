@@ -70,6 +70,29 @@ const POPUP_GRACE_MS = 25
 const FOLLOW_WINDOW_MS = 2000
 const FRAME_GAP_MS = 28
 
+/* The mirror is a photograph of a page, not an archive of one: quality that
+   keeps small text readable is the ceiling, and a page whose frame is heavy
+   gets a lighter one so the round trip stays short. */
+const CAST_QUALITY = 72 // ui-copy-ignore
+const QUALITY_FLOOR = 44 // ui-copy-ignore
+const QUALITY_CEILING = 76 // ui-copy-ignore
+
+/**
+ * Decide the next JPEG quality from the weight of the frame just seen. A frame
+ * near 90 KB of base64 is a heavy page: lowering quality by 8 costs a little
+ * sharpness and saves a lot of transport. A small frame has room to sharpen.
+ * @param {number} current - quality now.
+ * @param {number} base64 - base64 length of the frame.
+ * @returns {number} the quality to cast at next; `current` when it is fine.
+ */
+export function nextQuality(current, base64) {
+  const size = Number(base64)
+  if (!Number.isFinite(size) || size <= 0) return current
+  if (size > 120_000) return Math.max(QUALITY_FLOOR, current - 8)
+  if (size < 45_000) return Math.min(QUALITY_CEILING, current + 4)
+  return current
+}
+
 /** Idle lifetime, so a forgotten sidecar does not sit on a login forever. */
 const IDLE_MS = 15 * 60_000
 /* One browser serves every chat, but a chat that is not on screen need not keep
@@ -491,6 +514,11 @@ export class SidecarPage {
     this.crashed = false
     this.title = ''
     this.casting = false
+    /* The cast quality moves with what the page costs to transport. */
+    /* A big viewport carries more pixels per frame; it starts lighter and the
+       first heavy frame settles the rest. */
+    this.castQuality = VIEW.width * VIEW.height > 1_000_000 ? 60 : CAST_QUALITY // ui-copy-ignore
+    this.adaptAt = 0
     this.inflight = 0
     this.touched = Date.now()
     /* A dialog blocks the page until someone answers it, so it is state, not an
@@ -982,6 +1010,14 @@ export class SidecarPage {
         this.lastFrameAt = Date.now()
         this.seq += 1
         this.bytes += data.length
+        /* Every so often, let the weight of the last frame decide the quality
+           of the next one. Restarting the cast is cheap and rare; a heavy
+           page pays for itself in every frame of every later action. */
+        if ((this.seq % 24 === 0 || this.seq === 1) && Date.now() - this.adaptAt > 3000) {
+          this.adaptAt = Date.now()
+          const wanted = nextQuality(this.castQuality, data.length)
+          if (wanted !== this.castQuality) void this.recast(wanted)
+        }
         if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
         /* A page that is not moving sends the same bytes again and again; the
            pane already shows that picture, so it is acked and dropped. */
@@ -1092,6 +1128,23 @@ export class SidecarPage {
     }
   }
 
+  /**
+   * Change the quality the mirror is cast at, without leaving the pane black.
+   * @param {number} quality - the new JPEG quality.
+   * @returns {Promise<void>} resolves once the new cast is asked for.
+   */
+  async recast(quality) {
+    if (this.casting !== true || this.flashBridge !== null) return
+    try {
+      this.castQuality = quality
+      await this.cdp.send('Page.stopScreencast').catch(() => {})
+      this.casting = false
+      await this.cast()
+    } catch {
+      /* a page that died mid-recast will be picked up by the next view */
+    }
+  }
+
   /** @returns {Promise<void>} resolves once the page is casting. */
   async cast() {
     if (this.flashBridge !== null) {
@@ -1111,7 +1164,7 @@ export class SidecarPage {
        `optimizeForSpeed` keeps the encoder from adding to the round trip. */
     await this.cdp.send('Page.startScreencast', {
       format: 'jpeg', // ui-copy-ignore
-      quality: 72, // ui-copy-ignore
+      quality: this.castQuality, // ui-copy-ignore
       maxWidth: this.view.width, // ui-copy-ignore
       maxHeight: this.view.height,
       optimizeForSpeed: true,
