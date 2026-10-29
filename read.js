@@ -988,6 +988,72 @@ export function article(budget) {
 }
 
 /**
+ * Find words on the page: numbered controls whose name matches, then plain text
+ * that is not a control. A phone-sized page has hundreds of lines; finding the
+ * three that mention what the caller wants costs a fraction of reading them.
+ * @param {string} query - words to look for.
+ * @param {boolean} asRegex - treat the words as a regular expression source.
+ * @param {number} limit - matches to return.
+ * @returns {string} an expression to evaluate.
+ */
+export function finder(query, asRegex, limit) {
+  return `(() => {
+  const reg = window.${REGISTRY}
+  if (!reg) return JSON.stringify({ broken: true })
+  const pattern = ${asRegex === true} ? new RegExp(${JSON.stringify(String(query))}, 'i') : null
+  const needle = ${JSON.stringify(String(query).toLowerCase())}
+  const test = (text) => pattern === null ? text.toLowerCase().includes(needle) : pattern.test(text)
+  const out = []
+  const seen = new Set()
+  for (const el of document.querySelectorAll(reg.selector)) {
+    if (out.length >= ${limit}) break
+    if (!el || !el.isConnected) continue
+    const label = String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? el.getAttribute?.('placeholder') ?? el.getAttribute?.('title') ?? '').replace(/\\s+/g, ' ').trim()
+    if (label === '' || label.length > 300 || !test(label)) continue
+    const b = el.getBoundingClientRect()
+    seen.add(el)
+    out.push({ ref: reg.id(el), name: label.slice(0, 120), tag: String(el.tagName).toLowerCase(), x: Math.round(b.x), y: Math.round(b.y), view: b.bottom > 0 && b.top < innerHeight })
+  }
+  if (out.length < ${limit} && document.body) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node !== null && out.length < ${limit}) {
+      const parent = node.parentElement
+      if (parent !== null && !seen.has(parent) && !['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(parent.tagName)) {
+        const text = String(node.nodeValue ?? '').replace(/\\s+/g, ' ').trim()
+        if (text !== '' && text.length < 400 && test(text)) {
+          const b = parent.getBoundingClientRect()
+          out.push({ ref: 0, name: text.slice(0, 120), tag: String(parent.tagName).toLowerCase(), x: Math.round(b.x), y: Math.round(b.y), view: b.bottom > 0 && b.top < innerHeight })
+        }
+      }
+      node = walker.nextNode()
+    }
+  }
+  return JSON.stringify({ matches: out })
+})()`
+}
+
+/**
+ * Run the finder against a page and give back its matches.
+ * @param {any} page - sidecar page.
+ * @param {string} query - words or pattern.
+ * @param {{regex?: boolean, limit?: number}} [options] - how to look.
+ * @returns {Promise<{matches: any[], fault?: string}>} what matched.
+ */
+export async function findOnPage(page, query, options = {}) {
+  const limit = Math.max(1, Math.min(40, Number(options.limit ?? 12)))
+  try {
+    await seedPage(page)
+    const raw = String((await evaluateIn(page, finder(query, options.regex === true, limit))) ?? '{}')
+    const said = JSON.parse(raw)
+    if (said?.broken === true) return { matches: [], fault: 'the page has not been read yet — call browser_view first' }
+    return said
+  } catch (error) {
+    return { matches: [], fault: String(error?.message ?? error) }
+  }
+}
+
+/**
  * Read the page as Markdown, through the same deadline as a snapshot.
  * @param {any} page - sidecar page.
  * @param {{maxChars?: number}} [options] - character ceiling.

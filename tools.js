@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, readArticle, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, readArticle, findOnPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -1897,6 +1897,34 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         lines.push(trouble)
         return { text: lines.join('\n') }
       },
+    },
+    {
+      name: 'browser_find', // ui-copy-ignore
+      description: 'Find words on the page without reading it all: returns matching numbered controls (click the ref) and matching text (click x/y), each with whether it is on screen. A phone-sized page has hundreds of lines; this answers "where does it say X" in one compact result.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          query: { type: 'string', description: 'Words to look for; case does not matter.' },
+          regex: { type: 'boolean', description: 'Treat query as a regular expression.' },
+          limit: { type: 'integer', description: 'Matches to return. Default 12, at most 40.' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 30_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @returns {Promise<{text: string}>} the matches. */
+      execute: async (args) => withRead(async (page) => {
+        const query = String(args?.query ?? '').trim()
+        if (query === '') return 'Give the words to look for.'
+        const found = await findOnPage(page, query, { regex: args?.regex === true, limit: Number(args?.limit ?? 12) })
+        if (found.fault !== undefined) return `the page did not answer when searched — ${String(found.fault).split('\n')[0].slice(0, 200)}`
+        const matches = Array.isArray(found.matches) ? found.matches : []
+        if (matches.length === 0) return `nothing on this page says ${JSON.stringify(query)} — try other words, or call browser_view for the whole page.`
+        const lines = matches.map((one) => `${one.ref === 0 ? `at ${one.x},${one.y}` : one.ref} [${one.tag}] ${one.name}${one.view === true ? '' : ' (off screen)'}`)
+        return `${matches.length} match(es) for ${JSON.stringify(query)}:\n${lines.join('\n')}`
+      }),
     },
     {
       name: 'browser_read', // ui-copy-ignore

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { readPage, renderPage, article, readArticle } from '../read.js'
+import { readPage, renderPage, article, readArticle, finder, findOnPage } from '../read.js'
 
 /** A page whose Runtime.evaluate answers with a thrown page script. */
 function throwingPage(description = 'Error: hostile page broke the DOM reader\n    at <anonymous>:1:1') {
@@ -77,4 +77,32 @@ test('a page that will not answer is a fault, not an empty page', async () => {
   const read = await readArticle(throwingPage(), { maxChars: 900 })
   assert.equal(read.text, '')
   assert.match(String(read.fault), /hostile page/)
+})
+
+
+test('the finder script is valid JavaScript and quotes its query safely', () => {
+  for (const query of ['sign in', "it's", 'a/b\n']) {
+    assert.doesNotThrow(() => new Function(`return ${finder(query, false, 8)}`), query)
+    assert.doesNotThrow(() => new Function(`return ${finder(query, true, 8)}`), `regex ${query}`)
+  }
+})
+
+test('finding words returns controls with refs and plain text without one', async () => {
+  const said = { matches: [
+    { ref: 7, name: 'Sign in', tag: 'a', x: 12, y: 40, view: true },
+    { ref: 0, name: 'signed in as a person', tag: 'p', x: 3, y: 500, view: false },
+  ] }
+  const page = {
+    url: 'https://example.com/login',
+    title: 'login',
+    cdp: { send: async () => ({ result: { value: JSON.stringify(said) } }) },
+  }
+  const found = await findOnPage(page, 'sign', { limit: 8 })
+  assert.deepEqual(found.matches, said.matches)
+})
+
+test('a finder that gets no answer is a fault', async () => {
+  const found = await findOnPage(throwingPage(), 'sign')
+  assert.deepEqual(found.matches, [])
+  assert.match(String(found.fault), /hostile page/)
 })
