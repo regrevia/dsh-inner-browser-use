@@ -716,3 +716,64 @@ test('A Flash page settles at the next picture and answers from the bridge', () 
   assert.match(source, /flashBridge\}\/info/)
   assert.match(source, /\/info`, \{ signal: AbortSignal\.timeout\(600\) \}/)
 })
+
+test('one browser does not keep a renderer per chat', async () => {
+  const sidecar = new Sidecar({ logger: null })
+  const made = (at, watched) => ({
+    targetId: `t${String(at)}`,
+    port: 1,
+    touched: at,
+    frames: new Set(watched ? [() => {}] : []),
+    stopCast: async () => {},
+  })
+  /* A watched tab is the person's page: never reaped. */
+  sidecar.pages.set('watching', made(1, true))
+  for (let at = 2; at < 9; at += 1) sidecar.pages.set(`chat-${String(at)}`, made(at, false))
+  const close = fetch
+  let closed = 0
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/json/close/')) closed += 1
+    return { ok: true, json: async () => ({}) }
+  }
+  try {
+    await sidecar.trimTabs()
+  } finally {
+    globalThis.fetch = close
+  }
+  assert.equal(sidecar.pages.size, 5)
+  assert.ok(sidecar.pages.has('watching'), 'the page on screen stays')
+  assert.ok(sidecar.pages.has('chat-8'), 'the newest chat stays')
+  assert.ok(!sidecar.pages.has('chat-2'), 'the oldest unwatched tab goes')
+  assert.ok(closed >= 1)
+})
+
+test('tabs an earlier load left behind are closed, aimed pages stay', async () => {
+  const sidecar = new Sidecar({ logger: null })
+  sidecar.page = { targetId: 'own', port: 1 }
+  const close = globalThis.fetch
+  const shut = []
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/json/list')) {
+      return {
+        ok: true,
+        json: async () => [
+          { type: 'page', id: 'own', url: 'https://keep.example/' },
+          { type: 'page', id: 'old-1', url: 'about:blank' },
+          { type: 'page', id: 'old-2', url: 'http://127.0.0.1:9/x' },
+          { type: 'page', id: 'old-3', url: 'https://keep.example/' },
+        ],
+      }
+    }
+    shut.push(String(url))
+    return { ok: true, json: async () => ({}) }
+  }
+  try {
+    await sidecar.pruneStrays()
+  } finally {
+    globalThis.fetch = close
+  }
+  assert.equal(sidecar.pruned, true)
+  /* Nothing is remembered in this test, so every tab but the live page goes:
+     an address on disk is what makes a reaped tab cheap to bring back. */
+  assert.deepEqual(shut.map((one) => one.split('/json/close/')[1]).sort(), ['old-1', 'old-2', 'old-3'])
+})

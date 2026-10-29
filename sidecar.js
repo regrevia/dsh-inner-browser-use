@@ -72,6 +72,10 @@ const FRAME_GAP_MS = 28
 
 /** Idle lifetime, so a forgotten sidecar does not sit on a login forever. */
 const IDLE_MS = 15 * 60_000
+/* One browser serves every chat, but a chat that is not on screen need not keep
+   a full renderer alive for ever: past this many chats the oldest unwatched tab
+   is closed, and its address brings it back on the next visit. */
+const MAX_TABS = 6
 
 /** @param {number} ms - how long to wait. @returns {Promise<void>} resolves after it. */
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -1827,6 +1831,10 @@ export class Sidecar {
     /* One tab per chat: a second chat opening an address gets a tab of its
        own, so neither can navigate the other's page away. */
     this.pages = new Map()
+    /* Tabs left behind by an earlier plugin load are closed once, on the first
+       call that finds this browser: a profile used for weeks otherwise keeps a
+       renderer per chat that ever opened it. */
+    this.pruned = false
     /* A tab being opened for a chat: a second call for the same chat waits for
        it instead of opening a twin. */
     this.opening = new Map()
@@ -1987,11 +1995,85 @@ export class Sidecar {
       if (want !== '' && String(page.url ?? '') !== want) await page.navigate(want)
       return page
     }
+    if (this.pages.size >= MAX_TABS) await this.trimTabs()
     const work = this.openTab(id, url).finally(() => {
       this.opening?.delete(id)
     })
     this.opening?.set(id, work)
     return work
+  }
+
+  /**
+   * Close tabs nobody owns. A browser reused across plugin loads keeps every tab
+   * an earlier load opened; each is a whole renderer, and a single chat's work is
+   * one tab. Remembered addresses are spared, so a chat that had a page still
+   * finds it.
+   * @returns {Promise<void>} done.
+   */
+  async pruneStrays() {
+    if (this.pruned === true) return
+    const port = Number(this.page?.port ?? 0)
+    if (port === 0) return
+    let list
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1200) }) // ui-copy-ignore
+      list = await response.json()
+    } catch {
+      return
+    }
+    if (!Array.isArray(list)) return
+    const owned = new Set()
+    for (const page of [...this.pages.values(), this.page]) {
+      const id = String(page?.targetId ?? '')
+      if (id !== '') owned.add(id)
+    }
+    let remembered = []
+    try {
+      remembered = Object.values(JSON.parse(readFileSync(tabsFile, 'utf8')) ?? {}).map(String)
+    } catch {
+      remembered = []
+    }
+    let closed = 0
+    let kept = 0
+    for (const target of list) {
+      if (target?.type !== 'page') continue
+      const id = String(target.targetId ?? target.id ?? '')
+      if (id === '') continue
+      if (owned.has(id)) continue
+      /* Six chats' worth of pages can come back without a reload; anything past
+         that is a tab from an older load, and its address is still on disk. */
+      if (remembered.includes(String(target.url ?? '')) && kept < MAX_TABS) {
+        kept += 1
+        continue
+      }
+      await fetch(`http://127.0.0.1:${String(port)}/json/close/${id}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
+      closed += 1
+    }
+    this.pruned = true
+    if (closed > 0) this.note(`closed ${String(closed)} tabs no chat was using`)
+  }
+
+  /**
+   * Close a few tabs nobody is watching so one browser does not grow a renderer
+   * per chat that ever used it. Every chat's address is already on disk, so a
+   * reaped tab costs nothing but the time to open it again.
+   * @returns {Promise<void>} done.
+   */
+  async trimTabs() {
+    const over = this.pages.size - (MAX_TABS - 1)
+    if (over <= 0) return
+    const idle = []
+    for (const [id, page] of this.pages) {
+      const target = String(page.targetId ?? '')
+      if ((page.frames?.size ?? 0) !== 0 || target === '' || page.port === 0) continue
+      idle.push({ id, page, target, port: page.port, at: Number(page.touched ?? 0) })
+    }
+    idle.sort((a, b) => a.at - b.at)
+    for (const row of idle.slice(0, over)) {
+      this.pages.delete(row.id)
+      await row.page.stopCast().catch(() => {})
+      await fetch(`http://127.0.0.1:${String(row.port)}/json/close/${row.target}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
+    }
   }
 
   /**
@@ -2108,6 +2190,7 @@ export class Sidecar {
         probe = await page.ping()
       }
       if (probe.ok) page.answeredAt = Date.now()
+      if (probe.ok) void this.pruneStrays().catch(() => {})
       if (!probe.ok) {
         page.crashed = true
         this.note('renderer stopped answering; opening a fresh tab')

@@ -107,11 +107,19 @@ Chromium on the machine; see [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## When it opens
 
-It is a tool for acting, not the default way to read the web.
+Only when the person asks for it by name: "in the browser", "on the web page",
+"open this site", "click it for me". A link on its own is not a request.
 
-- Yes: the person says "in the browser" or "on the web page"; the task needs a login, a click, a form, several steps, or the picture itself; the page is drawn by JavaScript so `web_fetch` gets an empty shell, and Envoy cannot get the content either.
-- No: a public article, one link's text, docs, or a search result summary. Read those with `web_fetch` or Envoy and do not start a browser for them.
-- Asked for, it starts without a question and never opens a second, external Chrome. The picture stays in this chat's right column and stays open when the work is done.
+- A public article, one link's text, docs, a GitHub repo or PR: read it with
+  `web_fetch` or Envoy. No browser, no Chrome process.
+- If the page needs a login, is an empty shell to `web_fetch`, or needs a click,
+  say why and ask once instead of starting a browser on your own.
+- Asked for, it starts without a question and never opens a second, external
+  Chrome. The picture stays in this chat's right column and stays open when the
+  work is done.
+
+One browser is shared by every chat (see [Sharing](#sharing)), so opening one is
+a tab, not a second Chrome.
 
 ## Use
 
@@ -120,6 +128,16 @@ It is a tool for acting, not the default way to read the web.
 
 The first call starts the browser and puts its mirror in this chat's right column. Nothing
 opens before a call: a chat that never asked for a page keeps its column as it was.
+
+## Sharing
+
+Every chat uses the same background Chrome: one process, one tab per chat, and
+each tab's address saved so it can be closed and reopened cheaply. Past six
+chats the oldest tab nobody is watching is closed (a watched tab — the one on
+someone's screen — never is). Tabs an earlier plugin load left behind are closed
+on first use: one profile used for weeks otherwise keeps a renderer per chat that
+ever opened it. Nothing is launched per chat, and the browser itself is closed 15
+minutes after the last mirror is detached.
 
 ## Frames, downloads, network
 

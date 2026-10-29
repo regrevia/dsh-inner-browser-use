@@ -199,6 +199,9 @@ test('the model is told to use the sidecar and the right column', () => {
   assert.match(prompts[0].text, /web_fetch/)
   assert.match(prompts[0].text, /envoy/)
   assert.match(prompts[0].text, /不要用它/)
+  /* A link is not a request: opening a browser is the person's call. */
+  assert.match(prompts[0].text, /明确说/)
+  assert.match(prompts[0].text, /GitHub/)
 })
 
 test('a chat with no tab receives nothing', () => {
