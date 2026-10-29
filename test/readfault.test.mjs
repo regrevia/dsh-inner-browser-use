@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { readPage, renderPage, article, readArticle, finder, findOnPage } from '../read.js'
+import { readPage, renderPage, article, readArticle, blocks, terms, rank, readRelevant, finder, findOnPage } from '../read.js'
 
 /** A page whose Runtime.evaluate answers with a thrown page script. */
 function throwingPage(description = 'Error: hostile page broke the DOM reader\n    at <anonymous>:1:1') {
@@ -105,4 +105,44 @@ test('a finder that gets no answer is a fault', async () => {
   const found = await findOnPage(throwingPage(), 'sign')
   assert.deepEqual(found.matches, [])
   assert.match(String(found.fault), /hostile page/)
+})
+
+
+test('the block reader script is valid JavaScript', () => {
+  assert.doesNotThrow(() => new Function(`return ${blocks(4000)}`))
+})
+
+test('terms keep words and single CJK characters alike', () => {
+  assert.deepEqual(terms('Node.js 运行时 LTS'), ['node', 'js', '运', '行', '时', 'lts'])
+})
+
+test('ranking puts the passage that answers the query first', () => {
+  const blocks = [
+    { h: 'Install', t: 'Use the LTS installer for Windows and macOS.', d: 0 },
+    { h: 'Menu', t: 'Home Download LTS About', d: 0.9 },
+    { h: 'API', t: 'The http module listens on a port.', d: 0 },
+  ]
+  const ranked = rank(blocks, 'which LTS should I install')
+  assert.equal(ranked[0].block.t, 'Use the LTS installer for Windows and macOS.')
+  assert.ok(ranked[0].score > ranked[1].score)
+})
+
+test('a query reads only the passages, not the page', async () => {
+  const said = { title: 'Node', blocks: [
+    { h: 'LTS', t: 'Install the LTS release.', d: 0 },
+    { h: 'Other', t: 'Unrelated words about sockets.', d: 0 },
+  ] }
+  const page = { url: 'https://example.com/x', title: 'Node', cdp: { send: async () => ({ result: { value: JSON.stringify(said) } }) } }
+  const read = await readRelevant(page, 'LTS install', { maxChars: 900 })
+  assert.equal(read.matched, 1)
+  assert.match(read.text, /Install the LTS release/)
+  assert.equal(read.total, 2)
+})
+
+test('a query the page never answers says so instead of inventing text', async () => {
+  const said = { title: 'Node', blocks: [{ h: '', t: 'nothing about the question', d: 0 }] }
+  const page = { url: 'https://example.com/x', title: 'Node', cdp: { send: async () => ({ result: { value: JSON.stringify(said) } }) } }
+  const read = await readRelevant(page, 'quantum chromodynamics', { maxChars: 900 })
+  assert.equal(read.text, '')
+  assert.equal(read.matched, 0)
 })

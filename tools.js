@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, readArticle, findOnPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -1933,6 +1933,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         type: 'object', // ui-copy-ignore
         properties: {
           max_chars: { type: 'integer', description: 'Character ceiling. Default 6000; the result says when it was cut.' },
+          query: { type: 'string', description: 'What you want to know. With a query, only the passages that answer it come back, ranked — the cheapest way to read a long page. Without one, the whole page comes back.' },
         },
         additionalProperties: false,
       },
@@ -1941,6 +1942,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the words, as Markdown. */
       execute: async (args) => withRead(async (page) => {
+        const asked = String(args?.query ?? '').trim()
+        if (asked !== '') {
+          const found = await readRelevant(page, asked, { maxChars: Number(args?.max_chars ?? 4000) })
+          if (found.fault !== undefined) return `the page did not answer when read — ${String(found.fault).split('\n')[0].slice(0, 200)}`
+          if (found.text === '') return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read). Call browser_view for the whole page, or try other words.`
+          return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\n${found.text}\n\n(${String(found.matched)} of ${String(found.total)} blocks, ranked for ${JSON.stringify(asked)})`
+        }
         const read = await readArticle(page, { maxChars: Number(args?.max_chars ?? 6000) })
         if (read.fault !== undefined) return `the page did not answer when read — ${read.fault.split('\n')[0].slice(0, 200)}`
         if (read.text === '') return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}\n\nnothing to read here: the page draws its content, or it is still loading. Call browser_view to see what is on screen.`
