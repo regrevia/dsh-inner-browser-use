@@ -2604,6 +2604,28 @@ export class Sidecar {
   }
 
   /**
+   * The windows this chat may see: the browser's own pages minus the ones other
+   * chats are driving. A chat's column shows its own windows, never a
+   * neighbour's.
+   * @param {string} session - chat asking.
+   * @returns {Promise<Array<{title: string, url: string, current: boolean, index: number}>>} its windows.
+   */
+  async windowsFor(session) {
+    const list = await this.tabs(session)
+    const page = this.pageFor(session) ?? this.page
+    const foreign = new Set(typeof page?.siblings === 'function' ? page.siblings().map(String) : [])
+    const shown = []
+    for (let at = 0; at < list.length; at += 1) {
+      const row = list[at]
+      if (foreign.has(String(row.targetId))) continue
+      /* The index is the browser's own row, not this shorter list's: switching
+         goes back through `tabs()` unfiltered. */
+      shown.push({ title: String(row.title ?? ''), url: String(row.url ?? ''), current: row.current === true, index: at })
+    }
+    return shown
+  }
+
+  /**
    * Move the mirror to another tab, leaving the old one open where it was.
    * @param {number} index - a row from `tabs()`.
    * @returns {Promise<SidecarPage>} the page now being driven.

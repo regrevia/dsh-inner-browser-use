@@ -562,7 +562,10 @@ export function apply(ctx) {
         return
       }
       try {
-        const page = sidecar.page
+        /* The shape belongs to the page this chat is actually looking at: a
+           chat driving a tab of its own must not resize the browser's base
+           page and keep a letterboxed picture. */
+        const page = sidecar.pageFor(actor) ?? sidecar.page
         if (page === null || page === undefined) {
           json(409, { ok: false, text: 'the browser is not open' }) // ui-copy-ignore
           return
@@ -655,6 +658,44 @@ export function apply(ctx) {
           const withScheme = /^[a-z]+:/i.test(address) ? address : `https://${address}`
           json(200, { ok: true, ...(await page.navigate(withScheme)) })
         }
+      } catch (error) {
+        json(500, { ok: false, text: String(error?.message ?? error) })
+      }
+      return
+    }
+
+    if (path === '/sidecar/tabs' && req.method === 'GET') {
+      /* This chat's windows only: another chat's pages never enter this list. */
+      const who = acting({ session: url.searchParams.get('session') })
+      if (who === '') return
+      try {
+        const tabs = await sidecar.windowsFor(who)
+        json(200, { ok: true, tabs, ...(url.searchParams.get('session') === '' ? { session: who } : {}) })
+      } catch (error) {
+        json(500, { ok: false, text: String(error?.message ?? error) })
+      }
+      return
+    }
+
+    if (path === '/sidecar/tabs' && req.method === 'POST') {
+      let body
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        json(400, { ok: false, text: 'bad frame' })
+        return
+      }
+      const actor = acting(body)
+      if (actor === '') return
+      try {
+        const at = Number(body.index ?? -1)
+        if (body.op === 'close') {
+          await sidecar.closeTab(at, actor)
+        } else {
+          await sidecar.useTab(at, actor)
+        }
+        const tabs = await sidecar.windowsFor(actor)
+        json(200, { ok: true, tabs })
       } catch (error) {
         json(500, { ok: false, text: String(error?.message ?? error) })
       }
@@ -789,6 +830,7 @@ export function apply(ctx) {
         '',
         '只有人明确说要看网页/用浏览器时才开始：「用网页端 / 在浏览器里 / 打开某个网站 / 上 ChatGPT 生成 / 帮我在这个页面点…」。人只给了链接、没说要用浏览器时，先用 `web_fetch` 或 envoy 读；读不到（登录墙、空壳、要交互）就说明原因再问一句，不要自己开。',
         '不要用它：读公开文章、单个链接正文、文档、搜索结果摘要、GitHub 仓库或 PR 页面——这些能用 `web_fetch` / envoy 读就不用浏览器；一打开就是一个后台 Chrome 进程加一个页签，会话多了很占内存。',
+        '也不要用它做连通性、可达性、服务是否起来的检查：那是一个 HTTP 请求的事，`web_fetch` 或 `curl` 就够，开浏览器只会多一个进程和一栏画面。只有「这一步必须在真实浏览器里点/填/登录」才轮到它。',
         '人点名之后不问、不另起外部 Chrome；画面留在本会话右栏，做完保留，不主动关。',
         '先接着用已有的页：`browser_view`（拿编号控件与可见文字）→ `browser_click` / `browser_type` → 再 `browser_view` 直到出现要的结果；页面要等就重复读，不 sleep。`browser_open` 只用于没有页、要换新地址、或要明确刷新；同一个地址不要反复重开。',
         '页面很长、只想确认某句话/按钮在哪时用 `browser_find`，别整页读。要读长文（文章、文档、issue、论坛帖）用 `browser_read`：它回 Markdown，只花几十分之一的 token，链接可点；要动手点、填表才用 `browser_view` 拿编号。',

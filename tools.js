@@ -1776,7 +1776,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
   return [
     {
       name: 'browser_open', // ui-copy-ignore
-      description: 'Start (or reuse) the background browser — a real Chrome with its own persistent profile — and open a URL in it. It is not the host\'s own browser tab: this Chrome runs on its own and only its picture is mirrored into this chat\'s right column, so it keeps working while the person looks elsewhere. Logins survive restarts.',
+      description: 'Start (or reuse) the background browser — a real Chrome with its own persistent profile — and open a URL in it. It is not the host\'s own browser tab: this Chrome runs on its own and only its picture is mirrored into this chat\'s right column, so it keeps working while the person looks elsewhere. Logins survive restarts. Use it only when the person explicitly asked for a browser this turn; reading a URL, a document or checking whether a site answers is `web_fetch`\'s job, not this one.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {

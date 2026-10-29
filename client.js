@@ -68,6 +68,10 @@ window.__ModuleLoader__.load({
       '.dshib-side-key:hover{background:var(--dsw-alias-bg-subtle);color:var(--dsw-alias-label-primary)}',
       '.dshib-side-url{flex:1 1 auto;min-width:0;border:1px solid transparent;border-radius:6px;background:var(--dsw-alias-bg-subtle);padding:4px 8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);outline:none}',
       '.dshib-side-url:focus{border-color:var(--dsw-alias-border-strong);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}',
+      '.dshib-side-wins{flex:none;display:flex;gap:4px;padding:4px 6px;overflow-x:auto;border-bottom:1px solid var(--dsw-alias-separator)}',
+      '.dshib-side-win{flex:0 1 auto;min-width:0;max-width:180px;display:inline-flex;align-items:center;gap:4px;border:0;border-radius:6px;padding:2px 8px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:pointer}',
+      '.dshib-side-win[data-on="1"]{background:var(--dsw-alias-bg-subtle);color:var(--dsw-alias-label-primary)}',
+      '.dshib-side-win > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dshib-side-stage{flex:1 1 auto;position:relative;min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--dsw-alias-bg-base);outline:none;cursor:default}',
       '.dshib-side-frame{display:block;user-select:none;-webkit-user-drag:none;cursor:default}',
       '.dshib-side-ime{position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;resize:none;overflow:hidden;opacity:0;pointer-events:none}',
@@ -115,7 +119,7 @@ window.__ModuleLoader__.load({
               return ''
             }
           }
-          const closeHere = (sessionId) => {
+          const closeHere = (sessionId, byPerson = false) => {
             /* A tab the person closed is not a tab they want back on return. */
             try {
               void fetch(`${ROUTE}/sidecar/forget?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }) // ui-copy-ignore
@@ -132,6 +136,11 @@ window.__ModuleLoader__.load({
               const kind = String(record?.kind ?? record?.record?.kind ?? '')
               const id = String(record?.id ?? record?.record?.id ?? '')
               if (kind !== SIDE_KIND && id !== SIDE_ID) continue
+              /* The person's close arrives from the tab strip: the host is
+                 already taking that tab down, and closing it again here races
+                 the host and can leave the tab half closed. Forgetting the ask
+                 is what this path owes. */
+              if (byPerson) continue
               try {
                 if (typeof record?.close === 'function') record.close()
                 else if (typeof surface?.closeIn === 'function') surface.closeIn(sessionId, id)
@@ -172,7 +181,7 @@ window.__ModuleLoader__.load({
                the keepalive put the mirror back a few seconds later — a tab
                the person closed that would not stay closed. Every close path
                ends here. */
-            onClose: (_tab, where) => closeHere(String(where?.sessionId ?? mountedOf())),
+            onClose: (_tab, where) => closeHere(String(where?.sessionId ?? mountedOf()), true),
           })))
           disposers.push(scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore
@@ -349,6 +358,9 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState('')
       const [editing, setEditing] = React.useState(false)
       const [size, setSize] = React.useState({ w: 0, h: 0 })
+      /* The browser's own windows, this chat's only: a second window a site
+         opened is a row here, not a second tab in the column. */
+      const [wins, setWins] = React.useState([])
       const stage = React.useRef(null)
       /* Which chat owns the mirror, as the sidecar host records it. // ui-copy-ignore
          Empty until
@@ -520,6 +532,44 @@ window.__ModuleLoader__.load({
         measure()
         return () => observer.disconnect()
       }, [])
+
+      /* The picture carries the page, not the window list: ask for the list on
+         a slow clock, and after a switch. */
+      const [winsTick, setWinsTick] = React.useState(0)
+      React.useEffect(() => {
+        if (mine !== true) return undefined
+        let alive = true
+        const chat = String(props.sessionId ?? '')
+        const load = () => {
+          fetch(`${ROUTE}/sidecar/tabs?session=${encodeURIComponent(chat)}`) // ui-copy-ignore
+            .then((reply) => (reply.ok === true ? reply.json() : null))
+            .then((info) => {
+              if (alive === false || info?.ok !== true || Array.isArray(info.tabs) !== true) return
+              setWins(info.tabs)
+            })
+            .catch(() => {})
+        }
+        load()
+        const clock = setInterval(load, 2500)
+        return () => {
+          alive = false
+          clearInterval(clock)
+        }
+      }, [mine, props.sessionId, winsTick])
+
+      const switchWin = (at) => {
+        fetch(`${ROUTE}/sidecar/tabs`, { // ui-copy-ignore
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ session: String(props.sessionId ?? ''), op: 'use', index: at }), // ui-copy-ignore
+        })
+          .then((reply) => (reply.ok === true ? reply.json() : null))
+          .then((info) => {
+            if (info?.ok === true && Array.isArray(info.tabs) === true) setWins(info.tabs)
+            setWinsTick((n) => n + 1)
+          })
+          .catch(() => {})
+      }
 
       const scale = size.w > 0 && size.h > 0 ? Math.min(size.w / view.w, size.h / view.h) : 0
       const padX = (size.w - view.w * scale) / 2
@@ -716,6 +766,17 @@ window.__ModuleLoader__.load({
               goto()
             },
           })),
+        ...(wins.length > 1
+          ? [h('div', { className: 'dshib-side-wins' },
+            ...wins.map((win) => h('button', {
+              key: `${win.index}:${win.url}`,
+              className: 'dshib-side-win',
+              type: 'button', // ui-copy-ignore
+              'data-on': win.current === true ? '1' : '0',
+              title: win.url,
+              onClick: () => switchWin(win.index),
+            }, h('span', null, String(win.title ?? '') || String(win.url ?? '')))))]
+          : []),
         h('div', {
           className: 'dshib-side-stage',
           ref: stage,
