@@ -194,6 +194,11 @@ test('the model is told to use the sidecar and the right column', () => {
   assert.match(prompts[0].text, /右栏/)
   /* One name for one thing: the prompt never calls it a sidecar. */
   assert.doesNotMatch(prompts[0].text, /sidecar/)
+  /* A browser is an expensive way to read a page: the prompt names the cheap
+     path first and says plainly when not to open one. */
+  assert.match(prompts[0].text, /web_fetch/)
+  assert.match(prompts[0].text, /envoy/)
+  assert.match(prompts[0].text, /不要用它/)
 })
 
 test('a chat with no tab receives nothing', () => {

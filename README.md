@@ -105,6 +105,14 @@ dsh plugin install ./dsh-inner-browser-use-0.16.0.tgz
 The plugin appears under **Plugins** as *Background browser*. It needs Google Chrome or
 Chromium on the machine; see [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
+## When it opens
+
+It is a tool for acting, not the default way to read the web.
+
+- Yes: the person says "in the browser" or "on the web page"; the task needs a login, a click, a form, several steps, or the picture itself; the page is drawn by JavaScript so `web_fetch` gets an empty shell, and Envoy cannot get the content either.
+- No: a public article, one link's text, docs, or a search result summary. Read those with `web_fetch` or Envoy and do not start a browser for them.
+- Asked for, it starts without a question and never opens a second, external Chrome. The picture stays in this chat's right column and stays open when the work is done.
+
 ## Use
 
 1. Open the chat you want the agent to browse for.
