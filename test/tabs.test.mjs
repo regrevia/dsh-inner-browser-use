@@ -51,3 +51,38 @@ test('closing a tab says which page was closed, not which is left', async () => 
   assert.deepEqual(closed, [1])
   assert.match(said, /closed tab 1 · http:\/\/x\/light/)
 })
+
+test('a chat sees its own windows only, at the browser’s own positions', async () => {
+  const list = [
+    { targetId: 'foreign', title: 'Other chat', url: 'https://example.org/', current: false },
+    { targetId: 'own', title: 'Mine', url: 'https://example.com/', current: true },
+    { targetId: 'left', title: 'Left behind', url: 'https://example.net/', current: false },
+    { targetId: 'stray', title: 'Nobody', url: 'about:blank', current: false },
+  ]
+  const sidecar = driver()
+  sidecar.claims = new Map()
+  sidecar.pages = new Map([['chat-a', { targetId: 'own', siblings: () => ['foreign'] }]])
+  sidecar.page = { targetId: 'base', siblings: () => [] }
+  sidecar.tabs = async () => list
+  sidecar.claim('chat-a', 'left')
+  const mine = await sidecar.windowsFor('chat-a')
+  assert.deepEqual(mine.map((row) => row.targetId ?? row.index), [1, 2])
+  assert.equal(mine[0].url, 'https://example.com/')
+  assert.equal(mine[0].current, true)
+  assert.equal(mine[1].current, false)
+  /* A tab nobody claimed is not this chat's window. */
+  assert.equal(mine.some((row) => row.url === 'about:blank'), false)
+})
+
+test('a window list drops tabs the browser no longer has', async () => {
+  const sidecar = driver()
+  sidecar.claims = new Map()
+  sidecar.pages = new Map([['chat-a', { targetId: 'own', siblings: () => [] }]])
+  sidecar.page = { targetId: 'base', siblings: () => [] }
+  sidecar.tabs = async () => [{ targetId: 'own', title: 'Mine', url: 'https://example.com/', current: true }]
+  sidecar.claim('chat-a', 'own')
+  sidecar.claim('chat-a', 'gone')
+  assert.equal(sidecar.claims.get('chat-a').size, 2)
+  await sidecar.windowsFor('chat-a')
+  assert.deepEqual([...sidecar.claims.get('chat-a')], ['own'])
+})

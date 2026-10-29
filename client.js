@@ -598,7 +598,16 @@ window.__ModuleLoader__.load({
           })
             .then((answer) => (answer.ok === true ? answer.json() : { ok: false }))
             .then((said) => {
-              if (!live || said?.ok === true || tries >= 5) return
+              if (!live) return
+              /* The browser answers with the shape it actually took: drawing
+                 the picture at that size fills the pane even when the page
+                 refused the exact one asked for. */
+              const took = said?.view ?? null
+              if (said?.ok === true && took !== null && Number(took.width) > 0 && Number(took.height) > 0) {
+                setView({ w: Math.round(Number(took.width)), h: Math.round(Number(took.height)) })
+                return
+              }
+              if (said?.ok === true || tries >= 5) return
               tries += 1
               timer = setTimeout(send, 400)
             })

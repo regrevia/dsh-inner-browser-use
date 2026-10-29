@@ -1962,6 +1962,10 @@ export class Sidecar {
     /* One tab per chat: a second chat opening an address gets a tab of its
        own, so neither can navigate the other's page away. */
     this.pages = new Map()
+    /* Every tab a chat has driven, so its column can offer its own windows
+       back after it switches away: a tab the chat left is still its own, and a
+       tab nobody claimed belongs to no column at all. */
+    this.claims = new Map()
     /* Tabs left behind by an earlier plugin load are closed once, on the first
        call that finds this browser: a profile used for weeks otherwise keeps a
        renderer per chat that ever opened it. */
@@ -2048,6 +2052,41 @@ export class Sidecar {
    * @param {string} session - chat id, empty for the default tab.
    * @returns {SidecarPage | null} the tab, if the browser is up.
    */
+  /**
+   * Remember that a tab belongs to a chat: switching away from it keeps it in
+   * that chat's window list, and no other chat can see it.
+   * @param {string} session - chat that drove the tab. // ui-copy-ignore
+   * @param {string} targetId - the browser target.
+   */
+  claim(session, targetId) {
+    const who = String(session ?? '')
+    const target = String(targetId ?? '')
+    if (who === '' || target === '') return
+    let set = this.claims.get(who)
+    if (set === undefined) {
+      set = new Set()
+      this.claims.set(who, set)
+    }
+    /* A chat cannot hold an unbounded list: the oldest tab it left falls off. */
+    if (set.size >= 12 && set.has(target) !== true) {
+      const first = set.values().next()
+      if (first.done !== true) set.delete(first.value)
+    }
+    set.add(target)
+  }
+
+  /**
+   * Forget a tab a chat no longer has.
+   * @param {string} session - chat that owned it. // ui-copy-ignore
+   * @param {string} targetId - the browser target.
+   */
+  unclaim(session, targetId) {
+    const set = this.claims.get(String(session ?? ''))
+    if (set === undefined) return
+    set.delete(String(targetId ?? ''))
+    if (set.size === 0) this.claims.delete(String(session ?? ''))
+  }
+
   pageFor(session) {
     const id = String(session ?? '')
     if (id === '') return this.page
@@ -2265,6 +2304,7 @@ export class Sidecar {
     await cdp.ready
     const page = await this.bind(await new SidecarPage(cdp, this.profile, port, () => this.holding()).start()) // ui-copy-ignore
     this.pages.set(id, page)
+    this.claim(id, page.targetId)
     this.touch()
     this.rememberTab(id, address)
     return page
@@ -2614,10 +2654,21 @@ export class Sidecar {
     const list = await this.tabs(session)
     const page = this.pageFor(session) ?? this.page
     const foreign = new Set(typeof page?.siblings === 'function' ? page.siblings().map(String) : [])
+    const who = String(session ?? '')
+    const claimed = this.claims.get(who) ?? new Set()
+    /* Tabs the browser no longer has must not linger in a chat's list. */
+    if (claimed.size > 0) {
+      const live = new Set(list.map((row) => String(row.targetId)))
+      for (const id of [...claimed]) if (live.has(id) !== true) claimed.delete(id)
+      if (claimed.size === 0) this.claims.delete(who)
+    }
     const shown = []
     for (let at = 0; at < list.length; at += 1) {
       const row = list[at]
       if (foreign.has(String(row.targetId))) continue
+      /* A tab nobody in this chat drove is not this chat's window: a page
+         opened behind the browser's back belongs to no column. */
+      if (row.current !== true && claimed.has(String(row.targetId)) !== true) continue
       /* The index is the browser's own row, not this shorter list's: switching
          goes back through `tabs()` unfiltered. */
       shown.push({ title: String(row.title ?? ''), url: String(row.url ?? ''), current: row.current === true, index: at })
@@ -2666,6 +2717,7 @@ export class Sidecar {
       await cdp.ready
       const page = await this.bind(await new SidecarPage(cdp, this.profile, mine.port, () => this.holding()).start()) // ui-copy-ignore
       this.pages.set(String(session), page)
+      this.claim(session, tab.targetId)
       mine.cdp.send('Page.stopScreencast').catch(() => {})
       mine.cdp.close()
       await page.cast()
@@ -2701,6 +2753,7 @@ export class Sidecar {
       alone = other < 0
       if (!alone) await this.useTab(other, session)
     }
+    this.unclaim(session, tab.targetId)
     if (port > 0) await fetch(`http://127.0.0.1:${port}/json/close/${tab.targetId}`, { signal: AbortSignal.timeout(1000) }).catch(() => {}) // ui-copy-ignore
     if (alone && mine !== null) {
       /* The chat still needs somewhere to go: a fresh tab in the same browser. */
