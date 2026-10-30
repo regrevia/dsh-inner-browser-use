@@ -826,18 +826,17 @@ export class SidecarPage {
        probe is only for the case where the click never made one, so it gets a
        single short look instead of the old half-second of polling. */
     if (target === null) {
-      /* Look, wait for the announcement, look again: a new tab is announced
-         before the browser lists it, so one look is not enough. */
-      const deadline = Date.now() + POPUP_GRACE_MS
-      while (target === null && Date.now() < deadline) {
-        const found = await this.findPopup(foreign)
-        if (found !== null) {
-          target = found
-          break
+      /* One look at the tab list answers the common case — a click that opened
+         nothing. When it says nothing, the announcement is the cheaper door:
+         a tab exists a moment before the browser lists it, so the wait ends on
+         the event instead of running out the window. */
+      target = await this.findPopup(foreign)
+      if (target === null) {
+        await this.waitPopup(Math.min(8, POPUP_GRACE_MS))
+        if (this.opened !== null && this.opened !== undefined && Date.now() - Number(this.opened.at ?? 0) < 2000) {
+          target = { targetId: String(this.opened.targetId), url: String(this.opened.url) }
         }
-        const left = deadline - Date.now()
-        if (left <= 0) break
-        await this.waitPopup(Math.min(8, left))
+        this.opened = null
       }
     }
     if (target === null) {

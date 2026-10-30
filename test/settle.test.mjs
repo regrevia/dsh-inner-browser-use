@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { oncePerPage, withoutSeenAddress, pageMark } from '../tools.js?v=1'
+import { oncePerPage, withoutSeenAddress, pageMark, dropSameFocus } from '../tools.js?v=1'
 
 import { settle, outcome } from '../tools.js'
 
@@ -137,7 +137,11 @@ function markedPage(mark, { flashBridge } = { flashBridge: null }) {
 
 test('an action says whether the page moved, and where it went', async () => {
   assert.equal(await outcome(markedPage('Title|https://a.example/x|100|50'), 'Title|https://a.example/x|100|50'), ' · no visible change')
-  assert.equal(await outcome(markedPage('Title|https://a.example/y|100|50'), 'Title|https://a.example/x|100|50'), ' · navigated to https://a.example/y')
+  /* The brief on the same line carries the new address, so this clause says
+     only what the address cannot: another page, or another spot on this one. */
+  assert.equal(await outcome(markedPage('Title|https://a.example/y|100|50'), 'Title|https://a.example/x|100|50'), ' · new page')
+  assert.equal(await outcome(markedPage('Title|https://a.example/x#two|100|50'), 'Title|https://a.example/x#one|100|50'), ' · #two')
+  assert.equal(await outcome(markedPage('Title|https://a.example/x?q=2|100|50'), 'Title|https://a.example/x?q=1|100|50'), ' · new page')
   assert.equal(await outcome(markedPage('Title|https://a.example/x|260|50'), 'Title|https://a.example/x|100|50'), ' · content changed')
   assert.equal(await outcome(markedPage('New|https://a.example/x|100|50'), 'Title|https://a.example/x|100|50'), ' · page moved on')
   /* A movie has no DOM: its frame counter is the answer, not a false "no change". */
@@ -145,6 +149,17 @@ test('an action says whether the page moved, and where it went', async () => {
   assert.equal(await outcome({ flashBridge: 4321, seq: 3, lastFrameAt: 90 }, 'flash:3:90'), ' · no frame change')
   /* No mark before the action is not a claim about after it. */
   assert.equal(await outcome(markedPage('Title|https://a.example/x|100|50'), ''), '')
+})
+
+test('the focus line does not repeat the control the call named', () => {
+  /* A click named the words: the line after it need not say them twice. */
+  assert.equal(dropSameFocus('https://a.example/#cart · Cart · focus Add to cart', { text: 'add to cart' }), 'https://a.example/#cart · Cart')
+  assert.equal(dropSameFocus('x · focus Item 7 = 7', { name: 'Item 7' }), 'x · focus Item 7 = 7')
+  /* A field that was typed into has a value worth keeping, and a name that
+     merely contains the words is news too: both stay. */
+  assert.equal(dropSameFocus('x · focus Email = a@b.c', { text: 'Email' }), 'x · focus Email = a@b.c')
+  assert.equal(dropSameFocus('x · focus Sign in · dialog alert: no', { text: 'Save' }), 'x · focus Sign in · dialog alert: no')
+  assert.equal(dropSameFocus('x · focus Save', {}), 'x · focus Save')
 })
 
 test('settle waits until the page text stops growing', async () => {

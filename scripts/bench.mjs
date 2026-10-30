@@ -103,7 +103,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 280, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
+const LIMITS = { click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -305,6 +305,7 @@ async function main() {
       if (followed !== '') emit('popup-wait', { warned: 'a popup appeared on a page that opens none' })
     }
     emit('popup-wait', { medianMs: times[1], runs: times })
+    budget('popup-wait', times[1])
   }
 
   /* A click that opens a tab: followed when it opens at once, and still followed

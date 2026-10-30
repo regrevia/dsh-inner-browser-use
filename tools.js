@@ -310,7 +310,17 @@ export async function outcome(page, before) {
   const [wasTitle, wasUrl, wasText, wasNodes] = before.split('|')
   const [nowTitle, nowUrl, nowText, nowNodes] = after.split('|')
   if (after === before) return ' · no visible change'
-  if (nowUrl !== wasUrl) return ` · navigated to ${String(nowUrl).slice(0, 300)}`
+  if (nowUrl !== wasUrl) {
+    /* The brief on the same line already names the address this step went to.
+       What it cannot say is whether the page moved within itself, so a jump to
+       another spot on the same address is said as the spot alone. */
+    const was = String(wasUrl ?? '')
+    const now = String(nowUrl ?? '')
+    const base = (value) => (value.includes('#') ? value.slice(0, value.indexOf('#')) : value)
+    const spot = now.includes('#') ? now.slice(now.indexOf('#')) : ''
+    if (spot !== '' && base(was) === base(now)) return ` · ${spot.slice(0, 120)}`
+    return ' · new page'
+  }
   const words = Math.abs(Number(nowText ?? 0) - Number(wasText ?? 0))
   const nodes = Math.abs(Number(nowNodes ?? 0) - Number(wasNodes ?? 0))
   if (nowTitle !== wasTitle) return ' · page moved on'
@@ -352,9 +362,27 @@ export function withoutSeenAddress(page, url, text) {
   return body.slice(first.length + 1)
 }
 
+/** The focus line repeats the control the call named: say the name once. */
+export function dropSameFocus(line, args) {
+  const squeezed = (value) => String(value ?? '').toLowerCase().replace(/\s+/g, '')
+  const named = squeezed(args?.text ?? args?.name ?? args?.ref ?? '')
+  if (named === '') return line
+  const at = line.indexOf(' · focus ')
+  if (at < 0) return line
+  const head = line.slice(0, at)
+  const parts = line.slice(at + ' · focus '.length).split(' · ')
+  const said = String(parts[0] ?? '')
+  /* A field carries a value the words do not: that part is news, so it stays. */
+  if (said.includes(' = ')) return line
+  const label = squeezed(said)
+  if (label !== named && !label.includes(named) && !named.includes(label)) return line
+  const rest = parts.slice(1)
+  return rest.length === 0 ? head : `${head} · ${rest.join(' · ')}`
+}
+
 async function acted(page, args, look, label) {
   if (args?.read === true) return await look()
-  return `ok ${label} · ${oncePerPage(page, await brief(page))}`
+  return `ok ${label} · ${dropSameFocus(oncePerPage(page, await brief(page)), args)}`
 }
 
 /**
