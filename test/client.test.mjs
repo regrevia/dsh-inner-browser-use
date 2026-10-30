@@ -112,7 +112,7 @@ new Script(clientSource).runInThisContext()
  * @param {{openTab?: string, openTabIn?: string, mounted?: string | (() => string)}} options
  *   `mounted` may be a function so a test can move the on-screen chat.
  */
-function scene({ openTab, openTabIn, mounted = '', state = null } = {}) {
+function scene({ openTab, openTabIn, mounted = '', state = null, pane = false } = {}) {
   const onScreen = () => (typeof mounted === 'function' ? mounted() : mounted)
   /** @type {any[]} */
   const opened = []
@@ -145,6 +145,7 @@ function scene({ openTab, openTabIn, mounted = '', state = null } = {}) {
     },
     sidebarRight: {
       mounted: { getSnapshot: () => onScreen() },
+      tabsIn: () => (pane === true ? [{ id: 'dsh-inner-browser-use:sidecar', kind: 'inner-browser-sidecar' }] : []),
       ...(openTab === undefined ? {} : {
         openTab: (...args) => {
           if (openTab === 'throw') throw new Error('no strip')
@@ -194,6 +195,19 @@ test('a tab closed from the strip tells the host, so the keepalive leaves it clo
   assert.equal(typeof tabs[0].onClose, 'function')
   tabs[0].onClose({ id: 'dsh-inner-browser-use:sidecar' }, { sessionId: 'chat-shown' })
   assert.equal(posts.some((post) => post.url.includes('/sidecar/forget?session=chat-shown')), true)
+})
+
+test('a nudge for the frames cannot draw a column the person closed', () => {
+  /* No pane on screen: the nudge is only for a picture that is already there,
+     so a closed column stays closed. */
+  const closed = scene({ mounted: 'chat-shown' })
+  closed.source.send({ type: 'sidecar-wanted', session: 'chat-shown', reason: 'keepalive', at: Date.now() })
+  assert.deepEqual(closed.opened, [], 'a nudge never opens a tab')
+
+  /* One that is drawn is refreshed through the same path. */
+  const drawn = scene({ mounted: 'chat-shown', pane: true })
+  drawn.source.send({ type: 'sidecar-wanted', session: 'chat-shown', reason: 'keepalive', at: Date.now() })
+  assert.deepEqual(drawn.opened, [['session', 'chat-shown', 'inner-browser-sidecar', {}]])
 })
 
 test('the mirror opens only in the chat a tool asked for, and only while it is on screen', () => {

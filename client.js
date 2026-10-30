@@ -119,12 +119,51 @@ window.__ModuleLoader__.load({
               return ''
             }
           }
-          const closeHere = (sessionId, byPerson = false) => {
-            /* A tab the person closed is not a tab they want back on return. */
+          /* The chat that asked for the pane, and the chats whose pane the
+             person closed. A strip close and a layout restore do not both
+             report themselves here, so the mark is kept on this side too: no
+             automatic ask may redraw a column the person shut. */
+          let openWho = ''
+          let openAt = 0
+          let paneSeen = false
+          let missing = 0
+          const closedAt = new Map()
+          const hasPane = (sessionId) => {
             try {
-              void fetch(`${ROUTE}/sidecar/forget?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }) // ui-copy-ignore
+              const rows = surface?.tabsIn?.(sessionId) ?? []
+              return rows.some((row) => {
+                const kind = String(row?.kind ?? row?.record?.kind ?? '')
+                const id = String(row?.id ?? row?.record?.id ?? '')
+                return kind === SIDE_KIND || id === SIDE_ID
+              })
             } catch {
-              /* a page that cannot hear it keeps its note */
+              return false
+            }
+          }
+          const closeHere = (sessionId, byPerson = false) => {
+            if (sessionId === '') return
+            closedAt.set(sessionId, Date.now())
+            if (openWho === sessionId) {
+              openWho = ''
+              openAt = 0
+              paneSeen = false
+              missing = 0
+            }
+            /* A note is sent only when the person is quitting the mirror, not when a
+               chat switch closes this column: the switch's own ask claims the
+               mirror a moment later, and a late note would take it away from the
+               chat that just asked. */
+            if (byPerson === true) {
+              /* A close usually unmounts the pane in the same tick, which cancels
+                 an ordinary request; a beacon is delivered after the page is gone,
+                 so the note always arrives. */
+              const url = `${ROUTE}/sidecar/forget?session=${encodeURIComponent(sessionId)}` // ui-copy-ignore
+              try {
+                const sent = typeof navigator?.sendBeacon === 'function' && navigator.sendBeacon(url) === true
+                if (sent !== true) void fetch(url, { method: 'POST' })
+              } catch {
+                /* a page that cannot hear it keeps its note */
+              }
             }
             let records = []
             try {
@@ -149,16 +188,48 @@ window.__ModuleLoader__.load({
               }
             }
           }
-          const ask = (sessionId) => {
+          const ask = (sessionId, reason = 'ask', at = 0) => {
             if (sessionId === '' || mountedOf() !== sessionId) return
+            const shut = closedAt.get(sessionId)
+            /* A slow beat that only wants the frames back must not put a closed
+               column on screen again: it may refresh a pane that is drawn and
+               nothing else. */
+            if (reason === 'keepalive' && (shut !== undefined || !hasPane(sessionId))) return
+            /* A real ask is only newer than the close that preceded it: a
+               replayed one from before the person shut the pane stays spent. */
+            if (shut !== undefined && (reason !== 'ask' || (at !== 0 && at <= shut))) return
+            if (shut !== undefined) closedAt.delete(sessionId)
             if (ownerSession !== '' && ownerSession !== sessionId) closeHere(ownerSession)
             ownerSession = sessionId
+            openWho = sessionId
+            missing = 0
+            paneSeen = hasPane(sessionId)
+            if (paneSeen !== true) openAt = Date.now()
             try {
               if (typeof surface?.openTabIn === 'function') surface.openTabIn(sessionId, SIDE_KIND, {})
               else if (typeof surface?.openTab === 'function') surface.openTab(SIDE_KIND)
             } catch {
               /* a column that refuses keeps its own tabs */
             }
+          }
+          /* The pane this chat asked for can be taken down by paths that never
+             call onClose. One that was drawn and is gone was closed by the
+             person, and that is the answer this watcher waits for. */
+          const watchPane = () => {
+            if (openWho === '') return
+            if (mountedOf() !== openWho) return
+            if (hasPane(openWho)) {
+              paneSeen = true
+              missing = 0
+              return
+            }
+            /* A pane the person never saw draw is still being built; only one
+               that was on screen and then vanished is a close. */
+            if (paneSeen !== true) return
+            if (Date.now() - openAt < 2500) return
+            missing += 1
+            if (missing < 2) return
+            closeHere(openWho, true)
           }
           /* The same rule on this side: a second mount of the same tab is a
              no-op, not a thrown error that takes the pane down. */
@@ -177,7 +248,7 @@ window.__ModuleLoader__.load({
             priority: 'extension',
             title: () => L('side.label'),
             /* The tab strip's close control is not the pane's own button: a
-               tab closed there never told the host, the ask stayed alive, and
+               tab closed there never sent the note, the ask stayed alive, and
                the keepalive put the mirror back a few seconds later — a tab
                the person closed that would not stay closed. Every close path
                ends here. */
@@ -186,7 +257,7 @@ window.__ModuleLoader__.load({
           disposers.push(scope.slots.inject(SLOT, () => scope.slots.register({
             name: SLOT, // ui-copy-ignore
             key: SIDE_ID, // ui-copy-ignore
-            inject: (sessionId) => ({ sessionId, dropMirror: () => closeHere(sessionId) }),
+            inject: (sessionId) => ({ sessionId, dropMirror: () => closeHere(sessionId, true) }),
           }, SidecarBody)))
           disposers.push(scope.slots.inject(TITLE_SLOT, () => scope.slots.register({
             name: TITLE_SLOT, // ui-copy-ignore
@@ -195,7 +266,7 @@ window.__ModuleLoader__.load({
           }, () => h('span', { className: 'dshib-title' }, L('side.label')))))
           /* The mirror comes only when this chat asked for it: the ask is pushed
              to this chat's page, and nothing opens by itself. // ui-copy-ignore */
-          sidecarOpener = (sessionId) => ask(sessionId)
+          sidecarOpener = (sessionId, reason = 'ask', at = 0) => ask(sessionId, reason, at)
           /* The ask arrives on this chat's own downlink, so a frame for another
              chat never reaches this column. The stream follows the chat on
              screen: a switch closes the old one and opens the new one. */
@@ -231,7 +302,7 @@ window.__ModuleLoader__.load({
                 }
                 if (frame?.type !== 'sidecar-wanted') return
                 const asked = String(frame.session ?? '')
-                if (asked !== '') sidecarOpener?.(asked)
+                if (asked !== '') sidecarOpener?.(asked, String(frame.reason ?? 'ask'), Number(frame.at ?? 0))
               })
               askSource = source
               askWho = who
@@ -276,7 +347,7 @@ window.__ModuleLoader__.load({
                     again()
                     return
                   }
-                  ask(who)
+                  ask(who, 'restore')
                 })
                 .catch(again)
             } catch {
@@ -285,7 +356,10 @@ window.__ModuleLoader__.load({
           }
           restore()
           const offAsk = watchAsk()
-          const pollAsk = setInterval(syncAsk, 1000)
+          const pollAsk = setInterval(() => {
+            syncAsk()
+            watchPane()
+          }, 1000)
           const stopAsk = () => {
             clearInterval(pollAsk)
             for (const timer of restoreTimers) clearTimeout(timer)

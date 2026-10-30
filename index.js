@@ -131,15 +131,16 @@ export class Bridge {
    * Remember that a chat wants the mirror, and tell it now if it is listening.
    * @param {string} sessionId - chat that asked.
    * @param {number} [at] - when it asked; older asks are not replayed.
+   * @param {string} [reason] - 'ask' for a real request, 'keepalive' for a nudge.
    * @returns {boolean} whether a live tab took the frame.
    */
-  want(sessionId, at = Date.now()) {
+  want(sessionId, at = Date.now(), reason = 'ask') {
     const id = this.canon(sessionId)
     if (id === '') return false
     this.claim(id)
     this.wanted = { session: id, at }
     if (this.persist === true) writeMirror({ owner: this.owner, session: id, at })
-    return this.push(id, { type: 'sidecar-wanted', session: id, at })
+    return this.push(id, { type: 'sidecar-wanted', session: id, at, reason })
   }
 
   /**
@@ -155,7 +156,7 @@ export class Bridge {
        ask older than two minutes is spent and is not replayed. */
     const ask = this.wanted
     if (ask.session === sessionId && Date.now() - ask.at <= 120_000) {
-      this.push(sessionId, { type: 'sidecar-wanted', session: sessionId, at: ask.at })
+      this.push(sessionId, { type: 'sidecar-wanted', session: sessionId, at: ask.at, reason: 'ask' })
     }
   }
 
@@ -187,14 +188,20 @@ export class Bridge {
   }
 
   /**
-   * Forget a mirror nobody is waiting for any more.
+   * Give the mirror up: the person closed the column, so the chat stops owning
+   * it and no keepalive may ask for it again. Ownership is what the column
+   * reads on reload, so it has to be dropped on disk as well as in memory.
    * @param {string} sessionId - chat that closed its tab.
-   * @returns {boolean} whether the ask was the remembered one.
+   * @returns {boolean} whether this chat held the mirror or the ask.
    */
   forget(sessionId) {
-    if (sessionId === '' || this.wanted.session !== sessionId) return false
+    const id = this.canon(sessionId)
+    if (id === '') return false
+    const held = this.owner === id || this.wanted.session === id
     this.wanted = { session: '', at: 0 }
-    return true
+    if (this.owner === id) this.owner = ''
+    if (this.persist === true) writeMirror({ owner: this.owner, session: '', at: 0 })
+    return held
   }
 
   /** Close every stream. */
@@ -328,7 +335,7 @@ export function apply(ctx) {
         const due = nudgeDue({ askedAgo: Date.now() - (lastAsk.get(owner) ?? 0), sinceLast: Date.now() - last }) // ui-copy-ignore
         if (due !== true) return
         last = Date.now()
-        bridge.want(owner)
+        bridge.want(owner, Date.now(), 'keepalive')
         appendFileSync(join(STATE_DIR, 'asks.log'), `${new Date().toISOString()} asked ${owner.slice(-8)} to draw the mirror again\n`)
       } catch {}
     }, 4000)

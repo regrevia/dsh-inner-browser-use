@@ -241,7 +241,39 @@ test('a tab closed on purpose is not reopened on return', () => {
   const seat = { frames: [], end() {}, write(frame) { this.frames.push(frame) } }
   bridge.attach('chat-1', seat)
   assert.equal(seat.frames.length, 0, 'the ask was withdrawn with the tab')
+  assert.equal(bridge.owner, '', 'the closed chat no longer owns the mirror')
   assert.equal(bridge.forget('chat-2'), false, 'another chat has nothing to forget')
+})
+
+test('a chat that closed its tab is not given the mirror again by a poll', async () => {
+  const { needsTab } = await import('../index.js')
+  const bridge = new Bridge()
+  bridge.want('chat-1')
+  /* The column asks for its state on every reload; a poll that still found an
+     owner here would draw the tab the person just closed. */
+  assert.equal(needsTab({ alive: false }, 'chat-1', bridge.owner), true, 'its own dropped page is adopted')
+  bridge.forget('chat-1')
+  assert.equal(needsTab({ alive: false }, 'chat-1', bridge.owner), false, 'a withdrawn chat is never re-adopted')
+})
+
+test('the mirror owner is dropped on disk as well as in memory', () => {
+  const bridge = new Bridge({ persist: true })
+  bridge.want('session-abc')
+  assert.equal(bridge.owner, 'session-abc')
+  bridge.forget('session-abc')
+  const note = JSON.parse(readFileSync(join(process.env.DSH_INNER_BROWSER_STATE_DIR, 'mirror.json'), 'utf8'))
+  assert.equal(note.owner, '', 'a reload must not read the old owner back')
+  assert.equal(note.session, '')
+})
+
+test('a nudge for the frames is marked as one, and a real ask is not', () => {
+  const bridge = new Bridge()
+  const seat = { frames: [], end() {}, write(frame) { this.frames.push(frame) } }
+  bridge.attach('chat-1', seat)
+  bridge.want('chat-1', Date.now(), 'keepalive')
+  bridge.want('chat-1', Date.now(), 'ask')
+  const reasons = seat.frames.map((frame) => JSON.parse(String(frame).replace(/^data: /, '')).reason)
+  assert.deepEqual(reasons, ['keepalive', 'ask'])
 })
 
 test('a second stream for one chat replaces the first', () => {
