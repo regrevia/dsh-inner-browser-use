@@ -78,7 +78,7 @@ const QUALITY_FLOOR = 44 // ui-copy-ignore
 const QUALITY_CEILING = 76 // ui-copy-ignore
 
 /**
- * Decide the next JPEG quality from the weight of the frame just seen. A frame
+ * Decide the next JPEG quality from the weight of the frame seen. A frame
  * near 90 KB of base64 is a heavy page: lowering quality by 8 costs a little
  * sharpness and saves a lot of transport. A small frame has room to sharpen.
  * @param {number} current - quality now.
@@ -478,6 +478,30 @@ class Cdp {
  * Input is real CDP input: the page sees the same events a person's trackpad
  * produces, which is what makes sites that reject scripted clicks work.
  */
+/**
+ * Whether two addresses show the same place: a fragment never changes the page.
+ * @param {string} a - one address.
+ * @param {string} b - another address.
+ * @returns {string} the shared key, or '' when they differ.
+ */
+function placeKey(value) {
+  const said = String(value ?? '')
+  if (said === '') return ''
+  try {
+    const url = new URL(said)
+    url.hash = ''
+    const path = url.pathname.replace(/\/+$/, '') || '/'
+    return `${url.protocol}//${url.host}${path}${url.search}`
+  } catch {
+    return said
+  }
+}
+
+function samePlace(a, b) {
+  const key = placeKey(a)
+  return key !== '' && key === placeKey(b)
+}
+
 export class SidecarPage {
   /** @param {Cdp} cdp - the page session. @param {string} profile - profile name. */
   constructor(cdp, profile, port, hold = () => 0) { // ui-copy-ignore
@@ -774,9 +798,10 @@ export class SidecarPage {
       .then((response) => (response.ok ? response.json() : []))
       .catch(() => [])
     const current = await this.cdp.send('Target.getTargetInfo').then((info) => String(info?.targetInfo?.targetId ?? '')).catch(() => '')
-    return (Array.isArray(list) ? list : [])
+    const rows = (Array.isArray(list) ? list : [])
       .filter((item) => item.type === 'page' && item.webSocketDebuggerUrl !== undefined)
       .map((item) => ({ targetId: String(item.id), title: String(item.title ?? ''), url: String(item.url ?? ''), webSocketUrl: String(item.webSocketDebuggerUrl), current: String(item.id) === current }))
+    return rows
   }
 
   /**
@@ -1300,7 +1325,7 @@ export class SidecarPage {
   /**
    * Whether this picture repeats the one the pane is already showing.
    * @param {string} jpeg - base64 JPEG of the new frame.
-   * @returns {boolean} true when sending it would just cost bytes.
+   * @returns {boolean} true when sending it would cost bytes.
    */
   repeats(jpeg, gap = 1000) {
     const prev = this.lastShot
@@ -1979,6 +2004,8 @@ export class Sidecar {
     /* A tab being opened for a chat: a second call for the same chat waits for
        it instead of opening a twin. */
     this.opening = new Map()
+    /* Chats whose tab was reclaimed: the column is told so it can go away. */
+    this.expired = new Map()
     /* A measurement or a test may want a profile of its own; the person's
        browser keeps the default one. */
     this.profile = String(options.profile ?? 'default')
@@ -2157,6 +2184,7 @@ export class Sidecar {
    */
   async tabFor(session, url) {
     const id = String(session ?? '')
+    this.expired?.delete(id)
     const had = this.pageFor(id)
     if (had !== null) {
       if (url !== undefined && url !== '') await had.navigate(url)
@@ -2268,10 +2296,37 @@ export class Sidecar {
       if (page === this.page) continue
       if (now - Number(page.touched ?? 0) < TAB_IDLE_MS) continue
       this.pages.delete(id)
+      /* The column is told the tab is gone, so a chat coming back to the front
+         does not re-expand a pane for a page that already went away. */
+      ;(this.expired ??= new Map()).set(String(id), Date.now())
       await page.stopCast().catch(() => {})
       await fetch(`http://127.0.0.1:${String(page.port)}/json/close/${target}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
       this.note(`closed an idle tab — its address is kept for the chat`)
     }
+  }
+
+  /**
+   * A page already at an address, so a second open reuses it. A page another
+   * chat is driving is that chat's, and is not offered.
+   * @param {string} url - address wanted.
+   * @param {string} except - chat doing the asking.
+   * @returns {SidecarPage|null} the page, or null.
+   */
+  tabShowing(url, except) {
+    const wanted = String(url ?? '')
+    if (wanted === '' || wanted === 'about:blank') return null
+    const held = new Set()
+    for (const [who, set] of this.claims) {
+      if (String(who) === String(except)) continue
+      for (const target of set) held.add(String(target))
+    }
+    for (const page of [this.page, ...this.pages.values()]) {
+      if (page === null || page === undefined || page.cdp?.closed === true) continue
+      const target = String(page.targetId ?? '')
+      if (target === '' || held.has(target)) continue
+      if (samePlace(page.url, wanted)) return page
+    }
+    return null
   }
 
   /**
@@ -2280,10 +2335,22 @@ export class Sidecar {
    * @returns {Promise<SidecarPage>} a new tab for that chat.
    */
   async openTab(id, url) {
+    this.expired?.delete(String(id))
     const had = this.pageFor(id)
     if (had !== null) {
       if (url !== undefined && url !== '') await had.navigate(url)
       return had
+    }
+    /* One address, one page: a browser that is already showing where this chat
+       wants to go hands that page over instead of a second copy of the same
+       address, which nobody would be able to tell apart in the tab list. */
+    const twin = this.tabShowing(url, id)
+    if (twin !== null) {
+      this.pages.set(String(id), twin)
+      this.claim(String(id), twin.targetId)
+      this.touch()
+      this.rememberTab(String(id), String(twin.url ?? url))
+      return twin
     }
     if (this.page === null) await this.ensure()
     const port = this.page?.port ?? 0 // ui-copy-ignore
@@ -2646,7 +2713,25 @@ export class Sidecar {
    */
   async tabs(session = '') {
     const page = this.pageFor(session) ?? this.page
-    return page === null ? [] : page.tabs()
+    if (page === null) return []
+    const rows = await page.tabs()
+    /* One address is one row: the base page can be showing the very place a
+       chat's tab already shows, and two identical lines read as two pages. A
+       page a chat holds represents that address; an unheld twin is left out,
+       and the rows that stay keep the browser's order, which is the index
+       space the tab tools address their rows by. */
+    const held = new Set()
+    for (const set of this.claims.values()) for (const target of set) held.add(String(target))
+    const seen = new Set()
+    const kept = []
+    for (const row of [...rows].filter((item) => held.has(item.targetId)).concat(rows.filter((item) => !held.has(item.targetId)))) {
+      const key = placeKey(row.url)
+      if (key !== '' && seen.has(key)) continue
+      if (key !== '') seen.add(key)
+      kept.push(row)
+    }
+    kept.sort((a, b) => rows.indexOf(a) - rows.indexOf(b))
+    return kept
   }
 
   /**
@@ -3074,8 +3159,9 @@ export class Sidecar {
        question about which site it used to be. */
     const remembered = this.rememberedTab(id)
     const page = id === '' ? null : this.pageFor(id)
-    if (page === null || page === undefined) return { url: '', title: '', viewers: 0, alive: false, remembered } // ui-copy-ignore
-    return { url: String(page.url ?? ''), title: String(page.title ?? ''), viewers: page.frames?.size ?? 0, alive: true, remembered } // ui-copy-ignore
+    const expired = this.expired?.has(id) === true
+    if (page === null || page === undefined) return { url: '', title: '', viewers: 0, alive: false, expired, remembered } // ui-copy-ignore
+    return { url: String(page.url ?? ''), title: String(page.title ?? ''), viewers: page.frames?.size ?? 0, alive: true, expired, remembered } // ui-copy-ignore
   }
 
   async state() {

@@ -355,10 +355,27 @@ window.__ModuleLoader__.load({
             }
           }
           restore()
+          /* A pane whose page the browser reclaimed is closed once, so coming
+             back to the chat does not bring the empty column back. */
+          const dropExpired = () => {
+            const who = mountedOf()
+            if (who === '' || hasPane(who) !== true) return
+            void fetch(`${ROUTE}/sidecar/state?session=${encodeURIComponent(who)}`) // ui-copy-ignore
+              .then((said) => (said.ok === true ? said.json() : null))
+              .then((state) => {
+                if (state?.chat?.expired !== true) return
+                if (mountedOf() !== who) return
+                closeHere(who, false)
+              })
+              .catch(() => {})
+          }
           const offAsk = watchAsk()
+          let beats = 0
           const pollAsk = setInterval(() => {
             syncAsk()
             watchPane()
+            beats += 1
+            if (beats % 5 === 1) dropExpired()
           }, 1000)
           const stopAsk = () => {
             clearInterval(pollAsk)
@@ -674,15 +691,11 @@ window.__ModuleLoader__.load({
         /* The page already has that shape: a resize that lands between two
            viewport sizes would only cost a relayout and another frame. */
         if (Math.abs(Number(view?.w ?? 0) - size.w) < 1 && Math.abs(Number(view?.h ?? 0) - size.h) < 1) return undefined
-        /* The page is told the column's size a beat after the resize stops, and
-           again until the browser says it took it: a request that arrives while
-           the page is still starting is refused, and a pane that gives up then
-           keeps a letterboxed picture for as long as it stays open. */
-        let live = true
-        let tries = 0
-        let timer = 0
-        const send = () => {
-          if (!live) return
+        /* The page is told the column's size a beat after the resize stops.
+           One ask: the pane draws at whatever shape the frame says it has, so
+           a browser that is still starting costs nothing more than the next
+           resize doing the same thing again. */
+        const timer = setTimeout(() => {
           fetch(`${ROUTE}/sidecar/viewport`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -690,30 +703,17 @@ window.__ModuleLoader__.load({
           })
             .then((answer) => (answer.ok === true ? answer.json() : { ok: false }))
             .then((said) => {
-              if (!live) return
               /* The browser answers with the shape it actually took: drawing
                  the picture at that size fills the pane even when the page
                  refused the exact one asked for. */
               const took = said?.view ?? null
               if (said?.ok === true && took !== null && Number(took.width) > 0 && Number(took.height) > 0) {
                 setView({ w: Math.round(Number(took.width)), h: Math.round(Number(took.height)) })
-                return
               }
-              if (said?.ok === true || tries >= 5) return
-              tries += 1
-              timer = setTimeout(send, 400)
             })
-            .catch(() => {
-              if (!live || tries >= 5) return
-              tries += 1
-              timer = setTimeout(send, 600)
-            })
-        }
-        timer = setTimeout(send, 250)
-        return () => {
-          live = false
-          clearTimeout(timer)
-        }
+            .catch(() => {})
+        }, 250)
+        return () => clearTimeout(timer)
       }, [mine, size.w, size.h, view?.w, view?.h])
 
       const who = String(props.sessionId ?? '')

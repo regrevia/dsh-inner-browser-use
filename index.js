@@ -280,6 +280,9 @@ export function cwdOf(execution) {
 
 export function needsTab(chatState, chat, owner) {
   if (String(chat ?? '') === '' || owner !== chat) return false
+  /* A tab the browser reclaimed is not a tab that went missing: opening one
+     again would bring back the column the person no longer needs. */
+  if (chatState?.expired === true) return false
   return chatState?.alive !== true
 }
 
@@ -521,7 +524,7 @@ export function apply(ctx) {
          called open again: the mirror would come back empty in a chat that
          never closed it. The chat that owned the browser asks for its state, so
          answering honestly means picking the browser up first. */
-      if (shouldAdoptOnState(said, chat, bridge.owner)) {
+      if (shouldAdoptOnState(said, chat, bridge.owner) && mineChat?.expired !== true) {
         try {
           await sidecar.ensure(adoptOptions(chat, sidecar.rememberedTab?.(chat)))
           said = await sidecar.state()

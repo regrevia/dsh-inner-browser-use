@@ -335,13 +335,15 @@ test('a pane with no picture still offers to reopen its last page, and asks as i
   assert.ok(source.includes('info?.chat?.remembered'))
 })
 
-test('a viewport the browser refused is asked for again', () => {
+test('the page is told the pane resize once, not again and again', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  /* One request that arrives while the page is starting is refused, and the
-     pane used to keep a letterboxed picture for as long as it stayed open. */
-  assert.ok(source.includes('tries >= 5'))
-  assert.ok(source.includes('timer = setTimeout(send, 400)'))
-  /* And it is not repeated once the page already has the pane's shape. */
+  /* A resize costs one ask. A browser that was still starting answers nothing,
+     and the picture already draws at the shape the next frame reports, so no
+     request is repeated on a timer. */
+  assert.ok(source.includes('tries >= 5') === false)
+  assert.ok(source.includes('setTimeout(send, 400)') === false)
+  assert.ok(source.includes('return () => clearTimeout(timer)'))
+  /* A pane that already has the browser's shape is not asked at all. */
   assert.ok(source.includes('Math.abs(Number(view?.w ?? 0) - size.w) < 1'))
   assert.ok(source.includes('[mine, size.w, size.h, view?.w, view?.h]'))
 })
@@ -380,4 +382,16 @@ test('the picture fills the column even when the last measure was stale', () => 
   assert.ok(source.includes('y: a.top - b.top + (a.height - view.h * scale) / 2'))
   /* A frame that has no element yet cannot answer, and is not guessed at. */
   assert.ok(source.includes("if (at === null || at === undefined || areaEl === null || areaEl === undefined) return null"))
+})
+
+test('a column whose page was reclaimed is closed once, not re-expanded', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The browser keeps the page a while after the tab is put away; when even
+     that page is gone the column goes with it, so a chat coming back to the
+     front does not draw an empty pane nobody asked for. */
+  assert.ok(source.includes('const dropExpired = () =>'))
+  assert.ok(source.includes('state?.chat?.expired !== true'))
+  assert.ok(source.includes('closeHere(who, false)'))
+  /* One check every few beats, not a retry ladder. */
+  assert.ok(source.includes('if (beats % 5 === 1) dropExpired()'))
 })

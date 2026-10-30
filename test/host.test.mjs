@@ -256,6 +256,14 @@ test('a chat that closed its tab is not given the mirror again by a poll', async
   assert.equal(needsTab({ alive: false }, 'chat-1', bridge.owner), false, 'a withdrawn chat is never re-adopted')
 })
 
+test('a tab the browser reclaimed is not opened again by a poll', async () => {
+  const { needsTab } = await import('../index.js')
+  /* The page went away because it sat unused, not because the column lost it:
+     a poll that opened one again would put the closed tab back on screen. */
+  assert.equal(needsTab({ alive: false, expired: true }, 'chat-1', 'chat-1'), false)
+  assert.equal(needsTab({ alive: false, expired: false }, 'chat-1', 'chat-1'), true)
+})
+
 test('the mirror owner is dropped on disk as well as in memory', () => {
   const bridge = new Bridge({ persist: true })
   bridge.want('session-abc')

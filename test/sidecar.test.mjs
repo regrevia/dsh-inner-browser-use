@@ -28,8 +28,36 @@ test('a browser nobody draws is nobody watching, even before Chrome starts', () 
      than a throw that leaves the close unanswered. */
   const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-watch-${process.pid}`) })
   assert.equal(sidecar.watched(), 0)
-  /* A pane closed by the person puts the browser away in a minute, not fifteen. */
-  assert.equal(sidecar.idleInterval, undefined)
+  /* Nothing is on a clock until something asks for one. */
+  assert.equal(sidecar.idle, null)
+})
+
+test('a browser nobody watches is put away when its rest is over', async () => {
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-rest-${process.pid}`) })
+  let shut = 0
+  sidecar.shutdown = async () => {
+    shut += 1
+  }
+  sidecar.touch(30)
+  assert.ok(sidecar.idle !== null, 'the rest is on a clock')
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(shut, 1, 'the browser goes away once')
+  assert.equal(sidecar.idle, null, 'and the clock is off')
+})
+
+test('a browser someone watches keeps its clock running instead of closing', async () => {
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-rest-watch-${process.pid}`) })
+  sidecar.page = { frames: new Set(['viewer']) }
+  let shut = 0
+  sidecar.shutdown = async () => {
+    shut += 1
+  }
+  sidecar.touch(30)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(shut, 0, 'a watched browser is not closed')
+  assert.ok(sidecar.idle !== null, 'the clock starts again')
+  clearTimeout(sidecar.idle)
+  sidecar.idle = null
 })
 
 test('the agent arrow moves at once, without waiting for a picture', () => {
@@ -813,6 +841,61 @@ test('a tab nobody has watched for ten minutes is closed, the live page is not',
   assert.equal(sidecar.pages.has('chat-new'), true)
   assert.equal(sidecar.pages.has('chat-watched'), true)
   assert.deepEqual(shut.map((one) => one.split('/json/close/')[1]).sort(), ['old-1'])
+  /* The chat's column learns the tab is gone, so coming back to the front does
+     not re-expand a pane for the page that was just reclaimed. */
+  assert.equal(sidecar.expired.has('chat-old'), true)
+  const said = await sidecar.chatState('chat-old')
+  assert.deepEqual([said.alive, said.expired], [false, true])
+})
+
+test('one address is one line in the tab list, and the chat\'s page represents it', async () => {
+  const sidecar = new Sidecar({ logger: null })
+  sidecar.claims.set('chat-a', new Set(['chat-a']))
+  sidecar.page = {
+    tabs: async () => [
+      { targetId: 'base', title: 'one', url: 'https://one.example/x', current: true },
+      { targetId: 'chat-a', title: 'one', url: 'https://one.example/x#frag', current: false },
+      { targetId: 'chat-b', title: 'two', url: 'https://two.example/', current: false },
+    ],
+  }
+  const rows = await sidecar.tabs()
+  /* Two identical lines are the same page twice: the page a chat holds is the
+     one that represents that address, and the bare twin is not listed. The
+     rows keep browser order, so a row index still means the same row. */
+  assert.deepEqual(rows.map((row) => row.targetId), ['chat-a', 'chat-b'])
+})
+
+test('two addresses stay two lines', async () => {
+  const sidecar = new Sidecar({ logger: null })
+  sidecar.page = {
+    tabs: async () => [
+      { targetId: 'one', title: 'one', url: 'https://one.example/x', current: true },
+      { targetId: 'two', title: 'two', url: 'https://two.example/', current: false },
+    ],
+  }
+  assert.deepEqual((await sidecar.tabs()).map((row) => row.targetId), ['one', 'two'])
+})
+
+test('a page already at the address is reused instead of opened twice', () => {
+  const held = { targetId: 'other', url: 'https://one.example/x#top', cdp: { closed: false } }
+  const sidecar = new Sidecar({ logger: null })
+  sidecar.page = { targetId: 'base', url: 'https://one.example/x/', cdp: { closed: false } }
+  assert.equal(sidecar.tabShowing('https://one.example/x', 'mine').targetId, 'base', 'the same place in another spelling is the same page')
+  sidecar.page = null
+  sidecar.pages.set('other', held)
+  sidecar.claims.set('other', new Set(['other']))
+  assert.equal(sidecar.tabShowing('https://one.example/x', 'mine'), null, 'a page another chat drives is not offered')
+  assert.equal(sidecar.tabShowing('https://one.example/x', 'other').targetId, 'other', 'its own chat reuses it')
+  assert.equal(sidecar.tabShowing('about:blank', 'mine'), null)
+})
+
+test('a chat that opens a page again clears the reclaim marker', async () => {
+  const sidecar = new Sidecar({ logger: null })
+  sidecar.pages.set('chat-a', { targetId: 'chat-a', port: 1, url: 'https://one.example/', cdp: { closed: false }, frames: new Set(), navigate: async () => {}, stopCast: async () => {} })
+  sidecar.expired.set('chat-a', Date.now())
+  assert.equal((await sidecar.chatState('chat-a')).expired, true)
+  await sidecar.tabFor('chat-a', 'https://one.example/')
+  assert.equal(sidecar.expired.has('chat-a'), false)
 })
 
 
