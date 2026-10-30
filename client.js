@@ -73,7 +73,7 @@ window.__ModuleLoader__.load({
       '.dshib-side-win[data-on="1"]{background:var(--dsw-alias-bg-subtle);color:var(--dsw-alias-label-primary)}',
       '.dshib-side-win > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dshib-side-stage{flex:1 1 auto;position:relative;min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--dsw-alias-bg-base);outline:none;cursor:default}',
-      '.dshib-side-frame{display:block;user-select:none;-webkit-user-drag:none;cursor:default}',
+      '.dshib-side-frame{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none;cursor:default}',
       '.dshib-side-ime{position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;resize:none;overflow:hidden;opacity:0;pointer-events:none}',
       /* The black arrow is the agent's pointer, not the person's cursor: both are
          on screen at once, and moving the mouse never takes the arrow over. */
@@ -645,9 +645,27 @@ window.__ModuleLoader__.load({
           .catch(() => {})
       }
 
-      const scale = size.w > 0 && size.h > 0 ? Math.min(size.w / view.w, size.h / view.h) : 0
-      const padX = (size.w - view.w * scale) / 2
-      const padY = (size.h - view.h * scale) / 2
+      /* Where the page actually got drawn inside the column: the frame fills
+         the stage and the picture sits inside it, so the answer comes from the
+         element that is on screen rather than from the last size remembered.
+         A stale measure can then never shrink the picture to a thumbnail. */
+      const frameEl = React.useRef(null)
+      const picture = () => {
+        const at = frameEl.current
+        const areaEl = stage.current
+        if (at === null || at === undefined || areaEl === null || areaEl === undefined) return null
+        if (!(view.w > 0) || !(view.h > 0)) return null
+        const a = at.getBoundingClientRect()
+        const b = areaEl.getBoundingClientRect()
+        if (!(a.width > 1) || !(a.height > 1)) return null
+        const scale = Math.min(a.width / view.w, a.height / view.h)
+        if (!(scale > 0)) return null
+        return {
+          scale,
+          x: a.left - b.left + (a.width - view.w * scale) / 2,
+          y: a.top - b.top + (a.height - view.h * scale) / 2,
+        }
+      }
 
       /* The column tells the page how big it is, a beat after the resize stops:
          a page that relayouts on every pointer step would never settle. */
@@ -729,10 +747,12 @@ window.__ModuleLoader__.load({
       }
       const toView = (event) => {
         const el = stage.current
-        if (el === null || scale <= 0) return null
+        if (el === null) return null
+        const spot = picture()
+        if (spot === null) return null
         const box = el.getBoundingClientRect()
-        const x = (event.clientX - box.left - padX) / scale
-        const y = (event.clientY - box.top - padY) / scale
+        const x = (event.clientX - box.left - spot.x) / spot.scale
+        const y = (event.clientY - box.top - spot.y) / spot.scale
         if (x < 0 || y < 0 || x > view.w || y > view.h) return null
         return { x: Math.round(x), y: Math.round(y) }
       }
@@ -828,6 +848,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshib-side-note' }, L('side.foreign')))
       }
       const pointer = person === true || hand === true ? null : ptr
+      const spot = pointer === null ? null : (picture() ?? { scale: 1, x: 0, y: 0 })
       const noteText = phase === 'failed' ? note || L('side.failed') : phase === 'live' ? L('side.empty') : L('side.connecting')
       return h('div', { className: 'dshib-side' },
         h('div', { className: 'dshib-side-bar' },
@@ -894,7 +915,7 @@ window.__ModuleLoader__.load({
             tabIndex: 0,
             spellCheck: false,
             'aria-label': L('side.type'),
-            style: pointer === null ? undefined : { left: `${padX + pointer.x * scale}px`, top: `${padY + pointer.y * scale}px` },
+            style: pointer === null || spot === null ? undefined : { left: `${spot.x + pointer.x * spot.scale}px`, top: `${spot.y + pointer.y * spot.scale}px` },
             onCompositionStart: () => {
               composing.current = true
             },
@@ -913,9 +934,10 @@ window.__ModuleLoader__.load({
           }),
           frame === null ? null : h('img', {
             className: 'dshib-side-frame',
+            ref: frameEl,
             src: `data:image/jpeg;base64,${frame.jpeg}`,
-            width: Math.max(1, Math.round(view.w * scale)),
-            height: Math.max(1, Math.round(view.h * scale)),
+            width: Math.max(1, Math.round(view.w)),
+            height: Math.max(1, Math.round(view.h)),
             alt: '', // ui-copy-ignore
             draggable: false,
           }),
@@ -923,7 +945,7 @@ window.__ModuleLoader__.load({
             className: 'dshib-side-ptr',
             src: SIDE_POINTER, // ui-copy-ignore
             alt: '', // ui-copy-ignore
-            style: { left: `${padX + pointer.x * scale}px`, top: `${padY + pointer.y * scale}px` },
+            style: spot === null ? undefined : { left: `${spot.x + pointer.x * spot.scale}px`, top: `${spot.y + pointer.y * spot.scale}px` },
           })))
     }
   },

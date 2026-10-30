@@ -360,3 +360,24 @@ test('the arrow goes away as soon as a hand lands on the pane, not after a round
   /* A timer left running after the tab is gone is a callback with no page. */
   assert.ok(source.includes('clearTimeout(handTimer.current)'))
 })
+
+test('the picture fills the column even when the last measure was stale', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The frame is a picture of the whole page: it fills the stage and lets the
+     picture sit inside it, so a size remembered from before the column opened
+     can never draw a thumbnail in the middle of a blank pane. */
+  assert.ok(source.includes('object-fit:contain'))
+  assert.ok(source.includes('width:100%;height:100%;object-fit:contain'))
+  /* The pointer lands where the picture is drawn, measured from the element on
+     screen rather than from the remembered size. */
+  assert.ok(source.includes('const picture = () =>'))
+  assert.ok(source.includes('const a = at.getBoundingClientRect()'))
+  /* One scale for both axes, the smaller one: the picture keeps its shape and
+     the leftover space becomes a letterbox instead of a distorted page. */
+  assert.ok(source.includes('const scale = Math.min(a.width / view.w, a.height / view.h)'))
+  /* The offset is the letterbox half, so a click maps back onto the page. */
+  assert.ok(source.includes('x: a.left - b.left + (a.width - view.w * scale) / 2'))
+  assert.ok(source.includes('y: a.top - b.top + (a.height - view.h * scale) / 2'))
+  /* A frame that has no element yet cannot answer, and is not guessed at. */
+  assert.ok(source.includes("if (at === null || at === undefined || areaEl === null || areaEl === undefined) return null"))
+})

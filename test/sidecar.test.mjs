@@ -22,6 +22,16 @@ function fakeCdp() {
   }
 }
 
+test('a browser nobody draws is nobody watching, even before Chrome starts', () => {
+  /* The rest timer asks this question on the close path, where a browser that
+     never started is the normal case: answering has to be safe there rather
+     than a throw that leaves the close unanswered. */
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-watch-${process.pid}`) })
+  assert.equal(sidecar.watched(), 0)
+  /* A pane closed by the person puts the browser away in a minute, not fifteen. */
+  assert.equal(sidecar.idleInterval, undefined)
+})
+
 test('the agent arrow moves at once, without waiting for a picture', () => {
   const cdp = fakeCdp()
   const page = new SidecarPage(cdp, 'default')

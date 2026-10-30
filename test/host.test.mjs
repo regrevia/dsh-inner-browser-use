@@ -25,7 +25,7 @@ let origin
 
 /* A fresh state directory: the mirror's note must never leak between runs. */
 process.env.DSH_INNER_BROWSER_STATE_DIR = join(tmpdir(), `dshib-host-${process.pid}-${Date.now()}`)
-const { Bridge, ROUTE, apply } = await import('../index.js')
+const { Bridge, ROUTE, apply, note } = await import('../index.js')
 
 /**
  * A plugin context with only what the plugin touches.
@@ -264,6 +264,15 @@ test('the mirror owner is dropped on disk as well as in memory', () => {
   const note = JSON.parse(readFileSync(join(process.env.DSH_INNER_BROWSER_STATE_DIR, 'mirror.json'), 'utf8'))
   assert.equal(note.owner, '', 'a reload must not read the old owner back')
   assert.equal(note.session, '')
+})
+
+test('the note a long run keeps for itself stops growing', () => {
+  const file = join(process.env.DSH_INNER_BROWSER_STATE_DIR, 'asks.log')
+  const pad = 'x'.repeat(180)
+  for (let i = 0; i < 1600; i += 1) note(`${pad} ${i}`)
+  const kept = readFileSync(file, 'utf8')
+  assert.ok(kept.includes(' 1599'), 'the newest line is kept')
+  assert.ok(kept.length < 300 * 1024, `the file stays bounded, got ${kept.length}`)
 })
 
 test('a nudge for the frames is marked as one, and a real ask is not', () => {

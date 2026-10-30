@@ -95,6 +95,12 @@ export function nextQuality(current, base64) {
 
 /** Idle lifetime, so a forgotten sidecar does not sit on a login forever. */
 const IDLE_MS = 15 * 60_000
+/* A pane the person closed is a stronger signal than a pane nobody touched: the
+   browser is put away a minute later unless someone asks for it again. A whole
+   Chrome with its renderers is a few hundred megabytes, and leaving it up for a
+   quarter of an hour after a deliberate close is exactly the cost they did not
+   want. */
+const REST_MS = 60_000
 /* One browser serves every chat, but a chat that is not on screen need not keep
    a full renderer alive for ever: past this many chats the oldest unwatched tab
    is closed, and its address brings it back on the next visit. */
@@ -2836,7 +2842,18 @@ export class Sidecar {
     }
   }
 
-  touch() {
+  /** @returns {number} how many panes are watching a picture right now. */
+  watched() {
+    let n = this.page?.frames?.size ?? 0
+    for (const page of this.pages?.values() ?? []) n += page.frames?.size ?? 0
+    return n
+  }
+
+  /**
+   * Starts the idle clock again.
+   * @param {number} [ms] - how long a browser nobody watches may stay up.
+   */
+  touch(ms = IDLE_MS) {
     if (this.idle !== null) clearTimeout(this.idle)
     this.idle = setTimeout(() => {
       this.idle = null
@@ -2849,7 +2866,7 @@ export class Sidecar {
         return
       }
       void this.shutdown()
-    }, IDLE_MS)
+    }, ms)
     this.idle.unref?.()
   }
 

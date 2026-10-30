@@ -20,7 +20,7 @@
  * learns no port and no secret. // ui-copy-ignore
  */
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Sidecar } from './sidecar.js?v=1'
@@ -47,6 +47,27 @@ function writeMirror(value) {
     writeFileSync(MIRROR_FILE, JSON.stringify(value))
   } catch {
     /* an unwritable note must not take the mirror down */
+  }
+}
+
+/** The note stops growing: past this size the oldest half goes, so a long-lived run never fills the disk. */
+const NOTES_MAX = 256 * 1024
+const NOTES_KEEP = 128 * 1024
+
+/**
+ * Add one line to the mirror's own note, keeping the file bounded.
+ * @param {string} line - what happened, one line.
+ */
+export function note(line) {
+  const file = join(STATE_DIR, 'asks.log')
+  try {
+    mkdirSync(STATE_DIR, { recursive: true })
+    appendFileSync(file, `${new Date().toISOString()} ${line}\n`)
+    if (statSync(file).size <= NOTES_MAX) return
+    const whole = readFileSync(file, 'utf8')
+    writeFileSync(file, whole.slice(whole.length - NOTES_KEEP).replace(/^[^\n]*\n/, ''))
+  } catch {
+    /* a note that cannot be written must not take the mirror down */
   }
 }
 
@@ -336,7 +357,7 @@ export function apply(ctx) {
         if (due !== true) return
         last = Date.now()
         bridge.want(owner, Date.now(), 'keepalive')
-        appendFileSync(join(STATE_DIR, 'asks.log'), `${new Date().toISOString()} asked ${owner.slice(-8)} to draw the mirror again\n`)
+        note(`asked ${owner.slice(-8)} to draw the mirror again`)
       } catch {}
     }, 4000)
     timer.unref?.()
@@ -511,7 +532,7 @@ export function apply(ctx) {
         if (Date.now() - before > 2000) {
           lastAsk.set(chat, Date.now())
           try {
-            appendFileSync(join(STATE_DIR, 'asks.log'), `${new Date().toISOString()} ${chat.slice(-8)} alive=${String(said?.alive === true)} viewers=${String(said?.viewers ?? 0)}\n`)
+            note(`${chat.slice(-8)} alive=${String(said?.alive === true)} viewers=${String(said?.viewers ?? 0)}`)
           } catch {}
         }
       }
@@ -715,7 +736,17 @@ export function apply(ctx) {
       const body = await readBody(req).then((raw) => JSON.parse(raw || '{}')).catch(() => ({}))
       const who = acting(body)
       if (who === '') return
-      json(200, { ok: true, forgot: bridge.forget(who) })
+      const forgot = bridge.forget(who)
+      /* Nobody is watching a picture the person just closed: the browser itself
+         is put away a minute later rather than a quarter of an hour, unless an
+         agent asks for it again in the meantime. */
+      try {
+        if (sidecar.watched() === 0) {
+          sidecar.touch(REST_MS)
+          note('said ' + who.slice(-8) + ' closed the mirror - browser rests in a minute')
+        }
+      } catch { /* a browser that never started needs no rest timer */ }
+      json(200, { ok: true, forgot })
       return
     }
 
