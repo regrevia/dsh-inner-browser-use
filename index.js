@@ -737,8 +737,8 @@ export function apply(ctx) {
       const who = acting(body)
       if (who === '') return
       const forgot = bridge.forget(who)
-      /* Nobody is watching a picture the person just closed: the browser itself
-         is put away a minute later rather than a quarter of an hour, unless an
+      /* Nobody is watching a picture the person closed: the browser itself is
+         put away a minute later rather than a quarter of an hour, unless an
          agent asks for it again in the meantime. */
       try {
         if (sidecar.watched() === 0) {
