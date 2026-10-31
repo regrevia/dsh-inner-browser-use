@@ -4,6 +4,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { readSealed } from '../vault.js'
+
+/* A fixed key for the test: asking the system keystore from a test run would
+   hang on a prompt nobody is there to answer. */
+process.env.DSH_INNER_BROWSER_VAULT_KEY = Buffer.alloc(32, 7).toString('base64')
+
 import { Sidecar } from '../sidecar.js'
 
 const dir = join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-cookie')
@@ -30,7 +36,7 @@ test('a sign-in cookie is kept, a dated one is left to the browser', async () =>
     { name: 'dated', value: 'b', domain: 'example.com', path: '/', session: false, expires: 2_000_000_000 },
   ])
   await sidecar.saveSessionCookies()
-  const kept = JSON.parse(await import('node:fs').then((fs) => fs.readFileSync(jar, 'utf8')))
+  const kept = readSealed(jar)
   assert.deepEqual(kept.map((c) => c.name), ['session'])
 })
 

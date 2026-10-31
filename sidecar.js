@@ -6,11 +6,12 @@
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readyFlash } from './runtime/flash-setup.mjs'
+import { readSealed, tightenDir, writeSealed } from './vault.js'
 import { isMedia, kindOf } from './media.js?m=1'
 
 /**
@@ -112,6 +113,44 @@ const TAB_IDLE_MS = 10 * 60_000
 
 /** @param {number} ms - how long to wait. @returns {Promise<void>} resolves after it. */
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** @param {number} root - a process id. @returns {number} bytes of RSS the process tree holds. */
+function treeBytes(root) {
+  if (!Number.isFinite(root) || root <= 0) return 0
+  try {
+    const rows = execFileSync('ps', ['-Ao', 'pid=,ppid=,rss='], { encoding: 'utf8', timeout: 3000 })
+      .trim()
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/u))
+      .filter((cols) => cols.length >= 3)
+    /** @type {Map<number, number[]>} */
+    const byParent = new Map()
+    /** @type {Map<number, number>} */
+    const size = new Map()
+    for (const [pid, ppid, rss] of rows) {
+      const parent = Number(ppid)
+      const kids = byParent.get(parent) ?? []
+      kids.push(Number(pid))
+      byParent.set(parent, kids)
+      size.set(Number(pid), Number(rss) * 1024)
+    }
+    let total = size.get(root) ?? 0
+    const queue = [root]
+    const seen = new Set()
+    while (queue.length > 0) {
+      const pid = queue.shift()
+      if (seen.has(pid)) continue
+      seen.add(pid)
+      for (const kid of byParent.get(pid) ?? []) {
+        total += size.get(kid) ?? 0
+        queue.push(kid)
+      }
+    }
+    return total
+  } catch {
+    return 0
+  }
+}
 
 /** @param {string} path - candidate. @returns {string | undefined} the one that exists. */
 function firstBinary() {
@@ -348,9 +387,19 @@ export function snapshotLogin(dir) {
   const files = COOKIE_FILES.map((name) => ({ name, from: join(dir, name) })).filter((row) => existsSync(row.from))
   if (files.length === 0) return 0
   const to = loginBackupDir(dir)
-  mkdirSync(to, { recursive: true })
+  /* A copy of a cookie store is a copy of every sign-in in it: nobody else gets
+     to read the folder or the files, even on a shared machine. */
+  tightenDir(to)
   const stamp = String(Date.now())
-  for (const row of files) copyFileSync(row.from, join(to, `${stamp}-${row.name.replace(/\//g, '_')}`))
+  for (const row of files) {
+    const target = join(to, `${stamp}-${row.name.replace(/\//g, '_')}`)
+    copyFileSync(row.from, target)
+    try {
+      chmodSync(target, 0o600)
+    } catch {
+      /* best effort */
+    }
+  }
   const mine = readdirSync(to).filter((name) => name.startsWith(`${stamp}-`))
   const older = readdirSync(to).filter((name) => !mine.includes(name)).sort()
   const generations = 5
@@ -2996,6 +3045,7 @@ export class Sidecar {
    * @param {number} [ms] - how long a browser nobody watches may stay up.
    */
   touch(ms = IDLE_MS) {
+    this.idleAt = Date.now() + ms
     if (this.idle !== null) clearTimeout(this.idle)
     this.idle = setTimeout(() => {
       this.idle = null
@@ -3087,6 +3137,7 @@ export class Sidecar {
   }
 
   async shutdown() {
+    this.idleAt = 0
     /* A browser this process did not start belongs to somebody else — another
        app on the same profile, or a script that connected to it — and closing
        it would close the person's window. Let go of it instead: drop the socket
@@ -3158,7 +3209,7 @@ export class Sidecar {
         rmSync(file, { force: true })
         return
       }
-      writeFileSync(file, JSON.stringify(jar), { mode: 0o600 })
+      writeSealed(file, jar)
     } catch {
       /* a browser that is already gone has nothing to save */
     }
@@ -3166,12 +3217,9 @@ export class Sidecar {
 
   /** @returns {Promise<void>} puts back what saveSessionCookies kept. */
   async restoreSessionCookies() {
-    let jar = []
-    try {
-      jar = JSON.parse(String(readFileSync(sessionJar(profileDir(this.profile)), 'utf8')))
-    } catch {
-      return
-    }
+    /* Sealed by this version; plain JSON by one before it. Both are read, so an
+       update never signs anyone out. */
+    const jar = readSealed(sessionJar(profileDir(this.profile)))
     if (!Array.isArray(jar)) return
     /* A cookie the browser already holds is newer than the note: the site may
        have rotated its session id since the note was written, and putting the
@@ -3250,6 +3298,12 @@ export class Sidecar {
          screenshot is in this space, not in the window's. */
       viewport: this.page?.view ?? null,
       profiles,
+      /* What this browser costs right now: the whole process tree, renderers
+         included. Reported so a chat can decide whether to let it rest. */
+      memory: this.alive ? treeBytes(Number(this.child?.pid ?? 0)) : 0,
+      /* When it would close itself if nobody came back, and why: 0 means the
+         browser is either watched or not on a clock. */
+      closesIn: this.idle === null || this.stopping === true ? 0 : Math.max(0, Number(this.idleAt ?? 0) - Date.now()),
       error: this.alive ? '' : this.lastError,
     }
   }

@@ -9,7 +9,9 @@
  * Every number is one JSON line, so a run can be diffed against the last.
  */
 import { createServer } from 'node:http'
-import { statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Sidecar } from '../sidecar.js?v=1'
 import { readPage, renderPage, covering, locate, locateFirst } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
@@ -104,7 +106,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -699,6 +701,58 @@ async function main() {
   })
   budget('wait-late', mean(observed))
   mediaServer.close()
+
+  /* A sign-in kept and put vaultBack: the cost of both ends, and proof that what
+     sits on disk cannot be read as a cookie would be. */
+  process.env.DSH_INNER_BROWSER_VAULT_KEY = Buffer.alloc(32, 3).toString('base64')
+  const vaultTemp = mkdtempSync(join(tmpdir(), 'dshib-bench-vault-'))
+  process.env.DSH_INNER_BROWSER_STATE_DIR = vaultTemp
+  const loginServer = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(`<!doctype html><meta charset="utf-8"><title>login bench</title><script>
+localStorage.setItem('app_token', 'bench-local-secret')
+document.cookie = 'bench_session=bench-cookie-secret; path=/'
+</script><h1>Signed in</h1>`)
+  })
+  await new Promise((ready) => loginServer.listen(0, '127.0.0.1', ready))
+  const loginPort = loginServer.address().port
+  await sidecar.page.navigate(`http://127.0.0.1:${String(loginPort)}/`)
+  const loginTools = sidecarTools(sidecar, { last: undefined })
+  const loginTool = loginTools.find((tool) => tool.name === 'browser_login')
+  const loginSaveAt = Date.now()
+  const keptNote = await loginTool.execute({ action: 'save', name: 'bench' })
+  const keepMs = Date.now() - loginSaveAt
+  const vaultListed = await loginTool.execute({ action: 'list' })
+  const vaultFiles = readdirSync(join(vaultTemp, 'logins')).filter((name) => name.endsWith('.json'))
+  const vaultOnDisk = vaultFiles.map((name) => readFileSync(join(vaultTemp, 'logins', name), 'utf8')).join('')
+  const vaultSealed = !vaultOnDisk.includes('bench-cookie-secret') && !vaultOnDisk.includes('bench-local-secret')
+  await sidecar.page.cdp.send('Network.clearBrowserCookies').catch(() => {})
+  await sidecar.page.cdp.send('Runtime.evaluate', {
+    expression: 'localStorage.clear(); document.cookie = "bench_session=; Max-Age=0; path=/"',
+    returnByValue: true,
+  }).catch(() => {})
+  const loginUseAt = Date.now()
+  const vaultBackNote = await loginTool.execute({ action: 'use', name: 'bench' })
+  const reuseMs = Date.now() - loginUseAt
+  const vaultBack = await sidecar.page.cdp.send('Runtime.evaluate', {
+    expression: 'JSON.stringify({ cookie: document.cookie.includes("bench_session=bench-cookie-secret"), storage: localStorage.getItem("app_token") })',
+    returnByValue: true,
+  })
+  const vaultSignIn = JSON.parse(String(vaultBack?.result?.value ?? '{}'))
+  const vaultSignedIn = vaultSignIn.cookie === true && vaultSignIn.storage === 'bench-local-secret'
+  emit('login-vault', {
+    keepMs,
+    reuseMs,
+    vaultSealed,
+    files: vaultFiles.length,
+    vaultListed: String(vaultListed?.text ?? '').split('\n').length - 1,
+    savedCookies: /(\d+) cookies/u.exec(String(keptNote?.text ?? ''))?.[1] ?? '0',
+    vaultSignedIn,
+  })
+  budget('login-vault', reuseMs)
+  loginServer.close()
+  delete process.env.DSH_INNER_BROWSER_STATE_DIR
+  delete process.env.DSH_INNER_BROWSER_VAULT_KEY
 
   /* A crash costs one detection window plus a fresh tab, measured through the
      tool path the model actually takes. */

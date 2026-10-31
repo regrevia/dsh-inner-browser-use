@@ -16,6 +16,7 @@ import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
 import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
+import { dropLogin, listLogins, readLogin, saveLogin, vaultState } from './vault.js'
 import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
@@ -963,6 +964,56 @@ async function evaluate(page, expression, route, raceMs = 2000) {
     return { error: String(exceptionDetails.exception?.description ?? exceptionDetails.text ?? 'evaluate failed') }
   }
   return result?.value
+}
+
+/**
+ * The local storage a page is holding, per origin: some sites keep the sign-in
+ * itself there and cookies alone would come back signed out.
+ * @param {any} page - sidecar page.
+ * @returns {Promise<Array<{origin: string, items: Record<string, string>}>>} what it holds.
+ */
+async function storageOf(page) {
+  const raw = await evaluate(
+    page,
+    '(() => { try { const items = {}; for (let i = 0; i < localStorage.length; i += 1) { const key = localStorage.key(i); if (key !== null) items[key] = String(localStorage.getItem(key)).slice(0, 4000); } return JSON.stringify([{ origin: location.origin, items }]) } catch { return "[]" } })()',
+    null,
+    4000,
+  )
+  let rows = []
+  try {
+    rows = JSON.parse(String(raw ?? '[]'))
+  } catch {
+    return []
+  }
+  if (!Array.isArray(rows)) return []
+  return rows
+    .filter((row) => row !== null && typeof row === 'object' && typeof row.origin === 'string' && row.items !== null && typeof row.items === 'object')
+    .map((row) => ({ origin: String(row.origin), items: Object.fromEntries(Object.entries(row.items).slice(0, 200).map(([key, value]) => [key, String(value)])) }))
+}
+
+/**
+ * Puts one origin's local storage back. The page has to be on that origin to
+ * write to it, so this navigates there first — a sign-in that lives in local
+ * storage is worth the extra step.
+ * @param {any} page - sidecar page.
+ * @param {{origin: string, items: Record<string, string>}} row - what to put back.
+ * @returns {Promise<number>} how many entries went in.
+ */
+async function restoreStorage(page, row) {
+  if (String(row?.origin ?? '') === '' || page === null) return 0
+  try {
+    const here = String(page.url ?? '')
+    if (!here.startsWith(String(row.origin))) await page.navigate(String(row.origin))
+  } catch {
+    return 0
+  }
+  const written = await evaluate(
+    page,
+    `(() => { try { const items = ${JSON.stringify(row.items ?? {})}; for (const [key, value] of Object.entries(items)) localStorage.setItem(key, value); return Object.keys(items).length } catch { return 0 } })()`,
+    null,
+    4000,
+  )
+  return Number(written) || 0
 }
 
 /**
@@ -3050,10 +3101,94 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `mirror owner ${owner === '' ? 'none' : owner}`, // ui-copy-ignore
           owner === '' ? 'no owner' : `owner ${owner}`,
           `refs followed ${String(follows.count)}`,
+          /* What it costs and when it would let go: the two facts that decide
+             whether to keep using it or let it rest. */
+          state.alive === true ? `memory ${Math.max(1, Math.round(Number(state.memory ?? 0) / 1048576))} MB` : 'memory 0 MB',
+          state.closesIn > 0 ? `closes in ${Math.max(1, Math.round(Number(state.closesIn) / 60_000))} min unless used` : 'no close scheduled',
           holdText(sidecar) === '' ? 'person free' : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
         ]
         if (state.alive === true && viewerNote(state.viewers) !== '') rows.push(NO_VIEWER)
         return { text: rows.join('\n') }
+      },
+    },
+
+    {
+      name: 'browser_login', // ui-copy-ignore
+      description: 'Sign-ins belong to the browser, not to a chat: every chat uses them and they survive a restart. "save" keeps the sign-in showing right now under a name, "list" shows what is kept, "use" signs the browser back in as that account and reopens the page, "drop" forgets it. What is written is sealed, and the key is the one in the system keystore. One site can hold several accounts: save them under different names and switch with "use".',
+      parameters: { // ui-copy-ignore
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'save', 'use', 'drop'], description: 'list, save, use or drop.' },
+          name: { type: 'string', description: 'Account name, for example "work" or "personal". Needed by save, use and drop.' },
+        },
+        required: ['action'], // ui-copy-ignore
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 25_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - action and name. @returns {Promise<{text: string}>} what happened. */
+      execute: async (args) => {
+        const action = String(args?.action ?? '')
+        if (action === 'list') {
+          const rows = listLogins()
+          const shape = vaultState()
+          if (rows.length === 0) {
+            return { text: 'Nothing saved yet. Sign in on the site, then browser_login {action:"save", name:"work"}.' }
+          }
+          const head = `${rows.length} kept sign-in${rows.length === 1 ? '' : 's'}, ${Math.max(1, Math.round(shape.bytes / 1024))} KB sealed${shape.keyInKeychain ? ', key in the system keystore' : ''}`
+          const lines = rows.map((row) => {
+            const sites = row.origins.length === 0 ? '' : `, ${row.origins.join(' ')}`
+            return `${row.name} — ${row.cookieCount} cookies${sites}, saved ${new Date(row.savedAt).toLocaleString()}`
+          })
+          return { text: [head, ...lines].join('\n') }
+        }
+        const name = String(args?.name ?? '').trim()
+        if (name === '') return { text: 'Name the account: browser_login {action:"save", name:"work"}.' }
+        if (action === 'drop') {
+          return { text: dropLogin(name) ? `Forgot "${name}".` : `Nothing saved as "${name}".` }
+        }
+        if (action === 'save') {
+          const page = await sidecar.ensure({ session: currentSession() })
+          const cookies = await page.cookies()
+          const storage = await storageOf(page)
+          const kept = saveLogin(name, { cookies, storage, url: String(page.url ?? '') })
+          const sites = kept.origins.length === 0 ? '' : ` and ${kept.origins.length} site${kept.origins.length === 1 ? '' : 's'} of local storage`
+          return { text: `Saved "${kept.name}": ${kept.cookieCount} cookies${sites}, sealed on disk.` }
+        }
+        if (action === 'use') {
+          const held = readLogin(name)
+          if (held === null) return { text: `Nothing saved as "${name}". browser_login {action:"list"} shows what is kept.` }
+          const page = await sidecar.ensure({ session: currentSession() })
+          let put = 0
+          for (const cookie of (Array.isArray(held.cookies) ? held.cookies : []).slice(0, 400)) {
+            const domain = String(cookie?.domain ?? '').replace(/^\./u, '')
+            if (domain === '' || cookie?.name === undefined) continue
+            try {
+              await page.setCookie({
+                name: String(cookie.name),
+                value: String(cookie.value ?? ''),
+                domain,
+                path: String(cookie.path ?? '/'),
+                secure: cookie.secure === true,
+                httpOnly: cookie.httpOnly === true,
+                sameSite: cookie.sameSite,
+                expires: cookie.session === true ? undefined : Number(cookie.expires) || undefined,
+              })
+              put += 1
+            } catch {
+              /* one cookie a site refuses is not a reason to stop */
+            }
+          }
+          let stored = 0
+          for (const row of (Array.isArray(held.storage) ? held.storage : []).slice(0, 4)) stored += await restoreStorage(page, row)
+          const back = String(held.url ?? '')
+          if (back !== '') await page.navigate(back)
+          else await page.reload()
+          const said = stored === 0 ? '' : `, ${stored} local storage entries`
+          return { text: `Signed in as "${name}": ${put} cookies${said}, page reopened.` }
+        }
+        return { text: 'Pass action "list", "save", "use" or "drop".' }
       },
     },
 

@@ -21,7 +21,8 @@ live picture of that browser, and your own cursor keeps working on the picture.
 | `browser_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
 | `browser_shot` | Saves a full-size PNG into `~/.dsh-inner-browser-use/screenshots` and returns the path. |
 | `browser_media` | Lists the video and sound the page already fetched, with sizes, the one its own player shows first and marked `main`; `save: <row>`, `save: main` or part of the address keeps one. Ads and beacons stay out unless `all: true`; `watch: false` stops remembering the page. A stream is followed to its pieces and joined, so nothing has to be installed. |
-| `browser_state` | Reports whether the browser runs, which profile it uses, its address and title, and how many columns are showing it. |
+| `browser_login` | Keeps a sign-in by name: `save` stores this window's cookies and each site's local storage, `list` shows what is kept, `use` signs that account back in and reopens the page, `drop` forgets it. Names survive a restart and belong to the browser rather than to one chat, so two accounts on one site are two names. What sits on disk is encrypted, with the key in the system keychain. |
+| `browser_state` | Reports whether the browser runs, which profile it uses, its address and title, how many columns are showing it, how much memory it holds right now and when it would close on its own if left alone. |
 
 `browser_read` on the same page is the words only, in Markdown (measured: 4,520
 characters of an about page against 2,987 characters of snapshot — and the

@@ -20,7 +20,8 @@ profile，不是产品自带的那个浏览页签：右栏放的是它的画面�
 | `browser_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
 | `browser_shot` | 存一张 PNG 到 `~/.dsh/inner-browser-use/screenshots`，返回路径；`region: [x, y, w, h]` 只截一块（游戏、图表、看局部）。 |
 | `browser_media` | 列出页面已经请求过的视频和声音（带大小），页面自己播放器里那个排第一、标 `main`；`save: <行号>`、`save: main` 或地址片段存下来。广告和统计默认不出现（`all: true` 才看），`watch: false` 关掉这个页面的记录。流会顺着播放列表把片段取回拼好，不用装任何东西。 |
-| `browser_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题，以及有几个右栏在看它。 |
+| `browser_login` | 按名字留住登录：`save` 存下当前窗口的 cookie 和各站的 localStorage，`list` 看有哪些，`use` 切回那个账号并重开页面，`drop` 忘掉。名字跟着浏览器走、不跟着一个会话走，重启也在；同一站点两个账号就存两个名字。磁盘上那一份是加密的，钥匙在系统钥匙串里。 |
+| `browser_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题、有几个右栏在看它，以及它此刻占多少内存、没人用的话还有多久关闭。 |
 
 点、输入、按键之后的那一行会多一句结果：`· navigated to …`（换页了）、`· content changed`（页内有变化）、`· no visible change`（点了没动）、Flash 页则是 `· screen updated` / `· no frame change`；`read: true` 时不再多说。
 

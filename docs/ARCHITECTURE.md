@@ -165,9 +165,48 @@ picture comes back on the mutation that satisfies it. A page that changes 137 ms
 starts answers at 138 ms, not at the next 100 ms tick — the same reason `idle` (a mutation-free
 window) costs one round trip on an animation-heavy page instead of one per frame.
 
+## Sign-ins and reclaim
+
 Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,
 which Chrome would otherwise drop on exit — are saved next to it and restored on the next
 launch, so a restart of the app does not sign the person out.
+
+Three layers, each adding one thing the previous cannot do:
+
+- **The profile** keeps everything Chrome writes: dated cookies, origin storage, service
+  workers. It survives a restart of the app and a restart of the machine.
+- **The session jar** (`session-cookies.json`) covers the part Chrome throws away on exit.
+  Every cookie that comes back from `page.cookies()` without an expiry is written when the
+  browser closes, and put back on the next launch. A cookie the browser already holds is
+  never overwritten from the jar — a rotation happened in the live browser, and the jar is
+  the older truth.
+- **`browser_login`** (`vault.js`) turns that state into named snapshots a chat can call
+  back: cookies plus per-origin `localStorage`, saved under a name, listed, restored, or
+  dropped. `list` is a directory read, so it costs nothing while the browser is down.
+  Restoring writes cookies first, then navigates to each stored origin to write its local
+  storage (the API is origin-bound), then reopens the page that was saved.
+
+Everything written at rest is sealed with AES-256-GCM (`{v, alg, iv, tag, data}`, all
+base64). The key comes from `DSH_INNER_BROWSER_VAULT_KEY` when a test sets one, otherwise
+from the macOS keychain, otherwise from `vault.key` in the state root — 0600, and a fallback
+rather than the intended home, because an unattended `security add-generic-password` can
+block on a prompt. A tampered blob, a wrong key and a truncated file all come back empty;
+nothing trusts what it cannot verify. A plaintext jar from a version before this one is
+still read and re-sealed on the next write, so an upgrade does not sign anyone out.
+
+The reclaim ladder is three separate timers, because they answer three different questions:
+
+| Question | Timer | What happens |
+| --- | --- | --- |
+| Did the person close the column? | `REST_MS` = 60 s | The browser is put away a minute after the last pane lets go. |
+| Has nobody touched it at all? | `IDLE_MS` = 15 min | The whole process is reclaimed, but never while a pane is still watching a frame. |
+| Is this one tab stale? | `TAB_IDLE_MS` = 10 min, `MAX_TABS` = 6 | The tab is closed, not the browser; a returning chat gets a fresh page instead of a dead one (`expired`). |
+
+`browser_state` reports both what the process costs right now (`ps` over its process tree,
+which includes renderers, not just the parent) and `closesIn`, so the model can decide
+between keeping the page and letting it go instead of guessing. A freeze
+(`Page.setWebLifecycleState`) is deliberately not wired in: closing a stale tab is already
+cheap, and a frozen page that misses a mutation would make the event-driven wait lie.
 
 A system-prompt section (`browser-in-this-chat`) tells the model to reach for these tools
 without asking first when someone wants something done on a site.
