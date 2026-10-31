@@ -245,6 +245,31 @@ test('a tab closed on purpose is not reopened on return', () => {
   assert.equal(bridge.forget('chat-2'), false, 'another chat has nothing to forget')
 })
 
+test('closing the mirror hangs up the stream that was still attaching', () => {
+  const bridge = new Bridge()
+  bridge.want('chat-1')
+  let ended = 0
+  /* The tab closed before its frame stream finished attaching. A sink left
+     behind that way is never detached, and the browser is kept awake with
+     nobody looking at it — the reported "it opens itself and will not close". */
+  bridge.watch('chat-1', () => { ended += 1 })
+  bridge.forget('chat-1')
+  assert.equal(ended, 1, 'the chat that closed the column has no stream left')
+  assert.equal(bridge.unwatch('chat-1'), 0, 'nothing is left to hang up twice')
+})
+
+test('a reloading tab does not pile up frame streams', () => {
+  const bridge = new Bridge()
+  let open = 0
+  for (let i = 0; i < 9; i += 1) {
+    open += 1
+    bridge.watch('chat-1', () => { open -= 1 })
+  }
+  assert.equal(open, 4, 'only the newest streams of one chat stay')
+  assert.equal(bridge.unwatch('chat-1'), 4)
+  assert.equal(open, 0)
+})
+
 test('a chat that closed its tab is not given the mirror again by a poll', async () => {
   const { needsTab } = await import('../index.js')
   const bridge = new Bridge()
@@ -542,6 +567,15 @@ test('the typing tool can be told which field by its words', async () => {
   assert.ok(type.parameters.properties.field !== undefined)
   assert.ok(type.parameters.properties.ref !== undefined)
   assert.deepEqual(type.parameters.required, ['text'])
+})
+
+test('a picture can be one box, so a game loop does not pay for the whole screen', async () => {
+  const { sidecarTools } = await import('../tools.js?v=1')
+  const shot = sidecarTools({ state: () => ({}) }, { last: undefined }).find((tool) => tool.name === 'browser_shot')
+  const region = shot.parameters.properties.region
+  assert.equal(region.type, 'array')
+  assert.equal(region.items.type, 'number')
+  assert.match(shot.description, /region takes one box/)
 })
 
 test('a dropdown can be chosen by the words that name it', async () => {

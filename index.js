@@ -117,6 +117,11 @@ export class Bridge {
        is not on screen has no stream, so a push at ask time is lost; remembering
        the ask is what makes the mirror appear when the person returns. */
     this.wanted = { session: '', at: 0 }
+    /* Frame streams by chat. A close can arrive while a stream is still
+       attaching, so closing the mirror hangs up what that chat started: a
+       browser nobody watches is what lets it go to rest. */
+    /** @type {Map<string, Set<() => void>>} */
+    this.viewers = new Map()
     /* A running plugin keeps the note; a bare Bridge in a test does not. */
     this.persist = options.persist === true
     const kept = this.persist ? readMirror() : { owner: '', session: '', at: 0 }
@@ -209,6 +214,42 @@ export class Bridge {
   }
 
   /**
+   * Remember one open frame stream so the chat can hang it up later.
+   * @param {string} sessionId - chat drawing the mirror.
+   * @param {() => void} off - ends that one stream.
+   */
+  watch(sessionId, off) {
+    const id = this.canon(sessionId)
+    if (id === '' || typeof off !== 'function') return
+    const set = this.viewers.get(id) ?? new Set()
+    set.add(off)
+    /* A tab that reloads faster than its old socket closes must not pile up
+       streams: the oldest goes, which is the one no page is reading. */
+    while (set.size > 4) {
+      const oldest = set.values().next().value
+      set.delete(oldest)
+      try { oldest() } catch { /* a stream already gone is already gone */ }
+    }
+    this.viewers.set(id, set)
+  }
+
+  /**
+   * Hang up every frame stream one chat started.
+   * @param {string} sessionId - chat whose streams go away.
+   * @returns {number} how many streams were hanging up.
+   */
+  unwatch(sessionId) {
+    const id = this.canon(sessionId)
+    const set = this.viewers.get(id)
+    if (set === undefined) return 0
+    this.viewers.delete(id)
+    for (const off of set) {
+      try { off() } catch { /* a stream already gone is already gone */ }
+    }
+    return set.size
+  }
+
+  /**
    * Give the mirror up: the person closed the column, so the chat stops owning
    * it and no keepalive may ask for it again. Ownership is what the column
    * reads on reload, so it has to be dropped on disk as well as in memory.
@@ -219,6 +260,9 @@ export class Bridge {
     const id = this.canon(sessionId)
     if (id === '') return false
     const held = this.owner === id || this.wanted.session === id
+    /* The picture goes with the ask: a stream left attached after the column
+       closed keeps the browser awake with nobody looking at it. */
+    this.unwatch(id)
     this.wanted = { session: '', at: 0 }
     if (this.owner === id) this.owner = ''
     if (this.persist === true) writeMirror({ owner: this.owner, session: '', at: 0 })
@@ -229,6 +273,7 @@ export class Bridge {
   dispose() {
     for (const res of this.seats.values()) res.end()
     this.seats.clear()
+    for (const id of [...this.viewers.keys()]) this.unwatch(id)
   }
 }
 
@@ -447,17 +492,33 @@ export function apply(ctx) {
       res.socket?.setNoDelay?.(true)
       res.write('retry: 2000\n\n')
       /** @type {() => void} */
-      let detach = () => {}
-      const drop = () => detach()
+      let off = () => {}
+      /* The stream can end while `watch` is still waiting for a browser to come
+         up: that close has to be remembered, or the sink added a second later is
+         never taken away and the browser is kept awake with nobody looking. */
+      let shut = false
+      let done = false
+      const hang = () => {
+        if (done) return
+        done = true
+        try { off() } catch { /* a stream already gone is already gone */ }
+        try { res.end() } catch { /* the socket may be the thing that closed */ }
+      }
+      const drop = () => {
+        shut = true
+        hang()
+      }
       req.on('close', drop)
       res.on('error', drop)
       try {
-        detach = await sidecar.watch((frame) => {
+        off = await sidecar.watch((frame) => {
           /* A viewer that cannot keep up loses frames instead of making the
              page wait: the newest picture is the only one worth sending. */
           if (res.writableLength > 3 * 1024 * 1024) return
           res.write(`data: ${JSON.stringify(frame)}\n\n`)
         }, streaming)
+        if (shut) hang()
+        else if (watching !== '') bridge.watch(watching, hang)
         const info = await sidecar.state()
         /* The pane needs one address to offer back when this chat's own page
            went away; the state route answers the same question for the tab
@@ -725,6 +786,13 @@ export function apply(ctx) {
         } else {
           await sidecar.useTab(at, actor)
         }
+        /* Closing the last page is this chat saying it is done with the mirror.
+           An owner left behind is what the next poll reads as "put my tab back":
+           the pane reappeared right after the person closed it. */
+        if (body.op === 'close') {
+          const left = await sidecar.chatState(actor)
+          if (left?.alive !== true && bridge.forget(actor) && sidecar.watched() === 0) sidecar.touch(REST_MS)
+        }
         const tabs = await sidecar.windowsFor(actor)
         json(200, { ok: true, tabs })
       } catch (error) {
@@ -876,6 +944,7 @@ export function apply(ctx) {
         '先接着用已有的页：`browser_view`（拿编号控件与可见文字）→ `browser_click` / `browser_type` → 再 `browser_view` 直到出现要的结果；页面要等就重复读，不 sleep。`browser_open` 只用于没有页、要换新地址、或要明确刷新；同一个地址不要反复重开。',
         '页面很长、只想确认某句话/按钮在哪时用 `browser_find`，别整页读。要读长文（文章、文档、issue、论坛帖）用 `browser_read`：它回 Markdown，只花几十分之一的 token，链接可点；要动手点、填表才用 `browser_view` 拿编号。',
         '要保存页面样子用 `browser_shot`，它会给出 PNG 绝对路径；要交给人看的文件，把绝对路径写进回复。',
+        '游戏、canvas、Flash：画面自己画的地方，`browser_view` 和 `browser_read` 读不出里面是什么。先 `browser_prepare` 拿画面位置、帧率、按键是否到达和下一步；之后看 `browser_shot` 的图定位置，按坐标点、按住、按组合键，再拍一张看画面变了没有——变了就是这一步生效了。当年用 Flash 做的游戏用 `browser_open` 带 `flash:true` 在栏内跑，不装播放器、不开窗口。',
       ].join('\n'),
     }), 'dsh-inner-browser-use: system prompt section')
   }

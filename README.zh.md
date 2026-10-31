@@ -18,7 +18,7 @@ profile，不是产品自带的那个浏览页签：右栏放的是它的画面�
 | `browser_type` | 往焦点输入框输入文字，也可以先点一个编号控件。中文整段送进去。`submit: true` 回车提交。 |
 | `browser_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
 | `browser_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
-| `browser_shot` | 存一张原尺寸 PNG 到 `~/.dsh-inner-browser-use/screenshots`，返回路径。 |
+| `browser_shot` | 存一张 PNG 到 `~/.dsh/inner-browser-use/screenshots`，返回路径；`region: [x, y, w, h]` 只截一块（游戏、图表、看局部）。 |
 | `browser_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题，以及有几个右栏在看它。 |
 
 点、输入、按键之后的那一行会多一句结果：`· navigated to …`（换页了）、`· content changed`（页内有变化）、`· no visible change`（点了没动）、Flash 页则是 `· screen updated` / `· no frame change`；`read: true` 时不再多说。

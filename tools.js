@@ -2738,13 +2738,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     },
     {
       name: 'browser_shot', // ui-copy-ignore
-      description: 'Save a PNG of the sidecar browser into the session folder and return its absolute path; when the current model accepts images the picture comes back in the same call, so a captcha, a chart or a broken layout can be looked at instead of guessed. Default is the visible screen; full takes the whole page, ref takes one control.',
+      description: 'Save a PNG of the sidecar browser into the session folder and return its absolute path; when the current model accepts images the picture comes back in the same call, so a captcha, a chart or a broken layout can be looked at instead of guessed. Default is the visible screen; full takes the whole page, ref takes one control, region takes one box of it.',
       parameters: {
         type: 'object', // ui-copy-ignore
         properties: {
           name: { type: 'string', description: 'File name without extension.' },
           full: { type: 'boolean', description: 'The whole page, not just the screen.' },
           ref: { type: 'integer', description: 'One control from browser_view.' },
+          region: { type: 'array', items: { type: 'number' }, description: 'One box instead of the whole screen: [x, y, width, height] in page pixels, the same numbers browser_prepare and browser_find report.' },
           scale: { type: 'integer', description: 'Pixel ratio. Default 1; 2 is sharper and heavier.' },
         },
         additionalProperties: false,
@@ -2766,6 +2767,17 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const said = await withRead(async (page) => {
         const scale = Math.max(1, Math.min(3, Number(args?.scale ?? 1)))
         let clip = undefined
+        /* A game or a chart does not need the whole screen: one box costs a
+           fraction of the picture, and a picture is billed by area. */
+        if (args?.ref === undefined && Array.isArray(args?.region) && args.region.length === 4) {
+          const box = args.region.map((part) => Number(part))
+          clip = {
+            x: Math.max(0, Math.round(Number.isFinite(box[0]) ? box[0] : 0)),
+            y: Math.max(0, Math.round(Number.isFinite(box[1]) ? box[1] : 0)),
+            width: Math.max(8, Math.min(4000, Math.round(Number.isFinite(box[2]) ? box[2] : 0) || 8)),
+            height: Math.max(8, Math.min(4000, Math.round(Number.isFinite(box[3]) ? box[3] : 0) || 8)),
+          }
+        }
         if (args?.ref !== undefined) {
           const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return spot.why ?? REF_GONE

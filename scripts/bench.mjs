@@ -103,7 +103,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
+const LIMITS = { 'shot-region': 200, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -364,6 +364,14 @@ async function main() {
   const shotAt = Date.now()
   const shot = await sidecar.page.screenshot()
   emit('shot', { ms: Date.now() - shotAt, kb: Math.round(String(shot).length / 1024 / 0.75) })
+  /* A picture is billed by area, so a game loop that looks at one box should
+     pay for that box: the same frame, cropped, is the number this keeps honest. */
+  const cropAt = Date.now()
+  const crop = await sidecar.page.shot({ rect: { x: 0, y: 0, width: 640, height: 360 } })
+  const cropKb = Math.round(String(crop).length / 1024 / 0.75)
+  const cropMs = Date.now() - cropAt
+  emit('shot-region', { ms: cropMs, kb: cropKb, savedPct: Math.round((1 - cropKb / Math.max(1, Math.round(String(shot).length / 1024 / 0.75))) * 100) })
+  budget('shot-region', cropMs)
   /* A hand on the mirror: the refusal is one in-process check (no browser
      roundtrip), a read still goes through, and resume costs what a click costs. */
   const holdState = { last: undefined }
