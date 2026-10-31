@@ -20,6 +20,7 @@ live picture of that browser, and your own cursor keeps working on the picture.
 | `browser_key` | Presses one key: Enter, Tab, Escape, Backspace, Delete, Insert, arrows, Home, End, PageUp, PageDown, F1-F12, the numeric keypad, letters, digits, punctuation and every shifted symbol, plus ContextMenu, CapsLock, PrintScreen and media keys. `Ctrl`/`Alt`/`Shift`/`Meta`/`Mod` modifiers, chords with `+`, and `Ctrl+C/X/V/A/Z/Y` run the real editing commands. |
 | `browser_scroll` | Scrolls the wheel at the centre of the page, or at `x`/`y`. `dy: 600` is about a screen down. |
 | `browser_shot` | Saves a full-size PNG into `~/.dsh-inner-browser-use/screenshots` and returns the path. |
+| `browser_media` | Lists the video and sound the page already fetched, with sizes; `save: <row>` or part of the address keeps one. A stream is followed to its pieces and joined, so nothing has to be installed. |
 | `browser_state` | Reports whether the browser runs, which profile it uses, its address and title, and how many columns are showing it. |
 
 `browser_read` on the same page is the words only, in Markdown (measured: 4,520

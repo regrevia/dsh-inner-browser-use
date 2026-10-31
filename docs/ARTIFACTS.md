@@ -8,7 +8,7 @@
 
 - **项目**：会话工作目录的文件夹名，加路径哈希前 6 位，例如 `dsh-inner-browser-use-a1b2c3`。同名文件夹、不同路径不会混。
 - **会话**：会话 id 去掉 `session-` 后的前 8 位，例如 `72557d6e`。同一项目里两个会话各存各的。
-- **种类**：`shots/` 是 `browser_shot` 的截图，`pictures/` 是 `browser_grab` 抓的图，`pdf/` 是 `browser_pdf` 打印的文档。
+- **种类**：`shots/` 是 `browser_shot` 的截图，`pictures/` 是 `browser_grab` 抓的图，`pdf/` 是 `browser_pdf` 打印的文档，`media/` 是 `browser_media` 存下的视频、音频和流。
 
 文件名默认带时间戳（`shot-20261028-124500.png`），给了 `name` 就用它；名字里的分隔符、连续点、开头点都会被去掉，跳不出这个目录。
 

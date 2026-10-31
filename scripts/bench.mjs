@@ -9,6 +9,7 @@
  * Every number is one JSON line, so a run can be diffed against the last.
  */
 import { createServer } from 'node:http'
+import { statSync } from 'node:fs'
 import { Sidecar } from '../sidecar.js?v=1'
 import { readPage, renderPage, covering, locate, locateFirst } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
@@ -103,7 +104,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -585,6 +586,54 @@ async function main() {
     tokens: Math.round(sessionChars / 3.4),
   })
   budget('do-session', Math.round(sessionMs / 20))
+  /* Media the page asked for: the sniff is the network log it already keeps,
+     and a stream is the playlist's pieces joined — no second crawl, no spawn. */
+  const mediaRoutes = {
+    '/': '<!doctype html><title>media</title><video src="/movie.mp4" width="320"></video><audio src="/song.mp3"></audio><script>for (const one of ["/movie.mp4", "/song.mp3", "/stream/master.m3u8"]) fetch(one).catch(() => {})</script>',
+    '/movie.mp4': 'ftypisom-movie-bytes',
+    '/song.mp3': 'ID3-song-bytes',
+    '/stream/master.m3u8': '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=1280x720\n720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1920x1080\n1080.m3u8\n',
+    '/stream/720.m3u8': '#EXTM3U\n#EXT-X-VERSION:3\n' + [1, 2, 3, 4, 5, 6].map((n) => `#EXTINF:4.0,\nseg-${String(n)}.ts\n`).join(''),
+    '/stream/1080.m3u8': '#EXTM3U\n#EXT-X-VERSION:3\n' + [1, 2, 3, 4, 5, 6].map((n) => `#EXTINF:4.0,\nseg-${String(n)}.ts\n`).join(''),
+    '/stream/seg-': 'ts-segment-bytes',
+  }
+  const mediaServer = createServer((req, res) => {
+    const path = String(req.url ?? '/')
+    const key = path.startsWith('/stream/seg-') ? '/stream/seg-' : path
+    const body = mediaRoutes[key]
+    if (body === undefined) { res.writeHead(404); res.end('no'); return }
+    const type = path === '/' ? 'text/html; charset=utf-8' : path.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : path.endsWith('.mp4') ? 'video/mp4' : path.endsWith('.mp3') ? 'audio/mpeg' : 'video/mp2t'
+    res.writeHead(200, { 'content-type': type })
+    res.end(body)
+  })
+  await new Promise((ready) => mediaServer.listen(0, '127.0.0.1', ready))
+  const mediaAddress = mediaServer.address()
+  const mediaUrl = `http://127.0.0.1:${String(mediaAddress.port)}/`
+  await sidecar.page.navigate(mediaUrl)
+  const sniffAt = Date.now()
+  let sniffed = []
+  const sniffDeadline = Date.now() + 4000
+  while (Date.now() < sniffDeadline) {
+    sniffed = sidecar.page.mediaList()
+    if (sniffed.length >= 3) break
+    await wait(30)
+  }
+  const sniffMs = Date.now() - sniffAt
+  emit('media-sniff', { ms: sniffMs, found: sniffed.length, kinds: sniffed.map((each) => each.kind).join(',') })
+  budget('media-sniff', sniffMs)
+  const mediaTools = sidecarTools(sidecar, { last: undefined })
+  const mediaTool = mediaTools.find((tool) => tool.name === 'browser_media')
+  const listed = await mediaTool.execute({ find: 'm3u8' })
+  const streamRow = String(listed?.text ?? '').split('\n')[0]
+  const saveAt = Date.now()
+  const saved = await mediaTool.execute({ save: 'master.m3u8', name: 'bench-stream' })
+  const saveMs = Date.now() - saveAt
+  const savedPath = String(saved?.text ?? '').split(' — ')[0]
+  const savedBytes = (() => { try { return statSync(savedPath).size } catch { return 0 } })()
+  emit('media-save', { ms: saveMs, bytes: savedBytes, listedOneLine: streamRow.length, said: String(saved?.text ?? '').slice(0, 120) })
+  budget('media-save', saveMs)
+  mediaServer.close()
+
   /* A crash costs one detection window plus a fresh tab, measured through the
      tool path the model actually takes. */
   await sidecar.page.navigate(servers.dense.url)

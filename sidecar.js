@@ -11,6 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readyFlash } from './runtime/flash-setup.mjs'
+import { isMedia, kindOf } from './media.js?m=1'
 
 /**
  * Windows keeps a browser under Program Files (machine-wide) or LocalAppData
@@ -575,6 +576,9 @@ export class SidecarPage {
        be understood without a screenshot or a retry. */
     this.network = []
     this.requests = new Map()
+    /* The movie a page plays is one of the requests it already made, so the
+       file behind it costs no second look: the network log is the sniff. */
+    this.media = new Map()
     /* A PDF is a document the mirror cannot draw: Chrome leaves the page blank
        and a model looking at it would think the address was empty. What it is
        and where the bytes went is state, not a guess. */
@@ -713,6 +717,7 @@ export class SidecarPage {
          it navigates the same tab to its own page, and the PDF is still what
          the tab shows. */
       if (String(params.type ?? '') === 'Document' && !String(request.url ?? '').startsWith('chrome-extension://')) this.pdf = null
+      if (String(params.type ?? '') === 'Document' && !String(request.url ?? '').startsWith('chrome-extension://')) this.media = new Map()
       this.requests.set(id, {
         method: String(request.method ?? 'GET'),
         url: String(request.url ?? '').slice(0, 300), // ui-copy-ignore
@@ -732,6 +737,8 @@ export class SidecarPage {
           bytes: Number(params.response?.encodedDataLength ?? 0),
         }
       }
+      if (known !== undefined) known.status = Number(params.response?.status ?? 0)
+      this.noteMedia(params)
       if (known === undefined) return
       known.status = Number(params.response?.status ?? 0)
       this.troubleSeq += 1
@@ -747,6 +754,43 @@ export class SidecarPage {
       this.failed.push({ error: String(params.errorText ?? ''), type: String(params.type ?? ''), seq: this.troubleSeq })
       if (this.failed.length > 100) this.failed.splice(0, 25)
     }
+  }
+
+  /**
+   * Keep the requests that hold a movie or a song, so asking "what can be saved
+   * here" is a memory read instead of a network sweep.
+   * @param {{requestId?: string, type?: string, response?: object}} params - a Network.responseReceived payload.
+   * @returns {void} nothing.
+   */
+  noteMedia(params) {
+    const response = params?.response ?? {}
+    const url = String(response.url ?? '')
+    const mime = String(response.mimeType ?? '')
+    if (!isMedia(url, mime, String(params?.type ?? ''))) return
+    const id = String(params?.requestId ?? '')
+    if (id === '') return
+    const headers = response.headers ?? {}
+    const length = Number(headers['content-length'] ?? headers['Content-Length'] ?? response.encodedDataLength ?? 0)
+    const existing = this.media.get(id)
+    this.media.set(id, {
+      url,
+      mime,
+      kind: kindOf(url, mime),
+      bytes: Number.isFinite(length) ? length : 0,
+      status: Number(response.status ?? 0),
+      seq: existing?.seq ?? this.troubleSeq,
+    })
+    if (this.media.size > 60) this.media.delete(this.media.keys().next().value)
+  }
+
+  /**
+   * What on this page is worth saving, newest first.
+   * @returns {Array<{url: string, mime: string, kind: string, bytes: number, status: number}>} the media.
+   */
+  mediaList() {
+    const byUrl = new Map()
+    for (const each of this.media.values()) byUrl.set(each.url, each)
+    return [...byUrl.values()].sort((left, right) => right.seq - left.seq)
   }
 
   /**

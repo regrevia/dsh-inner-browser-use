@@ -14,9 +14,28 @@ import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
-import { VIEW } from './sidecar.js?v=1'
+import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
+import { planOf, gather, sizeText } from './media.js?m=1'
 import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
+
+/**
+ * What a saved file should be called, from the address when it says so and the
+ * type when it does not.
+ * @param {string} url - the media's address.
+ * @param {string} [mime] - what the server called it.
+ * @returns {string} an extension with the dot.
+ */
+function extensionOf(url, mime = '') {
+  const known = /\.(mp4|m4v|webm|mkv|mov|flv|ts|m4s|mp3|m4a|aac|ogg|opus|wav)(\?|#|$)/i.exec(String(url ?? ''))
+  if (known !== null) return `.${known[1].toLowerCase()}`
+  const said = String(mime ?? '').toLowerCase()
+  if (said.includes('mp4') || said.includes('m4v')) return '.mp4'
+  if (said.includes('webm')) return '.webm'
+  if (said.includes('mpegurl')) return '.ts'
+  if (said.startsWith('audio/')) return '.m4a'
+  return '.bin'
+}
 
 /** Which chat the running call belongs to, so each gets its own tab. */
 export const sessionScope = new AsyncLocalStorage()
@@ -3310,6 +3329,91 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           return `closed tab ${index} · ${gone}`
         }
         throw new Error(`sidecar: unknown action ${action}`)
+      }),
+    },
+
+    {
+      name: 'browser_media', // ui-copy-ignore
+      description: 'What this page played, and how to keep it: lists the video and sound requests the page already made, with their sizes; save one by row number or part of its address. A stream playlist is followed to its pieces and joined, so nothing has to be installed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          find: { type: 'string', description: 'Only rows whose address contains this.' },
+          save: { type: ['integer', 'string'], description: 'Row number from the list, or part of its address.' },
+          height: { type: 'number', description: 'Tallest version to take when one address offers several (default 1080).' },
+          name: { type: 'string', description: 'File name without extension.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 180_000,
+      isConcurrencySafe: () => false,
+      /** @returns {Promise<{text: string}>} the list, or where the file went. */
+      execute: async (args) => withRawPage(async (page) => {
+        const all = typeof page.mediaList === 'function' ? page.mediaList() : []
+        const needle = String(args?.find ?? '').toLowerCase()
+        const rows = needle === '' ? all : all.filter((each) => `${String(each.url)} ${String(each.mime)}`.toLowerCase().includes(needle))
+        const save = args?.save
+        if (save === undefined || save === null || save === '') {
+          if (rows.length === 0) {
+            return all.length === 0
+              ? 'Nothing to save yet: play the video or sound once, then ask again — the request it makes is the file.'
+              : `Nothing matches ${String(args?.find)}; this page has ${String(all.length)} other media.`
+          }
+          const lines = rows.slice(0, 12).map((each, at) => `${String(at + 1)}. ${String(each.kind)} ${sizeText(each.bytes)} · ${String(each.url).slice(0, 160)}`)
+          if (rows.length > 12) lines.push(`… ${String(rows.length - 12)} more; narrow it with find`)
+          lines.push('save: <row> keeps one')
+          return lines.join('\n')
+        }
+        const wanted = typeof save === 'number' ? rows[save - 1] : rows.find((each) => String(each.url).includes(String(save)))
+        if (wanted === undefined) {
+          return `No media row ${String(save)}. ${rows.length === 0 ? 'Nothing to save yet.' : 'Call browser_media without save to see the rows.'}`
+        }
+        const cookieAnswer = await page.cdp.send('Network.getCookies', { urls: [String(wanted.url)] }).catch(() => ({ cookies: [] }))
+        const cookie = (cookieAnswer?.cookies ?? []).map((each) => `${String(each.name)}=${String(each.value)}`).join('; ')
+        const headers = { 'user-agent': DESKTOP_UA, accept: '*/*' }
+        if (cookie !== '') headers.cookie = cookie
+        if (/^https?:/i.test(String(page.url ?? ''))) headers.referer = String(page.url)
+        const started = Date.now()
+        const getBinary = async (address) => {
+          const answer = await fetch(address, { headers, redirect: 'follow', signal: AbortSignal.timeout(60_000) })
+          if (!answer.ok) throw new Error(`${String(answer.status)} for ${address.slice(0, 120)}`)
+          return Buffer.from(await answer.arrayBuffer())
+        }
+        const cap = Number(args?.height ?? 1080)
+        const wantedSize = cap > 0 ? { height: cap } : {}
+        let parts
+        let ext = extensionOf(wanted.url, wanted.mime)
+        try {
+          let body = await getBinary(String(wanted.url))
+          parts = [body]
+          const playlist = /\.m3u8(\?|#|$)/i.test(String(wanted.url)) || /mpegurl/i.test(String(wanted.mime ?? ''))
+          if (playlist) {
+            let plan = null
+            let from = String(wanted.url)
+            for (let hop = 0; hop < 2; hop += 1) {
+              plan = planOf(from, body.toString('utf8'), wantedSize)
+              if (plan.kind !== 'hls' || plan.variant === null) break
+              from = plan.variant.url
+              body = await getBinary(from)
+            }
+            if (plan.encrypted === true) return 'That stream is encrypted: the browser can play it, but the pieces are not a file to keep.'
+            if (plan.parts.length === 0) return 'That playlist names no pieces. Play the movie first, then ask again.'
+            const init = plan.init === '' ? [] : [await getBinary(plan.init)]
+            parts = [...init, ...(await gather(plan.parts, getBinary, 6))]
+            ext = plan.init !== '' ? '.mp4' : (/\.ts(\?|#|$)/i.test(plan.parts[0]) ? '.ts' : '.m4s')
+          }
+        } catch (error) {
+          return `Could not fetch it: ${String(error?.message ?? error)}`
+        }
+        const body = Buffer.concat(parts)
+        const dir = artifactDir('media')
+        await mkdir(dir, { recursive: true })
+        const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+        const safe = String(args?.name ?? '').replace(/[^\w.-]/g, '').replace(/\.{2,}/g, '.').replace(/^\.+/, '')
+        const file = join(dir, `${safe === '' ? `media-${stamp}` : safe}${ext}`)
+        await writeFile(file, body)
+        return `${file} — ${sizeText(body.length)} in ${String(Date.now() - started)} ms${parts.length > 1 ? ` (${String(parts.length)} parts joined)` : ''}`
       }),
     },
 

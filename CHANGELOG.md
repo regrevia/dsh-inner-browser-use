@@ -1,3 +1,14 @@
+## 0.36.0
+
+页面播过的视频和声音，直接就能留下——不装 yt-dlp，不多发一次请求。
+
+- 新增 `browser_media`：列出页面已经请求过的视频、音频和流（带大小、去重、新的在前），`save: <行号>` 或地址片段存一个。想留下的东西本来就在页面的网络记录里，所以「嗅探」没有额外代价：bench 里页面加载完的那一刻就已经有 3 条（video / audio / stream），`media-sniff` 0 ms。
+- 流会自己拼好：master 播放列表按 `height` 选最高不超过的一档，media 播放列表里的片段按顺序并发取回（宽度 6）拼成一个文件，`init` 段在最前面；AES-128 加密的明确拒绝，不假装成功。bench `media-save`：master → 1080 → 6 段，5 ms，96 B，报 `6 parts joined`。
+- 存的时候带页面自己的 cookie、UA 和 referer，登录后才给的文件照样拿得到；落在 `~/.dsh-inner-browser-use/artifacts/<项目>/<会话>/media/`，和截图、图片、PDF 同一套规则。
+- 列表只回一行一条（bench 首行 59 字符）：行号在前，地址截到 160 字符，超过 12 条提示用 `find` 收窄。工具面没有变宽——`browser_state` 不加字段，嗅探与保存都在同一个工具里。
+- Flash 是开关：默认关，`browser_open` 带 `flash:true` 才装并起那条路径，`flash:false` 回到普通 Chrome；两条路都只把画面送进本会话右栏，不开窗、不进 Dock、不进菜单栏。
+- 新增 `media.js`（纯解析，无 IO）和 8 个测试：master 最优先、变体绝对化、`pickVariant` 上限与回退、片段顺序与 `init`、加密标记、两种 `planOf`、`isMedia` 正反表、`gather` 保序且并发不超 6；另有 1 条页面级测试确认「同一地址只记一次、新的在前」。全套 `242 tests / 240 pass / 0 fail`，bench `budget checks 16 ok`。
+
 ## 0.35.3
 
 - 按文字点击不再一个编号问一次页面：一次读过的十几个编号被整页重绘作废后，旧代码挨个 `Runtime.evaluate` 确认，现在一次往返就问清「哪一个还在」。bench `ref-batch`（12 个编号）6 ms → 1 ms，−83%。

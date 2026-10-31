@@ -944,7 +944,8 @@ export function apply(ctx) {
         '先接着用已有的页：`browser_view`（拿编号控件与可见文字）→ `browser_click` / `browser_type` → 再 `browser_view` 直到出现要的结果；页面要等就重复读，不 sleep。`browser_open` 只用于没有页、要换新地址、或要明确刷新；同一个地址不要反复重开。',
         '页面很长、只想确认某句话/按钮在哪时用 `browser_find`，别整页读。要读长文（文章、文档、issue、论坛帖）用 `browser_read`：它回 Markdown，只花几十分之一的 token，链接可点；要动手点、填表才用 `browser_view` 拿编号。',
         '要保存页面样子用 `browser_shot`，它会给出 PNG 绝对路径；要交给人看的文件，把绝对路径写进回复。',
-        '游戏、canvas、Flash：画面自己画的地方，`browser_view` 和 `browser_read` 读不出里面是什么。先 `browser_prepare` 拿画面位置、帧率、按键是否到达和下一步；之后看 `browser_shot` 的图定位置，按坐标点、按住、按组合键，再拍一张看画面变了没有——变了就是这一步生效了。当年用 Flash 做的游戏用 `browser_open` 带 `flash:true` 在栏内跑，不装播放器、不开窗口。',
+        '页面放视频或音乐、人想留下它时用 `browser_media`：它列的是页面自己已经请求过的媒体（带大小），用行号或地址片段存一个；视频是流的话会顺着播放列表把片段取回拼成整段，不用装 yt-dlp 或 ffmpeg。先让页面播一下再列，播放请求才是文件。',
+        '游戏、canvas、Flash：画面自己画的地方，`browser_view` 和 `browser_read` 读不出里面是什么。先 `browser_prepare` 拿画面位置、帧率、按键是否到达和下一步；之后看 `browser_shot` 的图定位置，按坐标点、按住、按组合键，再拍一张看画面变了没有——变了就是这一步生效了。当年用 Flash 做的游戏用 `browser_open` 带 `flash:true` 在栏内跑，不装播放器、不开窗口；Flash 默认关，`flash:true` 开、`flash:false` 回到普通 Chrome，两边都只在本会话右栏。',
       ].join('\n'),
     }), 'dsh-inner-browser-use: system prompt section')
   }
