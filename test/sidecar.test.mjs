@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, nextQuality, noteDeath, ownsBrowser, rootDir } from '../sidecar.js'
-import { findWords } from '../tools.js'
+import { findWords, nearestByWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
  * anything of its own: these tests are about what the page tells its viewers. */
@@ -457,6 +457,34 @@ test('a control from the last read is found without reading the page again', asy
   assert.equal(hit.ref, 7)
   assert.equal(hit.x, 12)
   assert.deepEqual(looks, ['Runtime.evaluate'], 'one position check, no page read')
+})
+
+test('a dozen numbers left over from a read cost one page round trip', async () => {
+  const looks = []
+  const page = {
+    cdp: {
+      send: async (method, params) => {
+        looks.push(params.expression ?? method)
+        return { result: { value: JSON.stringify({ gone: false, ref: 12, x: 40, y: 50, name: 'Add to cart' }) } }
+      },
+    },
+  }
+  const known = Array.from({ length: 12 }, (_, i) => ({ ref: 10 + i, name: 'Add to cart', view: true, kind: 'button' }))
+  const hit = await findWords(page, 'add to cart', known)
+  assert.equal(hit.ref, 12)
+  assert.equal(looks.length, 1, `the page was asked ${String(looks.length)} times`)
+  assert.ok(looks[0].includes('10,11,12'), 'the one call carries every number worth trying')
+})
+
+test('a paraphrase on a redrawn button is accepted only when it stands alone', () => {
+  const cart = [{ ref: 3, name: 'Place order' }, { ref: 4, name: 'Save for later' }]
+  const near = nearestByWords(cart, 'submit order')
+  assert.equal(near?.ref, 3, 'one shared significant word with nothing competing')
+  assert.equal(nearestByWords(cart, 'delete account'), null, 'nothing in common is no answer')
+  assert.equal(nearestByWords([{ ref: 1, name: 'Sign in' }, { ref: 2, name: 'Sign in with Google' }], 'sign in google')?.ref, 2, 'the label that covers more of the words wins')
+  assert.equal(nearestByWords([{ ref: 1, name: 'Save draft' }, { ref: 2, name: 'Save draft now' }], 'save draft'), null, 'two answers is no answer')
+  assert.equal(nearestByWords([{ ref: 1, name: 'Pay now' }], 'pay')?.ref, 1, 'a short label still matches')
+  assert.equal(nearestByWords([], 'pay now'), null)
 })
 
 test('a moving Flash page is polled faster than a still one', async () => {

@@ -10,7 +10,7 @@
  */
 import { createServer } from 'node:http'
 import { Sidecar } from '../sidecar.js?v=1'
-import { readPage, renderPage, covering } from '../read.js?v=1'
+import { readPage, renderPage, covering, locate, locateFirst } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
 import { sidecarTools } from '../tools.js?v=1'
 
@@ -103,7 +103,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -262,6 +262,78 @@ async function main() {
     times.sort((left, right) => left - right)
     emit('cover-click', { page: label, medianMs: times[1], runs: times.length, cleared })
     if (label !== 'guarded') budget('cover-click', times[1])
+    server.close()
+  }
+
+  /* Clicking by the words on a button, with the numbers from a read already in
+     hand: the page is asked once which of them it still has, instead of once
+     per number. */
+  {
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('<!doctype html><body>' + Array.from({ length: 12 }, (_, i) => '<button>Row ' + String(i) + '</button>').join('') + '<button onclick="document.title=\'hit\'">Target</button>')
+    })
+    await new Promise((ready) => server.listen(0, '127.0.0.1', ready))
+    const url = `http://127.0.0.1:${String(server.address().port)}/`
+    const refs = { last: undefined }
+    const tools = sidecarTools(sidecar, refs)
+    const viewTool = tools.find((tool) => tool.name === 'browser_view')
+    const saidTool = tools.find((tool) => tool.name === 'browser_click')
+    const times = []
+    let hit = false
+    for (let i = 0; i < 3; i += 1) {
+      await sidecar.page.navigate(url)
+      await wait(180)
+      await viewTool.execute({})
+      const at = Date.now()
+      const said = String((await saidTool.execute({ text: 'Target' })).text)
+      times.push(Date.now() - at)
+      hit = !said.includes('No control says')
+    }
+    times.sort((left, right) => left - right)
+    emit('find-text', { medianMs: times[1], runs: times.length, hit })
+    if (!hit) budget('find-text', 99_999)
+    else budget('find-text', times[1])
+    /* The same numbers, asked for one at a time: what a control that redraws
+       everything used to cost before the page was asked once. */
+    await sidecar.page.navigate(url)
+    await wait(180)
+    const read = await readPage(sidecar.page, { mode: 'text', maxChars: 3000 })
+    const many = read.controls.map((control) => Number(control.ref)).filter((ref) => ref < 900_000).slice(0, 12)
+    let oneShot = ''
+    if (many.length >= 4) {
+      const byRefAt = Date.now()
+      for (const ref of many) await locate(sidecar.page, ref)
+      const byRefMs = Date.now() - byRefAt
+      const atOnce = Date.now()
+      const spot = await locateFirst(sidecar.page, many, 'row')
+      const atOnceMs = Date.now() - atOnce
+      const found = spot?.gone !== true
+      oneShot = `${String(many.length)} numbers: ${String(byRefMs)} ms one by one, ${String(atOnceMs)} ms at once`
+      emit('ref-batch', { refs: many.length, sequentialMs: byRefMs, togetherMs: atOnceMs, found })
+      if (!found) budget('ref-batch', 99_999)
+    }
+    emit('find-text-detail', { note: oneShot })
+    server.close()
+  }
+
+  /* A button the page redrew with different words still answers to what the
+     person called it: "submit order" reaches "Place order". */
+  {
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('<!doctype html><body><button>Continue shopping</button><button>Place order</button></body>')
+    })
+    await new Promise((ready) => server.listen(0, '127.0.0.1', ready))
+    await sidecar.page.navigate(`http://127.0.0.1:${String(server.address().port)}/`)
+    await wait(180)
+    const tools = sidecarTools(sidecar, { last: undefined })
+    await tools.find((tool) => tool.name === 'browser_view').execute({})
+    const at = Date.now()
+    const said = String((await tools.find((tool) => tool.name === 'browser_click').execute({ text: 'submit order' })).text)
+    const near = !said.includes('No control says') && said.includes('Place order')
+    emit('find-near', { ms: Date.now() - at, reached: near })
+    if (!near) budget('find-near', 99_999)
     server.close()
   }
 

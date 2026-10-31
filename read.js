@@ -433,6 +433,66 @@ export function resolve(ref) {
 }
 
 /**
+ * The first of several controls that still says these words, found in one
+ * evaluate. A caller hunts through a dozen numbers after a redraw: one page
+ * round trip answers "which of them is still there", instead of a dozen.
+ * @param {number[]} refs - numbers to try, in the order a person would.
+ * @param {string} wanted - the words, compared with the spaces taken out.
+ * @returns {string} an expression that answers with the first that is live.
+ */
+export function resolveFirst(refs, wanted) {
+  const order = refs.map((ref) => Number(ref)).filter((ref) => Number.isFinite(ref))
+  return `(() => {
+  const reg = window.${REGISTRY}
+  if (!reg) return JSON.stringify({ gone: true })
+  const squeeze = (text) => String(text).toLowerCase().replace(/\\s+/g, '')
+  const want = ${JSON.stringify(String(wanted))}
+  const spotOf = (el) => {
+    const b = el.getBoundingClientRect()
+    if (b.width < 2 || b.height < 2) return null
+    const clipped = () => {
+      const me = el.getBoundingClientRect()
+      for (let up = el.parentElement; up; up = up.parentElement) {
+        const css = getComputedStyle(up)
+        if (!/auto|scroll|hidden|clip/.test(css.overflowX + ' ' + css.overflowY)) continue
+        const box = up.getBoundingClientRect()
+        if (me.top < box.top - 1 || me.bottom > box.bottom + 1 || me.left < box.left - 1 || me.right > box.right + 1) return true
+      }
+      return false
+    }
+    if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center' })
+    const after = el.getBoundingClientRect()
+    return { x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2) }
+  }
+  for (const ref of ${JSON.stringify(order)}) {
+    const hit = reg.find(ref)
+    if (!hit) continue
+    const el = hit.el
+    const name = String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80)
+    if (want !== '' && !squeeze(name).includes(want)) continue
+    const spot = spotOf(el)
+    if (spot === null) continue
+    return JSON.stringify({ gone: false, ref, name, x: spot.x, y: spot.y })
+  }
+  return JSON.stringify({ gone: true })
+})()`
+}
+
+/**
+ * Ask the page which of these numbers still carries the words.
+ * @param {any} page - sidecar page.
+ * @param {number[]} refs - numbers to try, in order.
+ * @param {string} wanted - the words said by the caller.
+ * @returns {Promise<{gone: boolean, ref?: number, name?: string, x?: number, y?: number}>} the first live one.
+ */
+export async function locateFirst(page, refs, wanted) {
+  const said = await evaluateIn(page, resolveFirst(refs, wanted)).catch(() => undefined)
+  let spot = { gone: true }
+  try { spot = JSON.parse(String(said ?? '{"gone":true}')) } catch (error) { spot = { gone: true } }
+  return spot
+}
+
+/**
  * Click the control the page itself registered, instead of moving the mouse to
  * it. A page whose own handlers want a click, or a control an overlay covers,
  * is reachable this way; a page that watches real pointer movement is not.
@@ -685,7 +745,7 @@ export function covering(ref) {
 }
 
 /** Where refs of controls inside iframes start. Main-frame refs stay small. */
-const FRAME_BASE = 900_000
+export const FRAME_BASE = 900_000
 
 /** Room for the refs of one frame between FRAME_BASE steps. */
 const FRAME_SLOT = 100_000

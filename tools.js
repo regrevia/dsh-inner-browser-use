@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW } from './sidecar.js?v=1'
-import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -1050,6 +1050,49 @@ async function until(page, expression, timeout) {
  * @returns {Promise<string>} a compact report.
  */
 /** The first control whose words match, scrolled into view. Text can beat a number: it costs no read. */
+/** Words a label can lose without changing what it asks for. */
+const SMALL_WORDS = new Set(['a', 'an', 'the', 'to', 'of', 'and', 'or', 'in', 'on', 'at', 'for', 'with', 'my', 'your', 'please', 'click', 'tap', 'button', 'btn', 'link', 'now'])
+
+/**
+ * The significant words of a label, lowercased.
+ * @param {unknown} text - a label.
+ * @returns {string[]} words worth comparing.
+ */
+export function tokensOf(text) {
+  return String(text ?? '').toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/).filter((word) => word !== '' && !SMALL_WORDS.has(word))
+}
+
+/**
+ * The one label that means what the caller said when no label repeats it.
+ * Only an unambiguous winner is offered, so a paraphrase cannot silently click
+ * a different control than the one asked for.
+ * @param {Array<{ref: number, name?: string, view?: boolean}>} controls - controls from a read.
+ * @param {string} words - what the caller asked for.
+ * @returns {any} the best control, or null when nothing stands out.
+ */
+export function nearestByWords(controls, words) {
+  const want = tokensOf(words)
+  if (want.length === 0 || !Array.isArray(controls)) return null
+  const scored = []
+  for (const control of controls) {
+    if (control?.view === false) continue
+    const have = new Set(tokensOf(control?.name))
+    if (have.size === 0) continue
+    let shared = 0
+    for (const word of want) if (have.has(word)) shared += 1
+    const cover = shared / want.length
+    if (shared === 0 || cover < 0.5) continue
+    scored.push({ control, score: cover * 0.7 + (shared / have.size) * 0.3 })
+  }
+  if (scored.length === 0) return null
+  scored.sort((a, b) => b.score - a.score)
+  const best = scored[0]
+  const second = scored[1]
+  if (second !== undefined && second.score > best.score - 0.05) return null
+  if (String(best.control.name ?? '').length > String(words).length * 3 + 12) return null
+  return { ...best.control, ref: Number(best.control.ref) }
+}
+
 export async function findWords(page, words, known) {
   /* The words a caller used usually came from a read that already happened, so
      look among those numbers first: one position check is a single evaluate,
@@ -1066,7 +1109,19 @@ export async function findWords(page, words, known) {
      end is only the fallback. */
   const firstInOrder = remembered.filter((control) => control.view !== false).sort((a, b) => Number(a.ref) - Number(b.ref))
   const nearEnd = remembered.slice(-8).reverse()
-  for (const control of [...firstInOrder.slice(0, 4), ...nearEnd]) {
+  const order = [...firstInOrder.slice(0, 4), ...nearEnd]
+  /* One round trip answers which of these the page still has: a dozen numbers
+     left over from a read that a redraw invalidated used to cost a dozen
+     checks. Numbers inside a frame keep the per-number route below. */
+  const plain = order.map((control) => Number(control.ref)).filter((ref) => Number.isFinite(ref) && ref < FRAME_BASE)
+  if (plain.length > 0) {
+    const any = await locateFirst(page, plain, wantedFirst)
+    if (any?.gone !== true && Number.isFinite(Number(any?.x))) {
+      const byRef = order.find((control) => Number(control.ref) === Number(any.ref)) ?? { ref: Number(any.ref) }
+      return { ...byRef, ref: Number(any.ref), name: String(any.name ?? byRef.name ?? ''), x: Number(any.x), y: Number(any.y) }
+    }
+  }
+  for (const control of order.filter((control) => Number(control.ref) >= FRAME_BASE)) {
     const spot = await locate(page, Number(control.ref))
     if (spot.gone === true) continue
     const name = String(spot.name ?? control.name ?? '')
@@ -1080,7 +1135,17 @@ export async function findWords(page, words, known) {
   const squeeze = (text) => String(text).toLowerCase().replace(/\s+/g, '')
   const wanted = squeeze(words)
   const found = shown.find((control) => squeeze(control.name) === wanted) ?? shown.find((control) => squeeze(control.name).includes(wanted))
-  if (found === undefined) return null
+  if (found === undefined) {
+    /* A button the page redrew often only swaps one word, and a person says
+       "submit order" for "Place order". Accept only an unambiguous winner. */
+    const near = nearestByWords(shown, words)
+    if (near !== null) {
+      const spot = await locate(page, near.ref)
+      if (spot.gone === true) return null
+      return { ...near, x: Number(spot.x), y: Number(spot.y) }
+    }
+    return null
+  }
   /* When only the squeezed form matched, say the words the caller used: the
      page spread them over nodes and "Signin" is not what anyone wrote. */
   const hit = squeeze(found.name) === wanted && found.name.toLowerCase() !== words.toLowerCase() ? { ...found, name: words } : found
