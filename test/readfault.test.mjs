@@ -202,6 +202,11 @@ test('a query the page never answers says so instead of inventing text', async (
   const read = await readRelevant(page, 'quantum chromodynamics', { maxChars: 900 })
   assert.equal(read.text, '')
   assert.equal(read.matched, 0)
+  /* A miss still says what the page is about, in a few hundred characters
+     rather than a whole page. */
+  assert.ok(read.nearby.length >= 1 && read.nearby.length <= 3)
+  assert.match(read.nearby[0].text, /nothing about the question/)
+  assert.ok(read.nearby.every((row) => row.text.length <= 261))
 })
 
 test('a map says what a big page is made of without its words', async () => {

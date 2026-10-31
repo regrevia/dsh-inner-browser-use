@@ -2260,8 +2260,16 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const found = await readRelevant(page, asked, { maxChars: ceiling })
           if (found.fault !== undefined) return `the page did not answer when read — ${String(found.fault).split('\n')[0].slice(0, 200)}`
           if (found.text === '') {
-            /* The question missed every block: the page is still the answer, so
-               hand it over whole rather than make the caller guess again. */
+            /* A question the page does not answer costs the nearest passages and
+               a sentence saying so, not the whole page: whole pages are what
+               this tool exists to avoid, and the caller can ask for one. */
+            const closest = Array.isArray(found.nearby) ? found.nearby : []
+            if (closest.length > 0) {
+              const body = closest
+                .map((row) => `${row.heading === '' ? '' : `## ${String(row.heading)}\n`}${String(row.text)}`)
+                .join('\n\n')
+              return keep(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing directly answers ${JSON.stringify(asked)} (${String(found.total)} blocks read). The closest passages:\n\n${body}\n\nask for the whole page with browser_view, or try other words.`)
+            }
             const whole = await readArticle(page, { maxChars: ceiling })
             if (whole.fault === undefined && whole.text !== '') {
               return keep(`${whole.url}\n# ${whole.title === '' ? '(untitled)' : whole.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read), so the whole page follows:\n\n${whole.text}${whole.truncated ? `\n\n(cut at ${String(whole.chars)} characters; raise max_chars for more)` : ''}`)

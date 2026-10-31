@@ -113,7 +113,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'read-answer': 250 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'read-answer': 250, 'read-miss': 250 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -259,6 +259,27 @@ async function main() {
     keepsAnswer: /30 days/.test(near.text),
   })
   budget('read-answer', wholeMs + nearMs)
+  /* A question the page does not answer: what the miss costs when it says so
+     and shows the nearest passages, against handing the whole page over. */
+  const missAsk = 'quantum chromodynamics'
+  const missWholeAt = Date.now()
+  const missWhole = renderPage(await readPage(sidecar.page, { mode: 'text', maxChars: 2000 }), { maxChars: 2000 })
+  const missWholeMs = Date.now() - missWholeAt
+  const missNearAt = Date.now()
+  const missNear = await readRelevant(sidecar.page, missAsk, { maxChars: 2000 })
+  const missNearMs = Date.now() - missNearAt
+  const closestChars = missNear.nearby.reduce((sum, row) => sum + row.text.length, 0)
+  emit('read-miss', {
+    wholeChars: missWhole.length,
+    closestChars,
+    savedPct: missWhole.length === 0 ? 0 : Math.round((1 - closestChars / missWhole.length) * 100),
+    approxTokens: Math.round(closestChars / 3.4),
+    wholeTokens: Math.round(missWhole.length / 3.4),
+    ms: missWholeMs + missNearMs,
+    nearest: missNear.nearby.length,
+    saysSo: missNear.text === '',
+  })
+  budget('read-miss', missWholeMs + missNearMs)
   /* What the overlay probe costs: nothing on an uncovered control, one extra
      page-side look plus the banner's own click when something is in the way. */
   const probeTimes = []

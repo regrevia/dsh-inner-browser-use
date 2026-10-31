@@ -1383,13 +1383,23 @@ export function evidence(blocks, query, options = {}) {
  */
 export async function readRelevant(page, query, options = {}) {
   const budget = Math.max(400, Math.min(24_000, Number(options.maxChars ?? 4000)))
+  /* A short, untrimmed paragraph is what a miss shows: enough to say what the
+     page is about, never enough to be the page. */
+  const near = (blocks) => blocks
+    .map((block) => String(block?.t ?? '').replace(/\s+/g, ' ').trim())
+    .filter((body) => body !== '')
+    .slice(0, 3)
+    .map((body) => {
+      const cut = body.length > 260 ? `${body.slice(0, 260).replace(/\s+\S*$/, '')}…` : body
+      return { heading: '', text: cut }
+    })
   try {
     const raw = String((await evaluateIn(page, blocks(budget * 8))) ?? '{}')
     const said = JSON.parse(raw)
     const all = Array.isArray(said?.blocks) ? said.blocks : []
     const ranked = rank(all, query)
     if (ranked.length === 0) {
-      return { title: String(said?.title ?? page.title ?? ''), url: String(page.url ?? ''), text: '', chars: 0, matched: 0, total: all.length }
+      return { title: String(said?.title ?? page.title ?? ''), url: String(page.url ?? ''), text: '', chars: 0, matched: 0, total: all.length, nearby: near(all) }
     }
     /* Passages cost whole paragraphs; sentences cost only the ones that say
        something about the query, which on a long page is most of the saving. */
@@ -1413,10 +1423,15 @@ export async function readRelevant(page, query, options = {}) {
       matched += 1
       if (used >= budget) break
     }
+    /* A question the page does not answer should not cost the page: the few
+       blocks that came closest say what the page is about, and the caller can
+       still ask for everything. */
+    const nearby = matched === 0 ? near(ranked.slice(0, 3).map((row) => row.block)) : []
     return {
       title: String(said?.title ?? page.title ?? ''),
       url: String(page.url ?? ''),
       text: lines.join('\n\n'),
+      nearby,
       chars: used,
       matched,
       total: all.length,

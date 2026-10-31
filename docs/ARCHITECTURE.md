@@ -186,6 +186,12 @@ sentences are packed to a character budget and restored to document order. Terms
 
 `sentences: false` keeps the paragraph path for callers who want the whole section.
 
+A question the page cannot answer costs the miss, not the page: when no sentence clears the
+cut, `readRelevant` returns the three blocks that ranked highest (each trimmed towards 260
+characters) and no text, and the tool turns that into a line saying nothing directly answers the
+question plus those passages. The whole page is still one `browser_view` away, so the expensive
+fallback — a page pasted into the context for a question it never addressed — is gone.
+
 ## Sign-ins and reclaim
 
 Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,
