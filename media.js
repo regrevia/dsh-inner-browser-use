@@ -237,3 +237,73 @@ export function sizeText(bytes) {
   if (n >= 1000) return `${Math.round(n / 1000)} kB`
   return `${String(n)} B`
 }
+
+/**
+ * Ad servers and ad slots, recognised by themselves rather than by size: an ad
+ * is often the biggest file on the page, and a real clip can be small.
+ */
+const AD_HOST = /^(?:(?:[\w-]+\.)*(?:doubleclick\.net|googlesyndication\.com|googleadservices\.com|amazon-adsystem\.com|adsrvr\.org|taboola\.com|outbrain\.com|criteo\.(?:net|com)|scorecardresearch\.com|moatads\.com|adnxs\.com|pubmatic\.com|rubiconproject\.com|openx\.net)$)$/i;
+const AD_SLOT = /^(?:ad|ads|adv|adserver|advert(?:isement|ising)?|pre-?roll|mid-?roll|post-?roll|banner|sponsor|promo|tracking|tracker|pixel|beacon|analytics|telemetry)\d*$/i
+
+/**
+ * Whether an address is an ad or a measurement call.
+ * @param {string} url - the address.
+ * @returns {boolean} true when it is worth hiding from a person picking a file.
+ */
+export function adLike(url) {
+  let parsed
+  try {
+    parsed = new URL(String(url))
+  } catch {
+    return false
+  }
+  if (AD_HOST.test(parsed.hostname)) return true
+  const pieces = parsed.pathname.split('/').filter((piece) => piece !== '')
+  const named = pieces.slice(0, -1).some((piece) => AD_SLOT.test(piece))
+  if (named) return true
+  const file = pieces.length === 0 ? '' : pieces[pieces.length - 1]
+  return /^(?:ad|ads|adv|preroll|banner|pixel|beacon|track|tracking)[-_.]/i.test(file)
+}
+
+/**
+ * How much a row looks like the thing a person came for: the player on the page
+ * first, then a real file, and ads or beacons last.
+ * @param {{url: string, mime?: string, kind?: string, bytes?: number}} row - one media request.
+ * @param {Array<{url: string, dur?: number}>} [players] - what the page's own `<video>` / `<audio>` plays.
+ * @returns {number} the score; higher is more likely the point of the page.
+ */
+export function coreScore(row, players = []) {
+  const url = String(row?.url ?? '')
+  const bytes = Number(row?.bytes ?? 0)
+  const kind = String(row?.kind ?? '')
+  const mime = String(row?.mime ?? '')
+  let score = 0
+  const mine = players.some((one) => {
+    const said = String(one?.url ?? '')
+    return said !== '' && (said === url || url.startsWith(said) || said.startsWith(url))
+  })
+  if (mine) score += 100
+  if (adLike(url)) score -= 80
+  if (bytes >= 1_000_000) score += 25
+  else if (bytes >= 200_000) score += 10
+  else if (bytes > 0 && bytes < 20_000 && kind !== 'stream') score -= 20
+  if (kind === 'stream') score += 15
+  if (/^video\//i.test(mime)) score += 5
+  if (/^audio\//i.test(mime)) score += 3
+  return score
+}
+
+/**
+ * The rows in the order a person would want them, with ads gone unless asked.
+ * @param {Array<object>} rows - media rows, any order.
+ * @param {Array<{url: string, dur?: number}>} [players] - the page's own players.
+ * @param {boolean} [all] - keep the ads and the beacons too.
+ * @returns {Array<object>} the rows to show.
+ */
+export function coreRows(rows, players = [], all = false) {
+  const ranked = rows.map((row) => ({ row, score: coreScore(row, players) }))
+  return ranked
+    .filter((one) => all || one.score >= 0)
+    .sort((left, right) => right.score - left.score || Number(right.row?.seq ?? 0) - Number(left.row?.seq ?? 0))
+    .map((one) => one.row)
+}

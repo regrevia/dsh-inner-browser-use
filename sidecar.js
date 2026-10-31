@@ -579,6 +579,7 @@ export class SidecarPage {
     /* The movie a page plays is one of the requests it already made, so the
        file behind it costs no second look: the network log is the sniff. */
     this.media = new Map()
+    this.mediaOn = true
     /* A PDF is a document the mirror cannot draw: Chrome leaves the page blank
        and a model looking at it would think the address was empty. What it is
        and where the bytes went is state, not a guess. */
@@ -763,6 +764,7 @@ export class SidecarPage {
    * @returns {void} nothing.
    */
   noteMedia(params) {
+    if (this.mediaOn === false) return
     const response = params?.response ?? {}
     const url = String(response.url ?? '')
     const mime = String(response.mimeType ?? '')
@@ -781,6 +783,18 @@ export class SidecarPage {
       seq: existing?.seq ?? this.troubleSeq,
     })
     if (this.media.size > 60) this.media.delete(this.media.keys().next().value)
+  }
+
+  /**
+   * Stop or resume remembering media on this page; stopping empties the list so
+   * nothing is kept from before the switch.
+   * @param {boolean} on - false stops, true resumes.
+   * @returns {boolean} what it is set to.
+   */
+  mediaWatch(on) {
+    this.mediaOn = on !== false
+    if (!this.mediaOn) this.media = new Map()
+    return this.mediaOn
   }
 
   /**

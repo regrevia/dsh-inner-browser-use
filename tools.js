@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
-import { planOf, gather, sizeText } from './media.js?m=1'
+import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
 import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
@@ -35,6 +35,24 @@ function extensionOf(url, mime = '') {
   if (said.includes('mpegurl')) return '.ts'
   if (said.startsWith('audio/')) return '.m4a'
   return '.bin'
+}
+
+/** What the page's own players are showing, in one look: the address, the length, whether it runs. */
+async function playersOf(page) {
+  const answer = await page.cdp.send('Runtime.evaluate', {
+    expression: `(() => [...document.querySelectorAll('video,audio')].map((one) => ({ url: one.currentSrc || one.src || '', playing: !one.paused, dur: Number.isFinite(one.duration) ? Math.round(one.duration) : 0 })))()`,
+    returnByValue: true,
+  }).catch(() => null)
+  const seen = answer?.result?.value
+  return Array.isArray(seen) ? seen.filter((one) => String(one?.url ?? '') !== '') : []
+}
+
+/** Seconds as a person writes them: 2:13, 1:02:00. */
+function clockOf(seconds) {
+  const whole = Math.max(0, Math.round(Number(seconds) || 0))
+  const rest = whole % 3600
+  const pad = (value) => String(value).padStart(2, '0')
+  return whole >= 3600 ? `${String(Math.floor(whole / 3600))}:${pad(Math.floor(rest / 60))}:${pad(rest % 60)}` : `${String(Math.floor(whole / 60))}:${pad(rest % 60)}`
 }
 
 /** Which chat the running call belongs to, so each gets its own tab. */
@@ -3334,12 +3352,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
 
     {
       name: 'browser_media', // ui-copy-ignore
-      description: 'What this page played, and how to keep it: lists the video and sound requests the page already made, with their sizes; save one by row number or part of its address. A stream playlist is followed to its pieces and joined, so nothing has to be installed.',
+      description: 'What this page played, and how to keep it: lists the video and sound requests the page already made, the one its own player shows first, with sizes; save one by row number, by part of its address, or save: main. Ads and measurement beacons stay out of the list unless all: true. A stream playlist is followed to its pieces and joined, so nothing has to be installed. watch: false stops remembering this page.',
       parameters: {
         type: 'object',
         properties: {
           find: { type: 'string', description: 'Only rows whose address contains this.' },
-          save: { type: ['integer', 'string'], description: 'Row number from the list, or part of its address.' },
+          save: { type: ['integer', 'string'], description: 'Row number from the list, part of its address, or main for the first row.' },
+          all: { type: 'boolean', description: 'Include ads and beacons too (default false).' },
+          watch: { type: 'boolean', description: 'false stops remembering what this page plays and empties the list; true resumes.' },
           height: { type: 'number', description: 'Tallest version to take when one address offers several (default 1080).' },
           name: { type: 'string', description: 'File name without extension.' },
         },
@@ -3350,24 +3370,39 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @returns {Promise<{text: string}>} the list, or where the file went. */
       execute: async (args) => withRawPage(async (page) => {
-        const all = typeof page.mediaList === 'function' ? page.mediaList() : []
+        if (typeof args?.watch === 'boolean') {
+          const on = typeof page.mediaWatch === 'function' ? page.mediaWatch(args.watch) : false
+          if (!on) return 'Off: this page keeps nothing from now on. watch: true puts it back.'
+          if (args.save === undefined || args.save === null || args.save === '') return 'On: ask again once it has played something.'
+        }
+        const known = typeof page.mediaList === 'function' ? page.mediaList() : []
+        const players = known.length === 0 ? [] : await playersOf(page)
+        const ranked = coreRows(known, players, args?.all === true)
         const needle = String(args?.find ?? '').toLowerCase()
-        const rows = needle === '' ? all : all.filter((each) => `${String(each.url)} ${String(each.mime)}`.toLowerCase().includes(needle))
+        const rows = needle === '' ? ranked : ranked.filter((each) => `${String(each.url)} ${String(each.mime)}`.toLowerCase().includes(needle))
         const save = args?.save
         if (save === undefined || save === null || save === '') {
           if (rows.length === 0) {
-            return all.length === 0
-              ? 'Nothing to save yet: play the video or sound once, then ask again — the request it makes is the file.'
-              : `Nothing matches ${String(args?.find)}; this page has ${String(all.length)} other media.`
+            if (known.length === 0) return 'Nothing to save yet: play the video or sound once, then ask again — the request it makes is the file.'
+            if (needle !== '') return `Nothing matches ${String(args?.find)}; ${String(known.length)} played here, the ones worth keeping are gone.`
+            return `Only ads and beacons played here (${String(known.length)}); all: true shows them.`
           }
-          const lines = rows.slice(0, 12).map((each, at) => `${String(at + 1)}. ${String(each.kind)} ${sizeText(each.bytes)} · ${String(each.url).slice(0, 160)}`)
+          const hidden = known.length - ranked.length
+          const lines = rows.slice(0, 12).map((each, at) => {
+            const mine = players.find((one) => one.url === each.url || String(one.url).startsWith(String(each.url)) || String(each.url).startsWith(String(one.url)))
+            const mark = at === 0 && mine !== undefined ? 'main ' : ''
+            const length = mine !== undefined && mine.dur > 0 ? ` ${clockOf(mine.dur)}` : ''
+            return `${String(at + 1)}. ${mark}${String(each.kind)}${length} ${sizeText(each.bytes)} · ${String(each.url).slice(0, 160)}`
+          })
           if (rows.length > 12) lines.push(`… ${String(rows.length - 12)} more; narrow it with find`)
-          lines.push('save: <row> keeps one')
+          if (hidden > 0) lines.push(`… ${String(hidden)} ad or beacon kept out; all: true shows them`)
+          lines.push('save: <row> or main')
           return lines.join('\n')
         }
-        const wanted = typeof save === 'number' ? rows[save - 1] : rows.find((each) => String(each.url).includes(String(save)))
+        const named = typeof save === 'string' && save.toLowerCase() === 'main'
+        const wanted = named ? rows[0] : typeof save === 'number' ? rows[save - 1] : rows.find((each) => String(each.url).includes(String(save)))
         if (wanted === undefined) {
-          return `No media row ${String(save)}. ${rows.length === 0 ? 'Nothing to save yet.' : 'Call browser_media without save to see the rows.'}`
+          return `No media row ${String(save)}. ${rows.length === 0 ? 'Nothing to save yet.' : 'Call browser_media without save to see the rows; all: true includes ads.'}`
         }
         const cookieAnswer = await page.cdp.send('Network.getCookies', { urls: [String(wanted.url)] }).catch(() => ({ cookies: [] }))
         const cookie = (cookieAnswer?.cookies ?? []).map((each) => `${String(each.name)}=${String(each.value)}`).join('; ')

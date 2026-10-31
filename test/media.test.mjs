@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isMedia, kindOf, parseMaster, pickVariant, parsePlaylist, playlistKind, planOf, gather } from '../media.js?m=1'
+import { adLike, coreScore, coreRows, isMedia, kindOf, parseMaster, pickVariant, parsePlaylist, playlistKind, planOf, gather } from '../media.js?m=1'
 import { SidecarPage } from '../sidecar.js?v=1'
 
 const master = [
@@ -122,4 +122,39 @@ test('the browser remembers what a page played, once per address, newest first',
   assert.equal(rows.find((each) => each.url === 'https://a/movie.mp4').bytes, 4242)
   assert.equal(rows.find((each) => each.url === 'https://a/song.mp3').kind, 'audio')
   assert.equal(rows.some((each) => each.url.endsWith('.png')), false)
+})
+
+test('an ad is recognised by its own address, not by being big', async () => {
+  const { adLike } = await import('../media.js?m=2')
+  assert.equal(adLike('https://ads.example.com/preroll.mp4'), true)
+  assert.equal(adLike('https://example.com/ads/house.mp4'), true)
+  assert.equal(adLike('https://example.com/px/tracking.gif'), true)
+  assert.equal(adLike('https://securepubads.g.doubleclick.net/gampad/ads?x=1'), true)
+  assert.equal(adLike('https://example.com/v/adventure-final.mp4'), false)
+  assert.equal(adLike('https://example.com/media/movie.mp4'), false)
+  assert.equal(adLike('https://example.com/render/adam.mp4'), false)
+})
+
+test('the player on the page comes first, ads and beacons last', async () => {
+  const { coreRows } = await import('../media.js?m=2')
+  const rows = [
+    { url: 'https://example.com/ads/pre.mp4', kind: 'video', mime: 'video/mp4', bytes: 9_000_000, seq: 1 },
+    { url: 'https://example.com/px/beacon.mp4', kind: 'video', mime: 'video/mp4', bytes: 800, seq: 2 },
+    { url: 'https://example.com/poster-loop.mp4', kind: 'video', mime: 'video/mp4', bytes: 40_000, seq: 3 },
+    { url: 'https://example.com/feature.mp4', kind: 'video', mime: 'video/mp4', bytes: 3_000_000, seq: 4 },
+  ]
+  const players = [{ url: 'https://example.com/feature.mp4' }]
+  const kept = coreRows(rows, players)
+  assert.deepEqual(kept.map((one) => one.url), ['https://example.com/feature.mp4', 'https://example.com/poster-loop.mp4'])
+  const everything = coreRows(rows, players, true)
+  assert.equal(everything.length, 4)
+  assert.equal(everything[0].url, 'https://example.com/feature.mp4')
+  assert.deepEqual(everything.slice(2).map((one) => new URL(one.url).pathname).sort(), ['/ads/pre.mp4', '/px/beacon.mp4'])
+})
+
+test('a score keeps the movie even when an ad is larger', async () => {
+  const { coreScore } = await import('../media.js?m=2')
+  const movie = coreScore({ url: 'https://example.com/a.mp4', mime: 'video/mp4', kind: 'video', bytes: 2_000_000 }, [{ url: 'https://example.com/a.mp4' }])
+  const ad = coreScore({ url: 'https://example.com/ads/b.mp4', mime: 'video/mp4', kind: 'video', bytes: 20_000_000 }, [{ url: 'https://example.com/a.mp4' }])
+  assert.ok(movie > ad)
 })

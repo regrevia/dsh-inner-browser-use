@@ -16,4 +16,18 @@
 
 调用环境里没有项目或会话信息时，落到 `no-project/no-chat/<种类>/`，不猜。
 
+## 整个目录
+
+```
+~/.dsh-inner-browser-use/
+  artifacts/<项目>/<会话>/<种类>/   给人看的产出，只在这里（见上）
+  chrome/                          浏览器自己的数据：登录态、Cookie、缓存
+  flash/                           Flash 播放器运行时，第一次用 flash:true 才装
+  browser.log                     最近一次浏览器启动和页面记录
+  asks.log                        人问过什么、答了什么
+  tabs.json / mirror.json / flash.json / watcher.json   上次开着哪些页
+```
+
+`chrome/` 是浏览器进程自己在读写，不要手动改；要清登录态，用 `browser_open` 的档位或插件自己的入口，别删目录里的某个文件。上面这些都在一个根目录下，卸载插件前想留产出就拷 `artifacts/`。
+
 测试里用 `DSH_INNER_BROWSER_ARTIFACTS` 指向临时目录，不写真实 home。

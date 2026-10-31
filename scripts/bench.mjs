@@ -104,7 +104,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -589,7 +589,9 @@ async function main() {
   /* Media the page asked for: the sniff is the network log it already keeps,
      and a stream is the playlist's pieces joined — no second crawl, no spawn. */
   const mediaRoutes = {
-    '/': '<!doctype html><title>media</title><video src="/movie.mp4" width="320"></video><audio src="/song.mp3"></audio><script>for (const one of ["/movie.mp4", "/song.mp3", "/stream/master.m3u8"]) fetch(one).catch(() => {})</script>',
+    '/': '<!doctype html><title>media</title><video id="show" src="/movie.mp4" width="320"></video><audio src="/song.mp3"></audio><script>document.querySelector("#show").load();for (const one of ["/movie.mp4", "/song.mp3", "/stream/master.m3u8", "/ads/preroll.mp4", "/px/beacon.mp4"]) fetch(one).catch(() => {})</script>',
+    '/ads/preroll.mp4': 'ad-bytes-ad-bytes',
+    '/px/beacon.mp4': 'px',
     '/movie.mp4': 'ftypisom-movie-bytes',
     '/song.mp3': 'ID3-song-bytes',
     '/stream/master.m3u8': '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=1280x720\n720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1920x1080\n1080.m3u8\n',
@@ -632,6 +634,21 @@ async function main() {
   const savedBytes = (() => { try { return statSync(savedPath).size } catch { return 0 } })()
   emit('media-save', { ms: saveMs, bytes: savedBytes, listedOneLine: streamRow.length, said: String(saved?.text ?? '').slice(0, 120) })
   budget('media-save', saveMs)
+  /* Picking, not dumping: the same page also played two ads, and the list the
+     model sees has to be the file the page's own player shows. */
+  const chooseAt = Date.now()
+  const chosen = await mediaTool.execute({})
+  const chooseMs = Date.now() - chooseAt
+  const chosenLines = String(chosen?.text ?? '').split('\n')
+  const keptRows = chosenLines.filter((line) => /^\d+\. /.test(line)).length
+  const showsFirst = /^\d+\. main /.test(chosenLines[0] ?? '')
+  const wide = await mediaTool.execute({ all: true })
+  const wideRows = String(wide?.text ?? '').split('\n').filter((line) => /^\d+\. /.test(line)).length
+  const mainSaved = await mediaTool.execute({ save: 'main', name: 'bench-main' })
+  const mainPath = String(mainSaved?.text ?? '').split(' — ')[0]
+  const mainBytes = (() => { try { return statSync(mainPath).size } catch { return 0 } })()
+  emit('media-pick', { ms: chooseMs, keptRows, wide: wideRows, showsFirst, mainBytes, said: (chosenLines[0] ?? '').slice(0, 80) })
+  budget('media-pick', chooseMs)
   mediaServer.close()
 
   /* A crash costs one detection window plus a fresh tab, measured through the

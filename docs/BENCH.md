@@ -1,3 +1,16 @@
+## 只列该看的那一个（0.37.0，同一台本地页面，加了两个广告请求）
+
+页面自己放一个 `<video src="/movie.mp4">`、一个 `<audio>`、fetch 一个 master 播放列表，再 fetch 两条广告（`/ads/preroll.mp4` 9 MB、`/px/beacon.mp4` 2 B）。不筛选时 5 条都在；默认列表剩 3 条，页面播放器那个标 `main` 排第一，`save: main` 存的就是它。
+
+| 项 | 0.36.0 | 0.37.0 |
+|---|---|---|
+| 列表行数（同一页面 5 条请求） | 5 | 3，广告单独一行说数量 |
+| 首行 | `1. video 20 B · /movie.mp4` | `1. main video 156 B · /movie.mp4` |
+| 找人要的那个 | 数行号 / 猜地址 | `save: main` |
+| 列表耗时 | 0 ms（纯内存） | 1 ms（多一次页面查询拿播放器与时长） |
+
+`media-pick` 1 ms，预算 `media-pick: 150 ms`；`all: true` 回到 5 行。`media-sniff` 仍 0 ms（记录仍是网络日志附带的），`media-save` 4 ms、96 B、`6 parts joined`，`budget checks 17 ok`。
+
 ## 媒体嗅探与流保存（0.36.0，本地 http 页面，`scripts/bench.mjs`）
 
 页面自己放 `<video>`、`<audio>` 并 fetch 一个 master 播放列表：加载完的那一刻网络记录里已经有 3 条，`media-sniff` 0 ms（没有额外请求，嗅探就是已有的网络记录）。保存 master → 1080 → 6 个片段，`media-save` 5 ms、96 B，报 `6 parts joined`；列表首行 59 字符。预算 `media-sniff: 400 ms`、`media-save: 500 ms` 均通过，`budget checks 16 ok`。
