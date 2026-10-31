@@ -192,6 +192,22 @@ characters) and no text, and the tool turns that into a line saying nothing dire
 question plus those passages. The whole page is still one `browser_view` away, so the expensive
 fallback — a page pasted into the context for a question it never addressed — is gone.
 
+## Answering across tabs
+
+A question can be answered by a tab that is not the one on screen. Moving the mirror there and
+reading again costs two calls, a screencast teardown, and the person's view moved for nothing, so
+a miss tries the tabs instead: `elsewhere(session)` lists the tabs the calling chat holds (its own
+mirror excluded), opens one read-only CDP handle per tab — `Cdp` on that tab's own
+`webSocketUrl`, never a full `SidecarPage`, never `cast()`, never a screencast stop — and
+`readTabs` pools blocks from all of them under one `maxChars` ceiling and runs the same
+`evidence()` pass once, so a merged answer costs the same characters as a single-tab one. Every
+row keeps the title of the tab its text came from, and every handle is closed in a `finally`.
+
+Only the calling session's claimed tabs are candidates: another chat's tab, and an unclaimed one,
+are not read. At most three extra tabs are opened, and the path only runs when the current tab has
+no answer, so a normal question pays nothing for it. `across: false` turns it off. `pruneStrays`
+counts claimed tabs as owned, because a tab a chat holds is not a stray.
+
 ## Sign-ins and reclaim
 
 Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,

@@ -1207,6 +1207,17 @@ function fold(word) {
 const SATURATION = 1.5
 
 /**
+ * A passage short enough to show when nothing answers: one sentence or so,
+ * whitespace collapsed, with an ellipsis saying it was cut.
+ * @param {unknown} value - block text.
+ * @returns {string} the passage.
+ */
+function brief(value) {
+  const body = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return body.length > 260 ? `${body.slice(0, 260).replace(/\s+\S*$/, '')}…` : body
+}
+
+/**
  * Rank blocks against a query the way a search engine ranks a passage: BM25,
  * with the heading counted as a place a term can match. Then read only the
  * blocks that carry the query, which is the token saving that matters.
@@ -1386,13 +1397,10 @@ export async function readRelevant(page, query, options = {}) {
   /* A short, untrimmed paragraph is what a miss shows: enough to say what the
      page is about, never enough to be the page. */
   const near = (blocks) => blocks
-    .map((block) => String(block?.t ?? '').replace(/\s+/g, ' ').trim())
+    .map((block) => brief(block?.t))
     .filter((body) => body !== '')
     .slice(0, 3)
-    .map((body) => {
-      const cut = body.length > 260 ? `${body.slice(0, 260).replace(/\s+\S*$/, '')}…` : body
-      return { heading: '', text: cut }
-    })
+    .map((body) => ({ heading: '', text: body }))
   try {
     const raw = String((await evaluateIn(page, blocks(budget * 8))) ?? '{}')
     const said = JSON.parse(raw)
@@ -1439,6 +1447,56 @@ export async function readRelevant(page, query, options = {}) {
   } catch (error) {
     return { title: '', url: String(page.url ?? ''), text: '', chars: 0, matched: 0, total: 0, fault: String(error?.message ?? error) }
   }
+}
+
+/**
+ * Answer one question from several tabs at once: each tab is ranked on its own
+ * words, then the sentences are pooled and packed under one ceiling, so an
+ * answer that lives in a background tab costs one read instead of a tab switch
+ * and a second read.
+ * @param {Array<{title?: string, url?: string, cdp: any}>} pages - read-only handles.
+ * @param {string} query - what the caller wants to know.
+ * @param {{maxChars?: number, limit?: number}} [options] - ceiling across all tabs.
+ * @returns {Promise<{rows: Array<{text: string, heading: string, at: number, tab: string}>, tabs: Array<{title: string, url: string, blocks: number, fault?: string}>, chars: number, matched: number, total: number, nearby: Array<{tab: string, text: string}>}>} pooled evidence.
+ */
+export async function readTabs(pages, query, options = {}) {
+  const ceiling = Math.max(400, Math.min(24_000, Number(options.maxChars ?? 4000)))
+  const list = Array.isArray(pages) ? pages.filter((page) => page !== null && page !== undefined && page.cdp !== undefined) : []
+  const share = Math.max(400, Math.floor(ceiling / Math.max(1, list.length)))
+  const tabs = []
+  const pool = []
+  const owner = []
+  for (let at = 0; at < list.length; at += 1) {
+    const page = list[at]
+    const title = String(page.title ?? '') === '' ? String(page.url ?? '') : String(page.title)
+    try {
+      const raw = String((await evaluateIn(page, blocks(share * 8))) ?? '{}')
+      const said = JSON.parse(raw)
+      const found = Array.isArray(said?.blocks) ? said.blocks : []
+      for (const block of found) { pool.push(block); owner.push(at) }
+      tabs.push({ title, url: String(page.url ?? ''), blocks: found.length })
+    } catch (error) {
+      /* One tab that will not answer is not a failed question: the others are
+         still worth reading, and the caller is told which one stayed quiet. */
+      tabs.push({ title, url: String(page.url ?? ''), blocks: 0, fault: String(error?.message ?? error).split('\n')[0].slice(0, 160) })
+    }
+  }
+  const limit = Math.max(1, Math.min(60, Number(options.limit ?? 12)))
+  const found = evidence(pool, query, { maxChars: ceiling, limit })
+  const rows = found.rows.map((row) => {
+    const tab = tabs[owner[row.at] ?? 0]?.title ?? ''
+    return Object.assign({}, row, { tab })
+  })
+  /* Nothing answered anywhere: the nearest passage of every tab says what each
+     one is about, which is what makes the next look cheap. */
+  const nearby = rows.length > 0 ? [] : tabs
+    .map((tab, at) => {
+      const first = pool.find((block, slot) => owner[slot] === at && brief(block?.t) !== '')
+      return first === undefined ? null : { tab: tab.title, text: brief(first.t) }
+    })
+    .filter((row) => row !== null)
+  const chars = rows.reduce((sum, row) => sum + row.text.length, 0)
+  return { rows, tabs, chars, matched: rows.length, total: pool.length, nearby }
 }
 
 /**

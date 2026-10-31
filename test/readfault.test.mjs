@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { readPage, renderPage, article, readArticle, blocks, terms, rank, readRelevant, finder, findOnPage, sentences, evidence } from '../read.js'
+import { readPage, renderPage, article, readArticle, blocks, terms, rank, readRelevant, readTabs, finder, findOnPage, sentences, evidence } from '../read.js'
 
 /** A page whose Runtime.evaluate answers with a thrown page script. */
 function throwingPage(description = 'Error: hostile page broke the DOM reader\n    at <anonymous>:1:1') {
@@ -240,4 +240,49 @@ test('a map says what a big page is made of without its words', async () => {
   assert.ok(!text.includes('Docs\n2 [link] Docs'), 'a repeated name is listed once on a map')
   assert.match(text, /words: 10000 characters/)
   assert.ok(!text.includes('word word word'), 'the map does not carry the page text')
+})
+
+/** A tab whose page-side reader answers with these paragraphs. */
+function tabPage(title, bodies) {
+  return {
+    url: `https://example.com/${title}`,
+    title,
+    cdp: {
+      send: async () => ({
+        result: { value: JSON.stringify({ title, blocks: bodies.map((t) => ({ h: '', t, d: 0 })) }) },
+      }),
+    },
+  }
+}
+
+const NEWS = 'The city council met on Tuesday. The budget was approved after a long debate. Road repairs start in spring.'
+const HELP = 'You have 30 days to ask for a refund. Send the order number to support. Refunds arrive within five working days.'
+
+test('a question is answered from the tab that has it, and the row names the tab', async () => {
+  const read = await readTabs([tabPage('news', [NEWS]), tabPage('help', [HELP])], 'how long do I have for a refund', { maxChars: 1200 })
+  assert.equal(read.rows.length > 0, true)
+  assert.match(read.rows.map((row) => row.text).join(' '), /30 days/)
+  const answer = read.rows.find((row) => /30 days/.test(row.text))
+  assert.ok(answer !== undefined && answer.tab === 'help')
+  assert.equal(read.tabs.length, 2)
+  assert.equal(read.nearby.length, 0)
+  assert.ok(read.chars <= 1200)
+})
+
+test('one tab that will not answer does not lose the answer in the other', async () => {
+  const quiet = { url: 'https://example.com/quiet', title: 'quiet', cdp: { send: async () => { throw new Error('no answer from this tab') } } }
+  const read = await readTabs([quiet, tabPage('help', [HELP])], 'how long do I have for a refund', { maxChars: 1200 })
+  assert.equal(read.tabs.length, 2)
+  assert.match(String(read.tabs[0].fault), /no answer from this tab/)
+  assert.equal(read.tabs[1].fault, undefined)
+  assert.match(read.rows.map((row) => row.text).join(' '), /30 days/)
+})
+
+test('when no tab answers, the nearest passage of every tab is offered', async () => {
+  const read = await readTabs([tabPage('news', [NEWS]), tabPage('help', [HELP])], 'quantum chromodynamics', { maxChars: 1200 })
+  assert.equal(read.rows.length, 0)
+  assert.equal(read.nearby.length, 2)
+  assert.equal(read.nearby[0].tab, 'news')
+  assert.equal(read.nearby[1].tab, 'help')
+  assert.equal(read.nearby.every((row) => row.text.length <= 261), true)
 })

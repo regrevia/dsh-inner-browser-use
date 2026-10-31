@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Sidecar } from '../sidecar.js?v=1'
-import { readPage, renderPage, readRelevant, covering, locate, locateFirst } from '../read.js?v=1'
+import { readPage, renderPage, readRelevant, readTabs, covering, locate, locateFirst } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
 import { sidecarTools } from '../tools.js?v=1'
 
@@ -113,7 +113,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'read-answer': 250, 'read-miss': 250 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'read-answer': 250, 'read-miss': 250, 'read-tabs': 400 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -816,6 +816,48 @@ document.cookie = 'bench_session=bench-cookie-secret; path=/'
   const back = await readPage(fresh, { mode: 'text' })
   emit('crash-recovery', { ms: Date.now() - backAt, urlMatched: String(back.title).toLowerCase().includes('dense'), title: back.title })
   budget('crash-recovery', Date.now() - backAt)
+  /* The answer is in a tab this chat left behind, not in the one in front:
+     two reads (miss here, answer there) against one pooled read of both. */
+  const front = await sidecar.openTab('bench-tabs', servers.text.url)
+  const made = await sidecar.page.cdp.send('Target.createTarget', { url: servers.story.url })
+  sidecar.claim('bench-tabs', made.targetId)
+  await wait(400)
+  const tabsAsk = 'how long do I have to get a refund'
+  const slowAt = Date.now()
+  const wrong = await readRelevant(front, tabsAsk, { maxChars: 2000 })
+  const nearChars = wrong.nearby.reduce((sum, row) => sum + row.text.length, 0)
+  const behind = await sidecar.elsewhere('bench-tabs')
+  const right = behind.length === 0 ? null : await readRelevant(behind[0], tabsAsk, { maxChars: 2000 })
+  for (const one of behind) one.close()
+  const slowMs = Date.now() - slowAt
+  const oldChars = nearChars + String(right?.text ?? '').length
+  const fastAt = Date.now()
+  const handles = await sidecar.elsewhere('bench-tabs')
+  const pooled = await readTabs([front, ...handles], tabsAsk, { maxChars: 2000 })
+  for (const one of handles) one.close()
+  const fastMs = Date.now() - fastAt
+  emit('read-tabs', {
+    tabs: pooled.tabs.length,
+    oldChars,
+    newChars: pooled.chars,
+    savedPct: oldChars === 0 ? 0 : Math.round((1 - pooled.chars / oldChars) * 100),
+    oldMs: slowMs,
+    newMs: fastMs,
+    calls: 1,
+    answerIn: String(pooled.rows.find((one) => /30 days/.test(one.text))?.tab ?? ''),
+    keepsAnswer: /30 days/.test(pooled.rows.map((one) => one.text).join(' ')),
+  })
+  budget('read-tabs', fastMs)
+  /* Leave no extra tab behind: the rest of the bench times the page in front. */
+  await sidecar.page.cdp.send('Target.closeTarget', { targetId: made.targetId }).catch(() => {})
+  sidecar.unclaim('bench-tabs', made.targetId)
+  const frontId = String(front.targetId ?? '')
+  if (frontId !== '') {
+    await sidecar.page.cdp.send('Target.closeTarget', { targetId: frontId }).catch(() => {})
+    sidecar.unclaim('bench-tabs', frontId)
+  }
+  sidecar.pages.delete('bench-tabs')
+  await wait(200)
   await sidecar.shutdown()
   for (const row of Object.values(servers)) row.server.close()
   const over = tried.filter((row) => row.ms > row.limit)

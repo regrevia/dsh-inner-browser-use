@@ -2337,6 +2337,11 @@ export class Sidecar {
       const id = String(page?.targetId ?? '')
       if (id !== '') owned.add(id)
     }
+    /* A tab a chat claimed is a tab that chat holds, even when the mirror is on
+       another one: pruning it would take away the tab a cross-tab read needs. */
+    for (const set of this.claims.values()) {
+      for (const id of set) owned.add(String(id))
+    }
     let remembered = []
     try {
       remembered = Object.values(JSON.parse(readFileSync(tabsFile, 'utf8')) ?? {}).map(String)
@@ -2871,6 +2876,46 @@ export class Sidecar {
       shown.push({ title: String(row.title ?? ''), url: String(row.url ?? ''), current: row.current === true, index: at })
     }
     return shown
+  }
+
+  /**
+   * Read-only links to the other tabs this chat holds, so one question can be
+   * answered by the tab that has the answer. A handle can read (it has a
+   * connection) and must be closed; it never starts a screencast, moves the
+   * mirror or replaces the page this chat is driving.
+   * @param {string} session - chat asking.
+   * @param {number} [limit] - how many other tabs at most, 1 to 3.
+   * @returns {Promise<Array<{title: string, url: string, cdp: any, close: () => void}>>} handles.
+   */
+  async elsewhere(session, limit = 3) {
+    const most = Math.max(1, Math.min(3, Number(limit) || 3))
+    const shown = await this.windowsFor(session)
+    const rows = await this.tabs(session)
+    /* The chat-level tab list drops the connection address, so the browser's own
+       list is what a read-only handle is opened from. */
+    const source = this.pageFor(String(session ?? '')) ?? this.page
+    const raw = typeof source?.tabs === 'function' ? await source.tabs() : []
+    const byId = new Map(raw.map((tab) => [String(tab.targetId), tab]))
+    const out = []
+    for (const row of shown) {
+      if (out.length >= most) break
+      if (row.current === true) continue
+      const tab = byId.get(String(rows[row.index]?.targetId ?? ''))
+      if (tab === undefined || String(tab.webSocketUrl ?? '') === '') continue
+      try {
+        const cdp = new Cdp(tab.webSocketUrl)
+        await cdp.ready
+        out.push({
+          title: String(row.title === '' ? tab.title : row.title),
+          url: String(row.url === '' ? tab.url : row.url),
+          cdp,
+          close: () => cdp.close(),
+        })
+      } catch {
+        /* A tab that will not open is one tab less; the read still happens. */
+      }
+    }
+    return out
   }
 
   /**

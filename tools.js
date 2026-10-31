@@ -17,7 +17,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
 import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
 import { dropLogin, listLogins, readLogin, saveLogin, vaultState } from './vault.js'
-import { readPage, renderPage, readArticle, readRelevant, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, readArticle, readRelevant, readTabs, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /**
@@ -2233,6 +2233,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           max_chars: { type: 'integer', description: 'Character ceiling. Default 6000; the result says when it was cut.' },
           query: { type: 'string', description: 'What you want to know. With a query, only the passages that answer it come back, ranked — the cheapest way to read a long page. Without one, the whole page comes back.' },
           force: { type: 'boolean', description: 'Read again even if the page has not changed since this chat last read it.' },
+          across: { type: 'boolean', description: 'When this tab has no answer, also read the other tabs this chat holds and answer from whichever has it. Default true; pass false to stay on this one.' },
         },
         additionalProperties: false,
       },
@@ -2260,6 +2261,28 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const found = await readRelevant(page, asked, { maxChars: ceiling })
           if (found.fault !== undefined) return `the page did not answer when read — ${String(found.fault).split('\n')[0].slice(0, 200)}`
           if (found.text === '') {
+            /* The answer may be in the tab behind this one. Reading every tab
+               this chat holds is one call, where switching and reading again is
+               two, so the miss tries the others before it gives up. */
+            let note = ''
+            if (args?.across !== false) {
+              const others = await sidecar.elsewhere(currentSession()).catch(() => [])
+              if (others.length > 0) {
+                try {
+                  const pooled = await readTabs(others, asked, { maxChars: ceiling })
+                  if (pooled.rows.length > 0) {
+                    const body = pooled.rows
+                      .map((row) => `## ${String(row.tab)}\n${String(row.text)}`)
+                      .join('\n\n')
+                    const from = pooled.tabs.length === 1 ? 'another tab' : `${String(pooled.tabs.length)} other tabs`
+                    return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nthis tab does not answer ${JSON.stringify(asked)}; the answer is in ${from} this chat holds (${String(pooled.matched)} passages):\n\n${body}`
+                  }
+                  note = ` (${String(pooled.tabs.length)} other tab${pooled.tabs.length === 1 ? '' : 's'} read too, none answers it)`
+                } finally {
+                  for (const one of others) one.close()
+                }
+              }
+            }
             /* A question the page does not answer costs the nearest passages and
                a sentence saying so, not the whole page: whole pages are what
                this tool exists to avoid, and the caller can ask for one. */
@@ -2268,13 +2291,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
               const body = closest
                 .map((row) => `${row.heading === '' ? '' : `## ${String(row.heading)}\n`}${String(row.text)}`)
                 .join('\n\n')
-              return keep(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing directly answers ${JSON.stringify(asked)} (${String(found.total)} blocks read). The closest passages:\n\n${body}\n\nask for the whole page with browser_view, or try other words.`)
+              return keep(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing directly answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} The closest passages:\n\n${body}\n\nask for the whole page with browser_view, or try other words.`)
             }
             const whole = await readArticle(page, { maxChars: ceiling })
             if (whole.fault === undefined && whole.text !== '') {
-              return keep(`${whole.url}\n# ${whole.title === '' ? '(untitled)' : whole.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read), so the whole page follows:\n\n${whole.text}${whole.truncated ? `\n\n(cut at ${String(whole.chars)} characters; raise max_chars for more)` : ''}`)
+              return keep(`${whole.url}\n# ${whole.title === '' ? '(untitled)' : whole.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} so the whole page follows:\n\n${whole.text}${whole.truncated ? `\n\n(cut at ${String(whole.chars)} characters; raise max_chars for more)` : ''}`)
             }
-            return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read). Call browser_view for the whole page, or try other words.`
+            return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} Call browser_view for the whole page, or try other words.`
           }
           return keep(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\n${found.text}\n\n(${String(found.matched)} of ${String(found.total)} blocks, ranked for ${JSON.stringify(asked)})`)
         }
