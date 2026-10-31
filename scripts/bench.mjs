@@ -104,7 +104,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -592,6 +592,7 @@ async function main() {
     '/': '<!doctype html><title>media</title><video id="show" src="/movie.mp4" width="320"></video><audio src="/song.mp3"></audio><script>document.querySelector("#show").load();for (const one of ["/movie.mp4", "/song.mp3", "/stream/master.m3u8", "/ads/preroll.mp4", "/px/beacon.mp4"]) fetch(one).catch(() => {})</script>',
     '/ads/preroll.mp4': 'ad-bytes-ad-bytes',
     '/px/beacon.mp4': 'px',
+    '/late': '<!doctype html><title>late</title><div id="out">waiting</div><script>setTimeout(() => { document.querySelector("#out").textContent = "ready now" }, 300)</script>',
     '/movie.mp4': 'ftypisom-movie-bytes',
     '/song.mp3': 'ID3-song-bytes',
     '/stream/master.m3u8': '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=1280x720\n720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1920x1080\n1080.m3u8\n',
@@ -604,7 +605,7 @@ async function main() {
     const key = path.startsWith('/stream/seg-') ? '/stream/seg-' : path
     const body = mediaRoutes[key]
     if (body === undefined) { res.writeHead(404); res.end('no'); return }
-    const type = path === '/' ? 'text/html; charset=utf-8' : path.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : path.endsWith('.mp4') ? 'video/mp4' : path.endsWith('.mp3') ? 'audio/mpeg' : 'video/mp2t'
+    const type = path === '/' || path === '/late' ? 'text/html; charset=utf-8' : path.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : path.endsWith('.mp4') ? 'video/mp4' : path.endsWith('.mp3') ? 'audio/mpeg' : 'video/mp2t'
     res.writeHead(200, { 'content-type': type })
     res.end(body)
   })
@@ -649,6 +650,54 @@ async function main() {
   const mainBytes = (() => { try { return statSync(mainPath).size } catch { return 0 } })()
   emit('media-pick', { ms: chooseMs, keptRows, wide: wideRows, showsFirst, mainBytes, said: (chosenLines[0] ?? '').slice(0, 80) })
   budget('media-pick', chooseMs)
+  /* A page that says something 300 ms after it loads. Before, the host asked
+     again every 100 ms — every answer rounded up to the next tick, one round
+     trip each. Now the page watches itself and answers on the mutation. */
+  const lateUrl = `http://127.0.0.1:${mediaAddress.port}/late`
+  const waitTool = sessionTools.find((tool) => tool.name === 'browser_wait')
+  await sidecar.page.navigate(lateUrl)
+  /* The change lands at a phase the poll cannot guess: each trial arms a timer
+     the moment the wait starts, so the older loop always pays the walk up to
+     the next 100 ms tick and this one pays nothing. */
+  const armLate = async (delay) => sidecar.page.cdp.send('Runtime.evaluate', {
+    expression: `document.querySelector('#out').textContent = 'waiting'; setTimeout(() => { document.querySelector('#out').textContent = 'ready now' }, ${String(delay)})`,
+    returnByValue: true,
+  })
+  const probeLate = async () => Boolean((await sidecar.page.cdp.send('Runtime.evaluate', {
+    expression: 'document.body !== null && document.body.innerText.includes("ready now")',
+    returnByValue: true,
+  })).result?.value)
+  const phases = [137, 118, 163, 141, 129]
+  const polled = []
+  let probes = 0
+  for (const delay of phases) {
+    await armLate(delay)
+    const at = Date.now()
+    while (Date.now() - at < 4000) {
+      probes += 1
+      if (await probeLate()) break
+      await wait(100)
+    }
+    polled.push(Date.now() - at)
+  }
+  const observed = []
+  let said = null
+  for (const delay of phases) {
+    await armLate(delay)
+    const at = Date.now()
+    said = await waitTool.execute({ text: 'ready now', timeout: 4000 })
+    observed.push(Date.now() - at)
+  }
+  const mean = (rows) => Math.round(rows.reduce((sum, one) => sum + one, 0) / rows.length)
+  emit('wait-late', {
+    trials: phases.length,
+    polledMs: mean(polled),
+    watchedMs: mean(observed),
+    probes,
+    calls: phases.length,
+    says: String(said?.text ?? '').split('\n')[0],
+  })
+  budget('wait-late', mean(observed))
   mediaServer.close()
 
   /* A crash costs one detection window plus a fresh tab, measured through the

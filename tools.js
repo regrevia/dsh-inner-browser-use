@@ -1070,13 +1070,64 @@ export async function settle(page, timeout = 5000, since = 0) {
  * @returns {Promise<boolean>} whether it ever held.
  */
 async function until(page, expression, timeout) {
-  const deadline = Date.now() + timeout
-  while (Date.now() < deadline) {
-    const value = await evaluate(page, expression)
-    if (value === true) return true
-    await wait(100)
-  }
-  return false
+  /* The page watches itself. One round trip that the page resolves on the
+     mutation which matters: no snapshot every 100 ms, no rounding the answer up
+     to the next tick, and nothing to miss between two polls. */
+  const ceiling = Math.max(200, Number(timeout) || 1000)
+  const script = `new Promise((done) => {
+    const deadline = Date.now() + ${String(ceiling)}
+    let watcher = null
+    let timer = null
+    let frame = null
+    const stop = (value) => {
+      if (watcher !== null) watcher.disconnect()
+      watcher = null
+      if (timer !== null) clearTimeout(timer)
+      timer = null
+      if (frame !== null) cancelAnimationFrame(frame)
+      frame = null
+      done(value)
+    }
+    const test = () => { try { return Boolean(${expression}) } catch (error) { return false } }
+    if (test()) return stop(true)
+    watcher = new MutationObserver(() => { if (test()) stop(true) })
+    if (document.documentElement !== null) watcher.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
+    const tick = () => {
+      if (test()) return stop(true)
+      if (Date.now() >= deadline) return stop(false)
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    timer = setTimeout(() => stop(false), deadline - Date.now())
+  })`
+  const answer = await evaluate(page, script, undefined, ceiling + 3000)
+  return answer === true
+}
+
+/**
+ * How long the page has been still: a mutation resets the clock, and the call
+ * comes back the moment nothing has moved for `quiet` ms. Reads no node, so an
+ * animation-heavy page costs the same as a blank one.
+ */
+async function quietInPage(page, timeout = 5000, quiet = 350) {
+  const ceiling = Math.max(300, Number(timeout) || 5000)
+  const script = `new Promise((done) => {
+    const ceiling = Date.now() + ${String(ceiling)}
+    const settleMs = ${String(Math.max(50, Number(quiet) || 350))}
+    let changedAt = Date.now()
+    let frame = null
+    const watcher = new MutationObserver(() => { changedAt = Date.now() })
+    if (document.documentElement !== null) watcher.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
+    const tick = () => {
+      const now = Date.now()
+      if (now - changedAt >= settleMs) { watcher.disconnect(); return done(true) }
+      if (now >= ceiling) { watcher.disconnect(); return done(false) }
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+  })`
+  const answer = await evaluate(page, script, undefined, ceiling + 3000)
+  return answer === true
 }
 
 /**
@@ -3150,8 +3201,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const at = await until(page, `location.href.includes(${JSON.stringify(String(args.url))})`, timeout)
           return at ? `at ${String(await evaluate(page, 'location.href'))}` : `address never contained ${String(args.url)}`
         }
-        await settle(page, timeout)
-        return 'idle'
+        const quiet = await quietInPage(page, timeout)
+        if (typeof page.adoptOpened === 'function') await page.adoptOpened().catch(() => '')
+        return quiet ? 'idle' : 'still moving'
       }),
     },
     {

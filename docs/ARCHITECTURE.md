@@ -160,6 +160,11 @@ Calls that touch the browser are marked not concurrency-safe; reading state, con
 requests is. `browser_open`, `browser_view`, `browser_wait` and `browser_shot` carry longer
 timeouts than the rest.
 
+`browser_wait` does not poll: one call hands the page a predicate and a `MutationObserver`, and the
+picture comes back on the mutation that satisfies it. A page that changes 137 ms after the wait
+starts answers at 138 ms, not at the next 100 ms tick — the same reason `idle` (a mutation-free
+window) costs one round trip on an animation-heavy page instead of one per frame.
+
 Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,
 which Chrome would otherwise drop on exit — are saved next to it and restored on the next
 launch, so a restart of the app does not sign the person out.
