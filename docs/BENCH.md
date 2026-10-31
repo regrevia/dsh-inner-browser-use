@@ -1,3 +1,7 @@
+## 媒体嗅探与流保存（0.36.0，本地 http 页面，`scripts/bench.mjs`）
+
+页面自己放 `<video>`、`<audio>` 并 fetch 一个 master 播放列表：加载完的那一刻网络记录里已经有 3 条，`media-sniff` 0 ms（没有额外请求，嗅探就是已有的网络记录）。保存 master → 1080 → 6 个片段，`media-save` 5 ms、96 B，报 `6 parts joined`；列表首行 59 字符。预算 `media-sniff: 400 ms`、`media-save: 500 ms` 均通过，`budget checks 16 ok`。
+
 ## Flash 镜像按栏改窗口（0.34.48，Electron Flash 运行时，右栏 747×1196）
 
 Flash 路径原来采集一个固定的 1440×900 窗口，竖高右栏里上下留黑边。现在 `setViewport` 直接改窗口大小，采集源与栏同比例。
