@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Sidecar } from '../sidecar.js?v=1'
-import { readPage, renderPage, covering, locate, locateFirst } from '../read.js?v=1'
+import { readPage, renderPage, readRelevant, covering, locate, locateFirst } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
 import { sidecarTools } from '../tools.js?v=1'
 
@@ -91,6 +91,13 @@ document.getElementById('pick').onchange = (e) => { document.title = 'pick-' + e
     const cards = Array.from({ length: 30 }, (_, i) => `<div class="card"><a href="/p${i}">Product ${i}</a><button>Add to cart</button><span>$ ${i}.99</span></div>`).join('')
     return `<!doctype html><html><head><title>list page</title></head><body><header>${menu}</header><main>${cards}</main><footer>${menu}</footer>${ticker}</body></html>`
   }
+  if (name === 'story') {
+    /* A long article whose answer is one sentence in the middle: reading the
+       query should cost that sentence, not the page. */
+    const filler = 'The team met on Tuesday to look at the numbers and agree what to do next. Nothing was decided, but everyone left with a list of open questions. '
+    const body = Array.from({ length: 24 }, (_, i) => `<p>${i + 1}. ${filler}</p>`).join('')
+    return `<!doctype html><html><head><title>story page</title></head><body><article><h1>Company handbook</h1><h2>Meetings</h2>${body}<h2>Billing</h2><p>Refunds are accepted within 30 days of purchase, and the money goes back to the same card. Anything older is handled case by case by the finance team.</p><h2>Travel</h2>${body}</article></body></html>`
+  }
   if (name === 'light') {
     return `<!doctype html><html><head><title>light page</title></head><body><main><h1>Hello</h1><p>A short page.</p></main>${ticker}</body></html>`
   }
@@ -106,7 +113,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'read-answer': 250 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -122,7 +129,7 @@ async function main() {
   const live = process.argv.includes('--live')
   /** @type {Record<string, {server: import('node:http').Server, url: string}>} */
   const servers = {}
-  for (const name of ['dense', 'text', 'list', 'light', 'game', 'popup', 'hard']) {
+  for (const name of ['dense', 'text', 'story', 'list', 'light', 'game', 'popup', 'hard']) {
     const html = page(name)
     const server = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -229,6 +236,29 @@ async function main() {
     const diff = diffRead(before, after, { maxChars: 2000 })
     emit('read-changed', { page: name, chars: diff.length, approxTokens: Math.round(diff.length / 3.4), wholeChars: renderPage(after, { maxChars: 4600 }).length })
   }
+  /* A question about one sentence of a long article: what it costs to read
+     whole paragraphs against what it costs to read only the evidence. */
+  await sidecar.page.navigate(servers.story.url)
+  await wait(300)
+  const ask = 'how long do I have to get a refund'
+  const wholeAt = Date.now()
+  const whole = await readRelevant(sidecar.page, ask, { maxChars: 2000, sentences: false })
+  const wholeMs = Date.now() - wholeAt
+  const nearAt = Date.now()
+  const near = await readRelevant(sidecar.page, ask, { maxChars: 2000 })
+  const nearMs = Date.now() - nearAt
+  emit('read-answer', {
+    wholeChars: whole.chars,
+    evidenceChars: near.chars,
+    savedPct: whole.chars === 0 ? 0 : Math.round((1 - near.chars / whole.chars) * 100),
+    approxTokens: Math.round(near.chars / 3.4),
+    wholeTokens: Math.round(whole.chars / 3.4),
+    ms: wholeMs + nearMs,
+    matched: near.matched,
+    total: near.total,
+    keepsAnswer: /30 days/.test(near.text),
+  })
+  budget('read-answer', wholeMs + nearMs)
   /* What the overlay probe costs: nothing on an uncovered control, one extra
      page-side look plus the banner's own click when something is in the way. */
   const probeTimes = []

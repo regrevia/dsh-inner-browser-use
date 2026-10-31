@@ -1185,7 +1185,22 @@ const tokenPattern = /[a-z0-9]+|[\u3400-\u9fff]/g
  * @returns {string[]} lower-case terms.
  */
 export function terms(text) {
-  return String(text ?? '').toLowerCase().match(tokenPattern) ?? []
+  const raw = String(text ?? '').toLowerCase().match(tokenPattern) ?? []
+  return raw.map(fold)
+}
+
+/** "refunds" and "refund" are the same idea; a light fold lets a question that
+ * says one word find a page that says the other. Deliberately not a stemmer —
+ * no dictionary, no suffix table beyond plurals and a trailing -ing/-ed. */
+function fold(word) {
+  if (word.length <= 3 || /[0-9]/.test(word) || /[^a-z]/.test(word)) return word
+  if (word.endsWith('ies') && word.length > 4) return `${word.slice(0, -3)}y`
+  if (word.endsWith('sses')) return word.slice(0, -2)
+  if (word.endsWith('ing') && word.length > 5) return word.slice(0, -3)
+  if (word.endsWith('ed') && word.length > 4 && !word.endsWith('eed')) return word.slice(0, -2)
+  if (word.endsWith('es') && word.length > 4) return word.slice(0, -2)
+  if (word.endsWith('s') && !word.endsWith('ss') && !word.endsWith('us') && !word.endsWith('is')) return word.slice(0, -1)
+  return word
 }
 
 /** How often a term may occur before it stops adding meaning. */
@@ -1230,6 +1245,134 @@ export function rank(blocks, query) {
   return scored
 }
 
+/** A sentence ends at a full stop, a question mark, an exclamation, or their
+ * CJK equivalents; a very short fragment joins its neighbour rather than
+ * travelling alone. */
+const SENTENCE_BREAK = /(?<=[。！？；])|(?<=[.!?;])\s+/u
+
+/**
+ * @param {string} text - a paragraph.
+ * @returns {string[]} its sentences, trimmed.
+ */
+export function sentences(text) {
+  const raw = String(text ?? '').replace(/\s+/g, ' ').trim()
+  if (raw === '') return []
+  const out = []
+  for (const piece of raw.split(SENTENCE_BREAK)) {
+    const one = piece.trim()
+    if (one === '') continue
+    /* A full stop inside "e.g." leaves a fragment whose continuation starts
+       lowercase; that is the one case where the break was not real. */
+    const continues = /^[a-z(]/.test(one) || out[out.length - 1]?.length < 4
+    if (out.length > 0 && continues) out[out.length - 1] = `${out[out.length - 1]} ${one}`
+    else out.push(one)
+  }
+  return out
+}
+
+/**
+ * The sentences that answer a query, chosen the way a retriever picks
+ * evidence: BM25 over sentences, a prior for the paragraph and heading they
+ * sit in, and maximal-marginal-relevance so the second sentence adds
+ * something the first did not say. Purely local — no model, no network.
+ * @param {{h?: string, t?: string, d?: number}[]} blocks - paragraphs.
+ * @param {string} query - what the caller wants to know.
+ * @param {{maxChars?: number, limit?: number, blocks?: number, lambda?: number}} [options] - ceilings.
+ * @returns {{rows: {text: string, heading: string, at: number, step: number}[], total: number, matched: number}} picked sentences in page order.
+ */
+export function evidence(blocks, query, options = {}) {
+  const typed = terms(query)
+  if (typed.length === 0) return { rows: [], total: blocks.length, matched: 0 }
+  const near = rank(blocks, query).slice(0, Math.max(1, Math.min(60, Number(options.blocks ?? 40))))
+  const units = []
+  for (const row of near) {
+    const heading = String(row.block.h ?? '')
+    const body = String(row.block.t ?? '')
+    const parts = sentences(body)
+    for (let step = 0; step < parts.length; step += 1) {
+      const spoken = terms(parts[step])
+      if (spoken.length === 0) continue
+      units.push({ text: parts[step], terms: spoken, heading, at: blocks.indexOf(row.block), step, prior: row.score, block: row.block })
+    }
+  }
+  if (units.length === 0) return { rows: [], total: blocks.length, matched: 0 }
+  const total = Math.max(1, units.length)
+  const seen = new Map()
+  for (const unit of units) for (const term of new Set(unit.terms)) seen.set(term, (seen.get(term) ?? 0) + 1)
+  const average = units.reduce((sum, unit) => sum + unit.terms.length, 0) / total
+  /* A word the page says everywhere cannot point at anything: "to" is in every
+     paragraph of a long article. Keep the terms that actually narrow the page;
+     if the question is all common words, keep them all. */
+  const weight = (term) => {
+    const inHowMany = seen.get(term) ?? 0
+    return inHowMany === 0 ? 0 : Math.log(1 + (total - inHowMany + 0.5) / (inHowMany + 0.5))
+  }
+  const sharp = typed.filter((term) => weight(term) >= 0.5)
+  const asked = sharp.length > 0 ? sharp : typed
+  const askedWeight = asked.reduce((sum, term) => sum + weight(term), 0)
+  for (const unit of units) {
+    const counts = new Map()
+    for (const term of unit.terms) counts.set(term, (counts.get(term) ?? 0) + 1)
+    let score = 0
+    let covered = 0
+    for (const term of asked) {
+      const tf = counts.get(term) ?? 0
+      if (tf === 0) continue
+      covered += weight(term)
+      score += weight(term) * ((tf * (SATURATION + 1)) / (tf + SATURATION * (1 - 0.75 + (0.75 * unit.terms.length) / average)))
+    }
+    /* Matching one frequent word of a nine-word question is not evidence; the
+       share of the question's weight the sentence actually answers is. */
+    score *= covered / Math.max(1e-6, askedWeight)
+    /* The paragraph's own relevance and the words of the heading it sits under
+       both say "this is the right place", so they lift their sentences. */
+    const headingHit = asked.filter((term) => terms(unit.heading).includes(term)).length
+    /* A menu sentence can match the words without saying anything about them;
+       the paragraph's link density is what tells the two apart. */
+    const linkish = 1 - 0.8 * Number(unit.block?.d ?? 0)
+    unit.score = score * linkish * (1 + 0.25 * headingHit) * (1 + 0.5 * (unit.prior > 0 ? 1 : 0))
+  }
+  /* Below a fifth of the best sentence, a match is coincidence rather than
+     evidence; carrying it only costs tokens. */
+  const best = units.reduce((top, unit) => Math.max(top, unit.score), 0)
+  for (const unit of units) if (unit.score < best * 0.2) unit.score = 0
+  const lambda = Math.max(0, Math.min(0.9, Number(options.lambda ?? 0.35)))
+  const ceiling = Math.max(200, Math.min(24_000, Number(options.maxChars ?? 4000)))
+  const limit = Math.max(1, Math.min(60, Number(options.limit ?? 24)))
+  const chosen = []
+  const left = units.filter((unit) => unit.score > 0)
+  let used = 0
+  let lastHeading = ''
+  while (left.length > 0 && chosen.length < limit) {
+    let best = -1
+    let bestValue = -Infinity
+    for (let i = 0; i < left.length; i += 1) {
+      const candidate = left[i]
+      const spoken = new Set(candidate.terms)
+      let overlap = 0
+      for (const picked of chosen) {
+        const other = new Set(picked.terms)
+        let shared = 0
+        for (const term of spoken) if (other.has(term)) shared += 1
+        overlap = Math.max(overlap, shared / Math.max(1, spoken.size + other.size - shared))
+      }
+      const value = candidate.score * (1 - lambda) - lambda * overlap
+      if (value > bestValue) { bestValue = value; best = i }
+    }
+    /* Once the best sentence left is no better than nothing — or is simply a
+       repeat of one already picked — the answer is complete. */
+    if (best < 0 || bestValue <= 0) break
+    const pick = left.splice(best, 1)[0]
+    const heading = pick.heading !== lastHeading && pick.heading !== '' ? pick.heading.length + 8 : 0
+    if (used + pick.text.length + heading > ceiling && chosen.length > 0) break
+    lastHeading = pick.heading
+    used += pick.text.length + heading
+    chosen.push(pick)
+  }
+  chosen.sort((a, b) => a.at - b.at || a.step - b.step)
+  return { rows: chosen.map((one) => ({ text: one.text, heading: one.heading, at: one.at, step: one.step })), total: blocks.length, matched: chosen.length }
+}
+
 /**
  * Read only the passages of a page that answer a query, so a long page costs
  * what the answer costs instead of what the page costs.
@@ -1248,12 +1391,19 @@ export async function readRelevant(page, query, options = {}) {
     if (ranked.length === 0) {
       return { title: String(said?.title ?? page.title ?? ''), url: String(page.url ?? ''), text: '', chars: 0, matched: 0, total: all.length }
     }
-    const limit = Math.max(1, Math.min(20, Number(options.limit ?? 8)))
+    /* Passages cost whole paragraphs; sentences cost only the ones that say
+       something about the query, which on a long page is most of the saving. */
+    let pieces = ranked
+    if (options.sentences !== false) {
+      const picked = evidence(all, query, { maxChars: budget, limit: options.limit, blocks: options.blocks, lambda: options.lambda })
+      pieces = picked.rows.map((row) => ({ block: { h: row.heading, t: row.text }, score: 0 }))
+    }
+    const limit = Math.max(1, Math.min(60, Number(options.limit ?? (options.sentences === false ? 8 : 24))))
     const lines = []
     let used = 0
     let matched = 0
     let lastHeading = ''
-    for (const row of ranked.slice(0, limit)) {
+    for (const row of pieces.slice(0, limit)) {
       const body = String(row.block.t ?? '')
       if (used + body.length > budget) continue
       const heading = String(row.block.h ?? '')

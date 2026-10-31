@@ -165,6 +165,27 @@ picture comes back on the mutation that satisfies it. A page that changes 137 ms
 starts answers at 138 ms, not at the next 100 ms tick — the same reason `idle` (a mutation-free
 window) costs one round trip on an animation-heavy page instead of one per frame.
 
+## Reading for an answer
+
+`browser_read` with a `query` does not return the page; it returns the sentences that answer the
+question. The page-side block reader already returns paragraphs with their heading and link
+density, so the work stays in `read.js` and costs no extra round trip.
+
+Paragraphs are ranked first (BM25 over the question's terms, link-heavy menus down-weighted), then
+split into sentences. Each sentence is scored on its own with the same saturation and length
+normalisation, and that score is multiplied by three priors: the words of its heading, the rank of
+the paragraph it sits in, and inverse link density. Words the page says everywhere are dropped
+before scoring — a term in most sentences cannot point at anything — and a sentence that matches
+only part of the question is scaled by the share of the question's idf weight it actually covers,
+which is what stops a paragraph containing "to" from competing with one containing "refund".
+
+Selection is not "the top N scores": each pick subtracts its Jaccard overlap with what is already
+chosen (MMR), selection stops when the best remaining sentence is worth nothing, and picked
+sentences are packed to a character budget and restored to document order. Terms are folded
+(plurals, trailing `-ing`/`-ed`) so a question can use a different inflection than the page.
+
+`sentences: false` keeps the paragraph path for callers who want the whole section.
+
 ## Sign-ins and reclaim
 
 Sign-in state lives in the profile, and session cookies — the kind a sign-in usually sets,

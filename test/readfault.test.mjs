@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { readPage, renderPage, article, readArticle, blocks, terms, rank, readRelevant, finder, findOnPage } from '../read.js'
+import { readPage, renderPage, article, readArticle, blocks, terms, rank, readRelevant, finder, findOnPage, sentences, evidence } from '../read.js'
 
 /** A page whose Runtime.evaluate answers with a thrown page script. */
 function throwingPage(description = 'Error: hostile page broke the DOM reader\n    at <anonymous>:1:1') {
@@ -125,6 +125,63 @@ test('ranking puts the passage that answers the query first', () => {
   const ranked = rank(blocks, 'which LTS should I install')
   assert.equal(ranked[0].block.t, 'Use the LTS installer for Windows and macOS.')
   assert.ok(ranked[0].score > ranked[1].score)
+})
+
+test('sentences cut Latin and Chinese the same way', () => {
+  assert.deepEqual(sentences('One thing happens. Then another thing happens.'), ['One thing happens.', 'Then another thing happens.'])
+  assert.deepEqual(sentences('第一句话在这里。第二句话在这里。'), ['第一句话在这里。', '第二句话在这里。'])
+  assert.deepEqual(sentences('   '), [])
+})
+
+test('a fragment left by an abbreviation stays with its sentence', () => {
+  const parts = sentences('Use e.g. this one for the small case. It is enough.')
+  assert.equal(parts.length, 2)
+  assert.match(parts[0], /e\.g\. this one/)
+})
+
+test('evidence keeps the sentence that answers and drops the menu', () => {
+  const blocks = [
+    { h: 'Meetings', t: 'The team met on Tuesday. The team met on Wednesday.', d: 0 },
+    { h: 'Billing', t: 'Refunds are accepted within 30 days of purchase. Anything older is handled by the finance team.', d: 0 },
+    { h: 'Menu', t: 'Home Download LTS About', d: 0.9 },
+  ]
+  const picked = evidence(blocks, 'how long do I have to get a refund', { maxChars: 900 })
+  assert.ok(picked.matched >= 1)
+  assert.match(picked.rows[0].text, /30 days/)
+  assert.ok(picked.rows.every((row) => row.heading !== 'Menu'))
+})
+
+test('evidence never spends more characters than it was given', () => {
+  const blocks = Array.from({ length: 30 }, (_, i) => ({ h: 'Part', t: `Refund rule number ${i + 1} says the money comes back within 30 days, always.`, d: 0 }))
+  const picked = evidence(blocks, 'refund within 30 days', { maxChars: 240 })
+  const used = picked.rows.reduce((sum, row) => sum + row.text.length, 0)
+  assert.ok(used <= 240, `used ${used}`)
+  assert.ok(picked.rows.length >= 1)
+})
+
+test('evidence picks sentences that add something, not the same one twice', () => {
+  const blocks = [
+    { h: 'A', t: 'The refund goes back to the card. The refund goes back to the card in full.', d: 0 },
+    { h: 'B', t: 'The refund arrives within 30 days of the request.', d: 0 },
+  ]
+  const picked = evidence(blocks, 'refund card 30 days', { maxChars: 900 })
+  const texts = picked.rows.map((row) => row.text)
+  assert.equal(new Set(texts).size, texts.length)
+  assert.ok(texts.some((text) => /30 days/.test(text)), texts.join(' | '))
+})
+
+test('a query now costs the evidence, not the paragraphs around it', async () => {
+  const filler = 'The team met on Tuesday to look at the numbers and agree what to do next. Nothing was decided. '
+  const blocks = [
+    ...Array.from({ length: 12 }, (_, i) => ({ h: 'Meetings', t: `${i + 1}. ${filler}`, d: 0 })),
+    { h: 'Billing', t: 'Refunds are accepted within 30 days of purchase, and the money goes back to the same card.', d: 0 },
+  ]
+  const page = { url: 'https://example.com/story', title: 'Story', cdp: { send: async () => ({ result: { value: JSON.stringify({ title: 'Story', blocks }) } }) } }
+  const whole = await readRelevant(page, 'how long do I have to get a refund', { maxChars: 2000, sentences: false })
+  const near = await readRelevant(page, 'how long do I have to get a refund', { maxChars: 2000 })
+  assert.match(near.text, /30 days/)
+  assert.ok(near.chars < whole.chars, `evidence ${near.chars} vs paragraphs ${whole.chars}`)
+  assert.ok(near.chars < whole.chars * 0.6, `expected a real saving, got ${near.chars} of ${whole.chars}`)
 })
 
 test('a query reads only the passages, not the page', async () => {

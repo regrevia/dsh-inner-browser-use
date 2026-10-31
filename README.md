@@ -12,7 +12,7 @@ live picture of that browser, and your own cursor keeps working on the picture.
 | --- | --- |
 | `browser_open` | Starts the browser (or reuses the running one) and opens an address. `headless: false` shows a real window on the desktop instead. |
 | `browser_view` | Returns the address, the title, every control as `1 … 120`, and the visible text. |
-| `browser_read` | Reads the page the way a person does: one Markdown block of headings, paragraphs, lists and links, no controls. Far fewer tokens than a snapshot on long pages, and the links stay usable. Give it a `query` and only the passages that answer it come back, ranked (BM25 over Readability-style blocks, link-heavy menus down-weighted). |
+| `browser_read` | Reads the page the way a person does: one Markdown block of headings, paragraphs, lists and links, no controls. Far fewer tokens than a snapshot on long pages, and the links stay usable. Give it a `query` and only the sentences that answer it come back: BM25 over Readability-style blocks, then per-sentence scoring with heading, position and link-density priors, idf-weighted coverage, MMR de-duplication and a character budget — 92% fewer tokens on a long page in the bench. |
 | `browser_find` | Finds words (or a regex) anywhere on the page: matching controls come back with a clickable number, matching text with its point, each saying whether it is on screen. |
 | `browser_extract` | Returns the items a CSS selector matches, one compact line each with its link, instead of the whole page. |
 | `browser_click` | Clicks a numbered control, or an `x`/`y` point. `double: true` double-clicks. A cookie banner or modal over the control is cleared first, then the click happens. |
