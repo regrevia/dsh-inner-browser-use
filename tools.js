@@ -2323,7 +2323,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (dead !== '') return { text: dead }
         /* The column may still be drawing nothing: say so here, where the
            person is looking for a picture, rather than only in browser_state. */
-        const unseen = who === '' ? '' : viewerNote(await watchForViewer(sidecar, page, 1200))
+        /* A pane that is going to show this page has asked for it already, a
+           moment ago; waiting a second more for a picture that is either coming
+           now or never is a second of the person's cold start. */
+        const unseen = who === '' || typeof host?.want !== 'function' ? '' : viewerNote(await watchForViewer(sidecar, page, 250))
         const runtime = flashNote()
         return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + (runtime === '' ? '' : `${runtime}\n`) + await look(page, { mode: 'text' }) + (await pdfNote(page)) }
       },

@@ -2813,9 +2813,18 @@ export class Sidecar {
 
   /** @param {string | undefined} url - first address. @returns {Promise<SidecarPage>} the page. */
   async launch(url) {
+    /* Where a cold start goes, when someone asks: `DSH_INNER_BROWSER_TRACE=1`
+       writes one line per start with the milliseconds each stage took. */
+    const trace = process.env.DSH_INNER_BROWSER_TRACE === '1'
+    const t0 = Date.now()
+    const marks = []
+    const mark = (name) => {
+      if (trace) marks.push(`${name} ${Date.now() - t0}`)
+    }
     /* A rest and the next call can collide: wait for the browser that is going
        out to be gone before starting the one that is coming in. */
     if (this.closing !== null) await this.closing.catch(() => {})
+    mark('closing')
     /* Chromium 87 opening the profile a current Chrome owns would downgrade it
        and lock it, so the Flash-era browser keeps a profile of its own. The two
        never share a directory; a game signed into one is signed in there only. */
@@ -2824,18 +2833,26 @@ export class Sidecar {
        next step even though the person never signed out, so the working copy
        is put back before the browser is asked to read it. */
     restoreLogin(dir)
+    mark('login')
     let port = await this.runningPort(dir) // ui-copy-ignore
     if (port === 0) port = await this.spawnChrome(dir) // ui-copy-ignore
     else this.owns = ownsBrowser({ pid: process.pid, owner: markerPid(dir) })
+    mark('browser')
     const ws = await this.pageSocket(port) // ui-copy-ignore
+    mark('socket')
     const cdp = new Cdp(ws)
     await cdp.ready
     this.cdp = cdp
+    mark('cdp')
     this.page = await this.bind(await new SidecarPage(cdp, this.profile, port, () => this.holding()).start()) // ui-copy-ignore
+    mark('page')
     if (url !== undefined && url !== '') this.lastUrl = String(url)
     await this.restoreSessionCookies()
+    mark('cookies')
     await this.page.cast()
+    mark('cast')
     if (url !== undefined && url !== '') await this.page.navigate(url)
+    mark('navigate')
     /* A runtime that opens a port is not yet a runtime that plays: ask the page
        whether the plugin is really in it, so a broken install is said out loud
        instead of showing up as a black movie. */
@@ -2848,6 +2865,7 @@ export class Sidecar {
     this.backup = setInterval(() => snapshotLogin(dir), 10 * 60_000)
     this.backup.unref?.()
     this.logger?.info?.('dsh-inner-browser-use: sidecar up on port %s (%s)', port, this.headless ? 'headless' : 'windowed') // ui-copy-ignore
+    if (trace) console.error(`sidecar-start: ${Date.now() - t0} ms · ${marks.join(' · ')}`) // ui-copy-ignore
     return this.page
   }
 
@@ -3006,11 +3024,20 @@ export class Sidecar {
       throw new Error('sidecar: the Flash runtime did not open a debugging port') // ui-copy-ignore
     }
     const file = join(dir, 'DevToolsActivePort')
-    for (let i = 0; i < 150; i += 1) {
-      await wait(100)
-      if (!existsSync(file)) continue
-      const port = Number(String(readFileSync(file, 'utf8')).split('\n')[0] ?? 0) // ui-copy-ignore
-      if (Number.isFinite(port) && port > 0) return port // ui-copy-ignore
+    /* Chrome writes the port in a few hundred milliseconds. A fixed 100 ms sleep
+       before the first look hands away a tenth of every cold start, and a 100 ms
+       tick rounds the rest up; so look at once, then poll closely until it shows
+       up, still giving up after the same fifteen seconds. */
+    const deadline = Date.now() + 15_000
+    let tick = 0
+    for (;;) {
+      if (existsSync(file)) {
+        const port = Number(String(readFileSync(file, 'utf8')).split('\n')[0] ?? 0) // ui-copy-ignore
+        if (Number.isFinite(port) && port > 0) return port // ui-copy-ignore
+      }
+      if (Date.now() >= deadline) break
+      await wait(tick)
+      tick = tick < 40 ? tick + 5 : 100
     }
     throw new Error('sidecar: Chrome did not open a debugging port') // ui-copy-ignore
   }
@@ -3248,6 +3275,10 @@ export class Sidecar {
   }
 
   async pageSocket(port) { // ui-copy-ignore
+    /* The port is open a little before the page target answers, so the first
+       probes are close together: a flat 200 ms gap costs a fifth of a second of
+       every cold start on average for nothing. */
+    let tick = 10
     for (let i = 0; i < 60; i += 1) {
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) }) // ui-copy-ignore
@@ -3262,7 +3293,8 @@ export class Sidecar {
       } catch {
         /* Chrome is still coming up */
       }
-      await wait(200)
+      await wait(tick)
+      tick = tick < 100 ? tick + 15 : 100
     }
     throw new Error('sidecar: Chrome has no page target')
   }

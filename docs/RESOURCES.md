@@ -61,6 +61,38 @@ person is looking at.
 | a tab is left in a chat that stopped using it | 10-minute LRU, skipped while it streams or holds a popup |
 | the last call was minutes ago but the pane is open | freeze, not close: scroll position, DOM and sign-ins are still there on wake |
 
+## Where a cold start goes
+
+A cold start is one Chrome launch, and until 0.47.1 it was a single opaque
+number. `DSH_INNER_BROWSER_TRACE=1` now prints one stderr line per launch with the
+cumulative time at each phase, so the cost can be attributed instead of guessed:
+
+```
+sidecar-start: 997 ms · closing 0 · login 1 · browser 608 · socket 799 · cdp 821
+  · page 866 · cookies 866 · cast 869 · navigate 996
+```
+
+| phase | what it covers | what was changed in 0.47.1 |
+| --- | --- | --- |
+| `closing` | waiting for an outgoing `Browser.close` | nothing: single-flight, and the wait is only there when a rest and a call collide |
+| `login` | pointing the profile at the saved sign-ins | nothing |
+| `browser` | spawning Chrome and reading `DevToolsActivePort` | discovery now starts at 5 ms and backs off to 100 ms, instead of sleeping a flat interval first |
+| `socket` | finding a `page` target on the debugging port | the `/json/list` poll starts at 10 ms and grows by 15 ms per try, capped at 100 ms |
+| `cdp` / `page` / `cookies` / `cast` | handshake, page domain, saved cookies, screencast prep | nothing; these are tens of milliseconds together |
+| `navigate` | the first URL actually loading | nothing: this is the site |
+
+Two consequences worth knowing before reading the phases as a scoreboard: the
+answer is wall clock on a warm machine, and `closing` alone ranges from 0 to
+371 ms depending on whether a rest was in flight, so compare one phase against
+itself across runs rather than comparing totals. The phase table with before and
+after numbers is in `docs/BENCH.md` (the "冷启动拆解" section).
+
+The other 1.1 s that used to sit in front of the first page was not a phase at
+all: `browser_open` waited up to 1200 ms to find out whether a pane was going to
+show the page. Nothing that long is worth a look at a picture that either arrives
+on its own or never will, so the wait is now 250 ms and is skipped entirely when
+the host has no pane to offer.
+
 ## Neighbours
 
 Compared with the projects this one is usually put next to (`--idle-timeout`,

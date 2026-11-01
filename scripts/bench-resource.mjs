@@ -99,7 +99,8 @@ try {
   await run('browser_open', { url })
   const first = text(await run('browser_view', {}))
   report.cold_start_ms = Date.now() - coldAt
-  check(first.includes('bench'), `cold start ${String(report.cold_start_ms)} ms`)
+  report.view_chars = first.length
+  check(first.includes('bench'), `cold start ${String(report.cold_start_ms)} ms, the view is ${String(report.view_chars)} chars`)
   check(report.cold_start_ms < 6000, 'cold start under six seconds')
 
   const readAt = Date.now()

@@ -251,4 +251,18 @@ DSH_INNER_BROWSER_CHROME_FLAGS="--renderer-process-limit=2" npm run bench
 ```
 
 The competitor side of the comparison and its raw record live in
-`docs/BENCH.md` and `docs/measure-competitors-2026-11.json`.
+`docs/BENCH.md` and `docs/measure-competitors-2026-11.json`; the per-page read
+cost (chars returned for the same fixture) is in
+`docs/measure-tokens-2026-11.json`.
+
+When a cold start number looks wrong, ask the launch where it went instead of
+guessing:
+
+```bash
+DSH_INNER_BROWSER_TRACE=1 npm run bench 2>&1 | grep sidecar-start
+```
+
+One line per launch, cumulative milliseconds at each phase (`closing · login ·
+browser · socket · cdp · page · cookies · cast · navigate`). Compare one phase
+against itself across runs — `closing` ranges from 0 to about 370 ms depending on
+whether a rest was in flight.

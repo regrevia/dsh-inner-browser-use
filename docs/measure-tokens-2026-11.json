@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-11-02T03:43:08+08:00",
+  "fixture": "same page as scripts/bench-resource.mjs (40 repeated sentences + 60 links), served on localhost",
+  "method": "each tool: navigate to the fixture, then one read of the page (snapshot for the neighbours, browser_view and browser_read for ours); chars counted from the tool result text",
+  "ours": {
+    "browser_view_chars": 2302,
+    "browser_read_chars": 2174,
+    "browser_read_ms": 2
+  },
+  "competitors": {
+    "playwright_mcp": {
+      "tool": "browser_snapshot",
+      "chars": 7804,
+      "snapshot_ms": 6,
+      "nav_ms": 945
+    },
+    "chrome_devtools_mcp": {
+      "tool": "take_snapshot",
+      "chars": 5381,
+      "snapshot_ms": 15,
+      "nav_ms": 1184
+    }
+  },
+  "note": "our read returns the page as text for the model; the neighbours' snapshots carry the same text plus a uid line per control, which is why they are longer. Our browser_view is the comparable one: it also carries refs, and its size is in bench-resource.json (view_chars)."
+}

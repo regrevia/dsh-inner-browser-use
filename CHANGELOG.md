@@ -1,3 +1,12 @@
+## 0.47.1
+
+- 冷启动里那 1.2 秒不是 Chrome，是我们在等一个「会不会有人看」的画面：`browser_open` 以前最多等 1200 ms，现在有面板可显示时最多等 250 ms，没有面板可显示时不等。冷启动中位 **1703 → 465–544 ms**（8 次 434–1079 ms），这一条是主要来源
+- 想知道另外那 0.5 秒花在哪不用猜了：`DSH_INNER_BROWSER_TRACE=1` 在 stderr 打一行阶段账（`closing · login · browser · socket · cdp · page · cookies · cast · navigate`，累计毫秒），`docs/BENCH.md` 的「冷启动拆解」给了改前改后的逐阶段对照
+- 等 Chrome 的两处轮询不再先无条件睡一轮：调试端口发现从 5 ms 起步、放宽到 100 ms；`/json/list` 找页面 target 从 10 ms 起步、每轮 +15 ms、封顶 100 ms。`socket` 阶段 128–212 → 103–191 ms
+- 读一页到底要多少 token 有数字了：同一张本地页（40 段正文 + 60 个链接），本插件 `browser_view` 返回 **2302 字**、`browser_read` 返回 **2174 字**；Playwright MCP `browser_snapshot` 7804 字、Chrome DevTools MCP `take_snapshot` 5381 字。原始记录 `docs/measure-tokens-2026-11.json`，脚本 `/tmp/compbench/tok.mjs` 的思路写进了本版
+- `npm run bench` 多报一个 `view_chars`：冷启动那次读取返回多少字符也进 JSON，以后 token 成本不用另开脚本量
+- 诚实说明：端口轮询那两处合计只省约 40–100 ms，冷启动变快的主因是第一条；bench 里没有面板可显示，所以走的是「不等」那条路，真实会话有右栏时会多等最多 250 ms
+
 ## 0.47.0
 
 - 冷启动、空闲内存、空闲 CPU 三项不再靠猜：新增 `scripts/bench-resource.mjs`（`npm run bench`），一次跑完冷启动、读一次、点一次、空闲 30 秒、冻结、休息、唤醒八个阶段，每项都是这台机器上的真实进程数、RSS 和 CPU 秒
