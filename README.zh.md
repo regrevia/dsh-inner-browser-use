@@ -19,9 +19,12 @@ profile，不是产品自带的那个浏览页签：右栏放的是它的画面�
 | `browser_key` | 按一个键：Enter、Tab、Escape、Backspace、Delete、上下左右、Home、End、PageUp、PageDown。 |
 | `browser_scroll` | 在页面中心滚轮，也可以指定 `x`/`y`。`dy: 600` 约一屏。 |
 | `browser_shot` | 存一张 PNG 到 `~/.dsh/inner-browser-use/screenshots`，返回路径；`region: [x, y, w, h]` 只截一块（游戏、图表、看局部）。 |
+| `browser_look` | 看自己画自己的页面（游戏、canvas、Flash）：把画面压成字母网格，一块屏幕一个字母、同色同字母，12×8 约 200 字符，不花图片 token；再看一次只报变了的格子。要颜色、布局或给人看图仍用 `browser_shot`。 |
 | `browser_media` | 列出页面已经请求过的视频和声音（带大小），页面自己播放器里那个排第一、标 `main`；`save: <行号>`、`save: main` 或地址片段存下来。广告和统计默认不出现（`all: true` 才看），`watch: false` 关掉这个页面的记录。流会顺着播放列表把片段取回拼好，不用装任何东西。 |
 | `browser_login` | 按名字留住登录：`save` 存下当前窗口的 cookie 和各站的 localStorage，`list` 看有哪些，`use` 切回那个账号并重开页面，`import` 把本机 Chrome/Brave/Edge 里已经登着的站直接留成一个名字，`drop` 忘掉。名字跟着浏览器走、不跟着一个会话走，重启也在；同一站点两个账号就存两个名字。磁盘上那一份是加密的，钥匙在系统钥匙串里。 |
 | `browser_state` | 报浏览器在不在跑、用的哪个 profile、地址、标题、有几个右栏在看它，以及它此刻占多少内存、没人用的话还有多久关闭。 |
+
+同一个站读两次就会被按 origin 记住（`~/.dsh/inner-browser-use/sites.json`，可用 `DSH_INNER_BROWSER_STATE_DIR` 改位置）。第二次之后：正文或控件多的站，`browser_view` 默认先给 `map:` 地标；文章长的站，`browser_read` 默认截到 3500 字符并说明截在哪。两者都带一句实测数字，也都会被显式 `mode`、`query`、`max_chars` 覆盖——学到的是默认值，不是对直接提问的答案。`scripts/check-sites.mjs` 是现场证据：300 个按钮的页看三次、12000 字的文档读三次，报出截断位置。
 
 点、输入、按键之后的那一行会多一句结果：`· navigated to …`（换页了）、`· content changed`（页内有变化）、`· no visible change`（点了没动）、Flash 页则是 `· screen updated` / `· no frame change`；`read: true` 时不再多说。
 

@@ -28,6 +28,10 @@ try {
   await sidecar.watch(() => {})
   await sidecar.page.navigate(url).catch(() => {})
   await wait(9000)
+  /* A port that answers is not a plugin that loaded: ask the page, because a
+     missing plugin shows up as a black movie and reads like a slow one. */
+  const plugin = sidecar.flashCheck ?? (await sidecar.checkFlash())
+  const pluginOk = plugin?.ok === true
   const said = []
   const timed = async (name, args) => {
     const started = Date.now()
@@ -64,8 +68,8 @@ try {
      up whole. Otherwise a bad minute at the site reads as a regression here. */
   const degraded = said[0].chars < 300 || said[0].text.includes('page trouble')
   const fast = () => degraded || (median(clicks) < 120 && median(types) < 120)
-  ok = clicks.length === 5 && fast() && clicks.every(within) && types.every(within) && Number(last?.chars ?? 0) > 0 && viewAgain.chars < said[0].chars && viewThird.chars < said[0].chars
-  console.log(JSON.stringify({ view: said[0], clickMedianMs: median(clicks), clickMaxMs: Math.max(...clicks.map((one) => one.ms)), typeMedianMs: median(types), typeMaxMs: Math.max(...types.map((one) => one.ms)), clickChars: clicks[0].chars, typeChars: types[0].chars, viewAgainChars: viewAgain.chars, viewThirdChars: viewThird.chars, viewAgainText: viewAgain.text, degraded, ok }))
+  ok = pluginOk && clicks.length === 5 && fast() && clicks.every(within) && types.every(within) && Number(last?.chars ?? 0) > 0 && viewAgain.chars < said[0].chars && viewThird.chars < said[0].chars
+  console.log(JSON.stringify({ plugin, view: said[0], clickMedianMs: median(clicks), clickMaxMs: Math.max(...clicks.map((one) => one.ms)), typeMedianMs: median(types), typeMaxMs: Math.max(...types.map((one) => one.ms)), clickChars: clicks[0].chars, typeChars: types[0].chars, viewAgainChars: viewAgain.chars, viewThirdChars: viewThird.chars, viewAgainText: viewAgain.text, degraded, ok }))
 } catch (error) {
   console.log(JSON.stringify({ ok: false, error: String(error?.message ?? error).slice(0, 160) }))
 } finally {

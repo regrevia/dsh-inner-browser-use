@@ -97,6 +97,47 @@ still hold the cookies.
   内置浏览器 means the page half is stale: reload the GUI page.
 - Guest-era logins are not migrated; sign in once in the new profile.
 
+## 7. A page that draws itself
+
+```bash
+node scripts/check-look.mjs
+```
+
+Headless Chrome paints a page, `browser_look` returns a 12×8 letter grid, the page
+paints a red square, and the second look names only the cells that moved. Expected:
+`three looks cost 639 characters and no picture`. A look that returns words instead
+of a grid, or a diff of the whole screen, means the PNG was not decoded locally.
+
+## 8. The next visit is cheaper
+
+```bash
+node scripts/check-sites.mjs
+```
+
+Two local origins: a page of 300 buttons and a 12,000-character document. Expected,
+in order: the first view is the page, the second is still the page (one read is not a
+lesson), the third opens as `map: 90 controls` and says `this site reads big (2 read(s),
+~2946 chars of page, ~90 controls)`; the first document read is the whole thing (6,096
+characters), a forced second read is the whole thing again, and the third comes back
+`cut at 3500 characters` with `this site reads long (2 read(s), ~6000 chars of text)`.
+The run ends with `sites: ok` and leaves `sites.json` in a temporary directory.
+
+A third view that is still the page, or a third read that is not cut, means the record
+is written after the default is chosen, or the size recorded is the output's rather
+than the page's: a cut must not shrink the site for the next visit.
+
+## 9. It does not grow
+
+```bash
+npm run soak
+```
+
+Twenty-four cycles of open, read, snapshot, re-read through one headless browser.
+Expected: `soak: ok · 24 cycles` with `pages 1` and memory lower at the end than
+at the start. Memory climbing with the cycle count, or a second page appearing,
+means something is kept per read rather than per page. The run is bounded on
+purpose — under a minute, no internet.
+
 ## Live
 
 `node scripts/live.mjs` does the same work on the open internet, with no local

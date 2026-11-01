@@ -134,7 +134,7 @@ browser without pulling the column away from the person reading it.
 
 ## Tool surface
 
-`sidecarTools()` in `tools.js` builds the 28 definitions and `index.js` registers them on the
+`sidecarTools()` in `tools.js` builds the 39 definitions and `index.js` registers them on the
 plugin's tool scope. All of them return one text block. A page read numbers the controls and
 keeps those numbers across later reads, so `browser_click` by ref means the element the model
 last saw; navigation drops them and the model gets `REF_GONE` rather than a wrong click.
@@ -197,6 +197,32 @@ cut, `readRelevant` returns the three blocks that ranked highest (each trimmed t
 characters) and no text, and the tool turns that into a line saying nothing directly answers the
 question plus those passages. The whole page is still one `browser_view` away, so the expensive
 fallback — a page pasted into the context for a question it never addressed — is gone.
+
+## Looking at a page that draws itself
+
+A canvas, a game and a Flash movie have no text tree and no controls: a snapshot reads
+an empty page and a screenshot costs image tokens on every look. `browser_look` takes
+the captured frame, decodes the PNG inside Node (so no page policy and no browser
+decode step is involved) and prints a grid of palette letters — one letter per block of
+screen, the same letter for the same colour. A 12×8 look costs about 200 characters; a
+second look diffs against the first grid and reports only the cells that moved, plus the
+box they moved in. `browser_prepare` is the way in: it reports the surface, the frame
+rate and whether keys arrive, and says when the page needs the Flash runtime.
+
+## Sites that teach the next read
+
+Two calls into the same origin, the browser knows what it is looking at. A record per
+origin in `sites.json` holds an exponentially drifted average of the page's character
+count, its control count and its article length, updated by every `browser_view` and
+`browser_read` — measured before the budget cuts the output, so a cut does not shrink
+the site on the next visit. Past two reads, a site whose text or control count is big
+opens `browser_view` as the `map:` view instead of a page of numbered controls, and a
+site whose articles are long has `browser_read` land at 3,500 characters and say where
+it cut. Every learned default carries the measurement that produced it, and every one
+yields to what the model asked for: an explicit `mode`, `query` or `max_chars` is used
+as given. The record lives in `~/.dsh/inner-browser-use/sites.json` (override with
+`DSH_INNER_BROWSER_STATE_DIR`), is written at most once every two seconds, and never
+holds page text — only counts.
 
 ## Answering across tabs
 

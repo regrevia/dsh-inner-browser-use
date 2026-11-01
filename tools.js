@@ -10,12 +10,12 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
-import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
 import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
+import { around, decodePng, diffGrid, gridOf } from './pixels.js?v=1'
 import { dropLogin, listLogins, readLogin, saveLogin, signInsFor, vaultState } from './vault.js'
 import { readBrowserCookies, siteOf } from './chromecookies.js'
 import { readPage, renderPage, readArticle, readRelevant, readTabs, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
@@ -70,6 +70,9 @@ const WAYS = new Set(['human', 'dom'])
 
 /** The way each chat said to act, until it says otherwise. */
 const chatWays = new Map()
+/* The last grid each chat saw, per screen and size: a look after a move is
+   worth more as a difference than as another grid. */
+const lastLooks = new Map()
 
 /**
  * The way this call should act: what it asked for, else what its chat last set,
@@ -87,20 +90,34 @@ function wayOf(args) {
 /** Which project the running call belongs to, so its files stay together. */
 export const workScope = new AsyncLocalStorage()
 
-/** Where files a call produces land, under the user's home. */
-export const ARTIFACT_ROOT = String(process.env.DSH_INNER_BROWSER_ARTIFACTS ?? '') !== ''
-  ? String(process.env.DSH_INNER_BROWSER_ARTIFACTS)
-  : join(homedir(), '.dsh-inner-browser-use', 'artifacts')
+/** Set when a caller wants artifacts somewhere other than the project. */
+export const ARTIFACT_OVERRIDE = String(process.env.DSH_INNER_BROWSER_ARTIFACTS ?? '')
+
+/** Where a call that is not inside a project still gets its files. */
+export const ARTIFACT_HOME = join(homedir(), '.dsh-inner-browser-use', 'artifacts')
 
 /** How many files one kind keeps per chat; older ones go. */
 export const ARTIFACT_KEEP = 40
 
-/** Project folder name: the folder's own name, plus a short hash of its path. */
-function projectKey() {
-  const cwd = String(workScope.getStore() ?? '')
-  if (cwd === '') return 'no-project'
-  const named = basename(cwd).toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/^-+|-+$/g, '')
-  return `${named === '' ? 'project' : named}-${createHash('sha1').update(cwd).digest('hex').slice(0, 6)}`
+/**
+ * The folder a project keeps its browser files in. A project is the place a
+ * person would look for what the agent did there, so screenshots and sniffed
+ * media land inside it instead of under the home directory.
+ * @param {string} cwd - the project folder, empty when there is none.
+ * @returns {string} absolute path.
+ */
+export function browserDirOf(cwd) {
+  return cwd === '' ? join(ARTIFACT_HOME, 'no-project') : join(cwd, '.dsh', 'browser')
+}
+
+/**
+ * Where files a call produces land: inside the project the call belongs to.
+ * `DSH_INNER_BROWSER_ARTIFACTS` replaces the whole location when set.
+ * @returns {string} absolute path; not created yet.
+ */
+export function artifactRoot() {
+  if (ARTIFACT_OVERRIDE !== '') return ARTIFACT_OVERRIDE
+  return browserDirOf(String(workScope.getStore() ?? ''))
 }
 
 /** Chat folder name: the short id a person can match to the chat. */
@@ -111,18 +128,36 @@ function sessionKey() {
 
 /**
  * Where one kind of file for this project and this chat goes.
- * `~/.dsh-inner-browser-use/artifacts/<project>/<chat>/<kind>/`
- * @param {string} kind - shots, pictures, pdf.
+ * `<project>/.dsh/browser/<chat>/<kind>/`
+ * @param {string} kind - shots, pictures, pdf, media.
  * @returns {string} absolute directory; not created yet.
  */
 export function artifactDir(kind) {
-  return join(ARTIFACT_ROOT, projectKey(), sessionKey(), kind)
+  return join(artifactRoot(), sessionKey(), kind)
+}
+
+/**
+ * A project's browser folder is the agent's workspace, not part of the
+ * product: one ignore file keeps a run of screenshots out of `git status`.
+ * @param {string} root - the folder a call writes under.
+ * @returns {Promise<void>} done, or done without a file when it is not wanted.
+ */
+async function ignoreInProject(root) {
+  if (ARTIFACT_OVERRIDE !== '') return
+  /* With no project there is no repository to keep clean: the home folder this
+     falls back to sits outside every checkout. */
+  if (String(workScope.getStore() ?? '') === '') return
+  try {
+    await writeFile(join(root, '.gitignore'), '# browser files: screenshots, media, traces\n*\n')
+  } catch {
+    /* a folder that cannot take the file is still usable */
+  }
 }
 
 /**
  * Write one file where the project and the chat expect it, and keep the folder
  * from growing without a limit.
- * @param {string} kind - shots, pictures, pdf.
+ * @param {string} kind - shots, pictures, pdf, media.
  * @param {string} body - base64 body.
  * @param {{name?: string, ext?: string, prefix?: string}} [options] - file name.
  * @returns {Promise<string>} absolute path.
@@ -130,6 +165,7 @@ export function artifactDir(kind) {
 export async function saveArtifact(kind, body, options = {}) {
   const dir = artifactDir(kind)
   await mkdir(dir, { recursive: true })
+  await ignoreInProject(artifactRoot())
   const ext = String(options.ext ?? '.png')
   /* A name is a name: no separators, no runs of dots that could read as a path
      climb, and no leading dot to hide the file. */
@@ -173,6 +209,139 @@ export async function pruneArtifacts(dir, keep) {
       /* best effort: a file in use stays */
     }
   }
+}
+
+/**
+ * What each site costs to read, remembered between calls.
+ *
+ * A wiki page and a web app shell are both "a page", but one is four thousand
+ * words of prose and the other is three hundred buttons: reading both the same
+ * way spends the same tokens on very different things. The first read of a
+ * site teaches the next one — that is the only reason this file exists.
+ */
+const SITE_FILE = 'sites.json'
+/** Where the browser keeps its own state; the same folder the tabs list uses. */
+export function tacticsDir() {
+  return process.env.DSH_INNER_BROWSER_STATE_DIR || join(homedir(), '.dsh', 'inner-browser-use')
+}
+/** The site a record belongs to: scheme plus host, nothing per-page. */
+export function originOf(url) {
+  try {
+    const one = new URL(String(url ?? ''))
+    return one.protocol === 'http:' || one.protocol === 'https:' ? one.origin : ''
+  } catch {
+    return ''
+  }
+}
+const siteTactics = new Map()
+let siteLoaded = null
+let siteWriting = Promise.resolve()
+let siteWroteAt = 0
+/**
+ * Read the record once per process. A file that is missing or half written by
+ * an older version is not a reason to fail a read: an empty memory still works.
+ * @returns {Promise<void>} done.
+ */
+export async function loadTactics() {
+  if (siteLoaded !== null) return siteLoaded
+  siteLoaded = (async () => {
+    try {
+      const said = JSON.parse(await readFile(join(tacticsDir(), SITE_FILE), 'utf8'))
+      for (const [key, value] of Object.entries(said ?? {})) {
+        if (originOf(key) === key && value !== null && typeof value === 'object') siteTactics.set(key, value)
+      }
+    } catch {
+      /* no memory yet */
+    }
+  })()
+  return siteLoaded
+}
+/** What is known about a site, or null. Call {@link loadTactics} first. */
+export function tacticsOf(url) {
+  return siteTactics.get(originOf(url)) ?? null
+}
+/**
+ * Whether a site has shown itself to be big: more text than a model wants
+ * twice, or more controls than a screen can hold. Two reads, so one odd page
+ * (a search result, a long error) does not decide for the site.
+ * @param {any} record - a record from {@link tacticsOf}.
+ * @returns {boolean} true when reads should start with a map.
+ */
+export function bigSite(record) {
+  if (record === null || record === undefined) return false
+  /* A read keeps at most ninety controls, so "many controls" has to be
+     measured on that scale: sixty of them already means a screen of numbers
+     is not what a model wants to read first. */
+  return Number(record.reads ?? 0) >= 2 && (Number(record.chars ?? 0) >= 3500 || Number(record.controls ?? 0) >= 60)
+}
+/**
+ * Whether a site's own text is long enough that a full read is a spill: a
+ * docs page or a thread, where reading the whole thing again is the wrong
+ * starting move.
+ * @param {any} record - a record from {@link tacticsOf}.
+ * @returns {boolean} true when text should be asked for narrowly.
+ */
+export function longRead(record) {
+  if (record === null || record === undefined) return false
+  return Number(record.reads ?? 0) >= 2 && Number(record.text ?? 0) >= 6000
+}
+/** A running average that forgets: a site that changed is not judged forever. */
+const drift = (was, next) => Math.round(Number(was ?? 0) * 0.6 + Number(next ?? 0) * 0.4)
+
+/**
+ * Record what one read cost this site. Writes are folded: a burst of reads in
+ * one task is one file write, and the last few hundred milliseconds of a
+ * process are not worth an extra syscall.
+ * @param {string} url - the page read.
+ * @param {{chars?: number, controls?: number, ms?: number}} cost - what it cost.
+ * @returns {Promise<void>} done.
+ */
+export async function noteRead(url, cost = {}) {
+  const key = originOf(url)
+  if (key === '') return
+  await loadTactics()
+  const was = siteTactics.get(key) ?? { reads: 0, chars: 0, controls: 0, text: 0, ms: 0 }
+  const reads = Number(was.reads ?? 0) + 1
+  siteTactics.set(key, {
+    reads,
+    chars: cost.chars === undefined ? Number(was.chars ?? 0) : reads === 1 ? Math.round(Number(cost.chars)) : drift(was.chars, cost.chars),
+    controls: cost.controls === undefined ? Number(was.controls ?? 0) : reads === 1 ? Math.round(Number(cost.controls)) : drift(was.controls, cost.controls),
+    text: cost.text === undefined ? Number(was.text ?? 0) : reads === 1 ? Math.round(Number(cost.text)) : drift(was.text, cost.text),
+    ms: cost.ms === undefined ? Number(was.ms ?? 0) : reads === 1 ? Math.round(Number(cost.ms)) : drift(was.ms, cost.ms),
+    lastAt: Date.now(),
+  })
+  if (Date.now() - siteWroteAt < 2000) return
+  return saveTactics()
+}
+/**
+ * Write the whole record. Ordered after any write already in flight, so two
+ * chats reading at once cannot truncate each other's file.
+ * @returns {Promise<void>} done.
+ */
+export function saveTactics() {
+  siteWroteAt = Date.now()
+  const said = Object.fromEntries(siteTactics)
+  siteWriting = siteWriting.then(async () => {
+    try {
+      await mkdir(tacticsDir(), { recursive: true })
+      await writeFile(join(tacticsDir(), SITE_FILE), JSON.stringify(said))
+    } catch {
+      /* a state folder that cannot take the file still reads fine */
+    }
+  })
+  return siteWriting
+}
+/** One line about a site's shape, for a read that adapted to it. */
+function siteLine(record) {
+  const reads = Number(record?.reads ?? 0)
+  const chars = Number(record?.chars ?? 0)
+  const controls = Number(record?.controls ?? 0)
+  const text = Number(record?.text ?? 0)
+  const parts = [`${String(reads)} read(s)`]
+  if (chars > 0) parts.push(`~${String(chars)} chars of page`)
+  else if (text > 0) parts.push(`~${String(text)} chars of text`)
+  if (controls > 0) parts.push(`~${String(controls)} controls`)
+  return parts.join(', ')
 }
 
 /** How many times a call found a control again after the page redrew it. */
@@ -2070,6 +2239,16 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     const said = renderPage(read, options)
     return isCheckPage(read) ? `${said}\n${CHECK_NOTE}` : said
   }
+  /* A runtime that opens a port is not a runtime that plays: the plugin was
+     asked about at launch, and a missing one turns a movie into a black box
+     nobody can explain. Say it where the person is looking. */
+  const flashNote = () => {
+    if (sidecar.flash !== true) return ''
+    const check = sidecar.flashCheck
+    if (check === null || check === undefined) return 'flash runtime: open, plugin not checked yet'
+    if (check.ok === true) return `flash runtime: plugin loaded (${String(check.name)})`
+    return 'flash runtime: open, but no Flash plugin is loaded — movies will not play; run scripts/flash-setup.mjs'
+  }
 
   /**
    * Where the control behind a ref is now, following it across a re-render.
@@ -2145,7 +2324,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         /* The column may still be drawing nothing: say so here, where the
            person is looking for a picture, rather than only in browser_state. */
         const unseen = who === '' ? '' : viewerNote(await watchForViewer(sidecar, page, 1200))
-        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + await look(page, { mode: 'text' }) + (await pdfNote(page)) }
+        const runtime = flashNote()
+        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + (runtime === '' ? '' : `${runtime}\n`) + await look(page, { mode: 'text' }) + (await pdfNote(page)) }
       },
     },
     {
@@ -2275,7 +2455,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         lines.push(`page: ${read.title === '' ? read.url : read.title} — ${read.controls.length} control(s), ${read.textChars} character(s)`)
         lines.push(surface === null ? 'surface: no canvas or frame takes the screen — the page itself takes input' : `surface: ${surface.tag} ${surface.w}x${surface.h} at ${surface.x},${surface.y}${surface.scrolled === true ? ' (scrolled it into view)' : ''}${clicked === '' ? '' : ` (${clicked})`}`)
         if (read.blind?.flash > 0 && sidecar.flash !== true) lines.push(`flash: ${read.blind.flash} movie(s) — open the same page with flash:true and it runs in this plugin's own player, in the column, with no window on the desktop`) // ui-copy-ignore
-        else if (read.blind?.flash > 0) lines.push(`flash: ${read.blind.flash} movie(s) running on this plugin's own player`)
+        else if (read.blind?.flash > 0) lines.push(`flash: ${read.blind.flash} movie(s) running on this plugin's own player${sidecar.flash === true && sidecar.flashCheck?.ok === false ? ' — but no Flash plugin is loaded, so they cannot play' : ''}`)
         else lines.push('flash: none found')
         lines.push(`frames: ${Math.max(0, frames.length - 1)} (${childFrames.filter((frame) => String(frame.url ?? '') === 'about:blank').length} of them about:blank)`)
         const rates = []
@@ -2294,6 +2474,85 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
               ? 'ready to read and act on, though there is no canvas or frame to watch'
               : `ready: ${surface.tag} is live at ${mainRate?.fps ?? frameRate?.fps ?? 0} fps`
         lines.push(trouble)
+        if (surface !== null) lines.push('watch: browser_look turns the screen into a grid of letters, so a move can be checked without a picture')
+        return { text: lines.join('\n') }
+      },
+    },
+    {
+      name: 'browser_look', // ui-copy-ignore
+      description: 'Look at a page that draws itself — a game, a canvas app, a Flash movie — as a grid of letters instead of a picture: one character per block of screen, the same character for the same colour. Read what is on screen, then look again after a move to see only what changed, with no image tokens. For pages with text, browser_view and browser_read are cheaper and exact.',
+      parameters: {
+        type: 'object', // ui-copy-ignore
+        properties: {
+          cols: { type: 'integer', description: 'Cells across. Default 24; more cells show more detail and cost more text.' },
+          region: { type: 'array', items: { type: 'number' }, description: 'Look at one box instead of the whole screen: [x, y, width, height] in page pixels, as browser_prepare reports.' },
+          diff: { type: 'boolean', description: 'Show only what changed since the last look at this screen. Default true; pass false to always see the whole grid.' },
+        },
+        additionalProperties: false,
+      },
+      output: TEXT_OUTPUT, // ui-copy-ignore
+      timeoutMs: 30_000,
+      isConcurrencySafe: () => false,
+      /** @param {any} args - arguments. @param {any} exec - tool run. @returns {Promise<{text: string}>} the grid and what moved. */
+      execute: async (args, exec) => {
+        const who = String(exec?.agent?.id ?? '')
+        const page = await sidecar.ensure({ session: who })
+        const dead = await unreachable(page)
+        if (dead !== '') return { text: dead }
+        const screen = asSpot(await evaluate(page, `JSON.stringify({ w: innerWidth, h: innerHeight, canvases: document.querySelectorAll('canvas').length, frames: document.querySelectorAll('iframe').length, movies: document.querySelectorAll('embed, object').length })`))
+        if (screen === null) return { text: 'The page did not answer — it may be loading or navigating. Wait a moment with browser_wait, then look again.' }
+        const width = Math.max(1, Math.round(Number(screen.w) || 1))
+        const height = Math.max(1, Math.round(Number(screen.h) || 1))
+        let box = { x: 0, y: 0, width, height }
+        if (Array.isArray(args?.region) && args.region.length === 4) {
+          const parts = args.region.map((part) => Math.round(Number(part)))
+          box = {
+            x: Math.max(0, Math.min(width - 1, Number.isFinite(parts[0]) ? parts[0] : 0)),
+            y: Math.max(0, Math.min(height - 1, Number.isFinite(parts[1]) ? parts[1] : 0)),
+            width: Math.max(8, Math.min(width, Number.isFinite(parts[2]) ? parts[2] : width)),
+            height: Math.max(8, Math.min(height, Number.isFinite(parts[3]) ? parts[3] : height)),
+          }
+          box.width = Math.min(box.width, width - box.x)
+          box.height = Math.min(box.height, height - box.y)
+        }
+        const cols = Math.min(48, Math.max(8, Math.round(Number(args?.cols) || 24)))
+        /* Only as much picture as the grid needs: six pixels per cell is enough
+           for the average of a block to be its colour, and the PNG stays small
+           enough to read in the same call instead of writing a file. */
+        const scale = Math.min(1, (cols * 6) / Math.max(1, box.width))
+        let grid
+        try {
+          const data = await page.shot({ rect: box, scale })
+          grid = gridOf(decodePng(Buffer.from(data, 'base64')), cols)
+        } catch (error) {
+          return { text: `The screen could not be read as pixels (${String(error?.message ?? error)}). browser_shot still saves a picture of it.` }
+        }
+        const key = `${currentSession()}|${String(page.url ?? '')}|${box.x},${box.y},${box.width},${box.height}|${cols}`
+        const before = lastLooks.get(key)
+        lastLooks.set(key, grid.rows)
+        /* Keep this small: a chat that looks at a hundred screens should not
+           keep a hundred grids alive. */
+        if (lastLooks.size > 24) lastLooks.delete([...lastLooks.keys()][0])
+        const lines = []
+        const whole = box.x === 0 && box.y === 0 && box.width === width && box.height === height
+        const shape = []
+        if (Number(screen.canvases) > 0) shape.push(`${screen.canvases} canvas`)
+        if (Number(screen.frames) > 0) shape.push(`${screen.frames} frame${Number(screen.frames) === 1 ? '' : 's'}`)
+        if (Number(screen.movies) > 0) shape.push(`${screen.movies} movie${Number(screen.movies) === 1 ? '' : 's'}`)
+        lines.push(`look ${grid.cols}x${grid.rowCount} of ${whole ? 'the screen' : `box ${box.x},${box.y} ${box.width}x${box.height}`} (${width}x${height}) — ${shape.length === 0 ? 'no canvas or frame, this is the page itself' : shape.join(', ')}`)
+        lines.push(...grid.rows)
+        if (args?.diff !== false && before !== undefined) {
+          const change = diffGrid(before, grid.rows)
+          if (change.cells === 0) lines.push('nothing changed since the last look')
+          else if (change.box === null || change.cells > grid.cols * grid.rowCount * 0.5) lines.push('most of the screen changed since the last look')
+          else {
+            const cut = around(grid.rows, change.box)
+            lines.push(`changed: ${change.cells} cell${change.cells === 1 ? '' : 's'} in box ${change.box.x},${change.box.y} ${change.box.w}x${change.box.h} — that part again:`)
+            lines.push(...cut.rows)
+          }
+        } else if (args?.diff !== false) {
+          lines.push('first look at this screen: the next look after a move says what changed')
+        }
         return { text: lines.join('\n') }
       },
     },
@@ -2345,7 +2604,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the words, as Markdown. */
       execute: async (args) => withRead(async (page) => {
         const asked = String(args?.query ?? '').trim()
-        const ceiling = Number(args?.max_chars ?? (asked === '' ? 6000 : 4000))
+        await loadTactics()
+        const learned = tacticsOf(page.url)
+        /* A site that already gave a long answer is asked for less unless the
+           caller said how much: the line at the end says so, and max_chars
+           overrides it. */
+        const longSite = asked === '' && args?.max_chars === undefined && longRead(learned)
+        const ceiling = Number(args?.max_chars ?? (asked === '' ? (longSite ? 3500 : 6000) : 4000))
         const mark = await pageMark(page)
         const key = mark === '' ? '' : `${mark}|${asked}|${ceiling}`
         const seen = page === null || page === undefined ? undefined : readSeen.get(page)
@@ -2357,6 +2622,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         }
         const keep = (text) => {
           if (key !== '' && page !== null && page !== undefined) readSeen.set(page, { key, text })
+          /* Cutting a long site short is only honest if it is said: the count
+             and the way past it go with the text, not in a log. */
+          if (longSite && text.length >= ceiling * 0.9) return `${text}\n\nthis site reads long (${siteLine(learned)}): cut at ${String(ceiling)} characters — pass query for one answer, or max_chars for more`
           return text
         }
         if (asked !== '') {
@@ -2427,6 +2695,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         }
         const read = await readArticle(page, { maxChars: ceiling })
         if (read.fault !== undefined) return `the page did not answer when read — ${read.fault.split('\n')[0].slice(0, 200)}`
+        /* Measured before the budget cuts it: a cut says how much was sent, not
+           how much text the site has. */
+        await noteRead(String(read.url ?? page.url ?? ''), { text: read.chars })
         if (read.text === '') {
           const pdf = await pdfNote(page)
           if (pdf !== '') return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}${pdf}`
@@ -2464,13 +2735,20 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the read. */
       execute: async (args) => withRead(async (page) => {
-        const options = { mode: String(args?.mode ?? 'text'), maxChars: Number(args?.max_chars ?? 4600) }
+        await loadTactics()
+        const learned = tacticsOf(page.url)
+        /* A site already known to be big opens as a map: a screen of landmarks
+           first, words on request. The caller's own mode always wins. */
+        const autoMap = args?.mode === undefined && args?.changed_only !== true && bigSite(learned)
+        const options = { mode: String(args?.mode ?? (autoMap ? 'map' : 'text')), maxChars: Number(args?.max_chars ?? 4600) }
         /* Each chat keeps its own read state: a shared one let another chat's
            read replace this chat's baseline, so its numbers and its "what
            changed" answered about a page it never saw. */
         const state = refsFor()
+        const startedAt = Date.now()
         const read = await remember(page, state, options)
-        const note = isCheckPage(read) ? `\n${CHECK_NOTE}` : ''
+        await noteRead(String(read.url ?? page.url ?? ''), { chars: read.textChars, controls: read.controls?.length ?? 0, ms: Date.now() - startedAt })
+        const note = `${isCheckPage(read) ? `\n${CHECK_NOTE}` : ''}${autoMap ? `\nthis site reads big (${siteLine(learned)}): opened as a map — pass mode text for the words` : ''}`
         if (args?.changed_only === true && state.last !== undefined) {
           /* The diff becomes the new baseline: a page that moved zero -> one
              should not report that move again on the next read. */
@@ -3257,7 +3535,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `tab list ${[...sidecar.pages.entries()].map(([key, each]) => `${key.slice(-8)}=${String(each.url)}=${each.cdp?.closed === true ? 'closed' : 'open'}`).join(' | ')}`, // ui-copy-ignore
           `default tab ${String(sidecar.page?.url)}`, // ui-copy-ignore
           state.headless === false ? 'showing a window' : 'no window',
-          sidecar.flash ? 'Flash-era runtime' : 'Chrome runtime',
+          sidecar.flash ? `Flash-era runtime — ${flashNote().replace('flash runtime: ', '')}` : 'Chrome runtime',
           `profile ${String(state.profile)}`,
           `url ${String(state.url)}`,
           `title ${String(state.title)}`,
@@ -3266,6 +3544,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `mirror owner ${owner === '' ? 'none' : owner}`, // ui-copy-ignore
           owner === '' ? 'no owner' : `owner ${owner}`,
           `refs followed ${String(follows.count)}`,
+          `files ${artifactRoot()}`,
           /* What it costs and when it would let go: the two facts that decide
              whether to keep using it or let it rest. */
           state.alive === true ? `memory ${Math.max(1, Math.round(Number(state.memory ?? 0) / 1048576))} MB` : 'memory 0 MB',

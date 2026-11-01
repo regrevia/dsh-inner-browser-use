@@ -175,6 +175,19 @@ export function flashRuntime() {
   return { binary: ready.electron, plugin: ready.plugin, version }
 }
 
+/**
+ * What the browser said about its own plugin list. A plugin runtime that opens
+ * its port but carries no PPAPI module looks fine from outside and plays
+ * nothing, so the list is read and turned into a sentence rather than trusted.
+ * @param {unknown} names - plugin names from the page.
+ * @returns {{ok: boolean, name: string}} whether a Flash plugin is there.
+ */
+export function flashVerdict(names) {
+  const list = (Array.isArray(names) ? names : []).map((one) => String(one ?? ''))
+  const found = list.find((one) => one.toLowerCase().includes('shockwave'))
+  return { ok: found !== undefined, name: found ?? '' }
+}
+
 /* A chat's tab address outlives a plugin reload: the browser is still running
    with that tab, and the chat that returns should get its page back, not a
    blank one. */
@@ -2118,6 +2131,9 @@ export class Sidecar {
     /* A movie page needs a runtime Chrome no longer has; the switch is the
        person's, and it swaps the browser rather than the protocol. */
     this.flash = options.flash === undefined ? process.env.DSH_INNER_BROWSER_FLASH === '1' || readFlashChoice() : options.flash === true
+    /* Whether the launched runtime really carries the plugin, asked once at
+       launch: null means it has not been asked. */
+    this.flashCheck = null
     /* The Flash app serves its own frames; the screencast cannot see a plugin. */
     this.flashBridge = null
     this.headless = true
@@ -2634,6 +2650,29 @@ export class Sidecar {
     return this.starting
   }
 
+  /**
+   * Ask the Flash-era browser which plugins it actually loaded.
+   * @returns {Promise<{ok: boolean, name: string} | null>} the answer, or null when it could not be asked.
+   */
+  async checkFlash() {
+    this.flashCheck = null
+    const page = this.page
+    if (page === null || page === undefined) return null
+    try {
+      const out = await page.cdp.send('Runtime.evaluate', {
+        expression: 'JSON.stringify(Array.from(navigator.plugins).map((one) => one.name))',
+        returnByValue: true,
+      })
+      const said = out?.result?.value
+      const names = JSON.parse(typeof said === 'string' ? said : '[]')
+      this.flashCheck = flashVerdict(names)
+    } catch {
+      /* A page that cannot answer is not evidence either way. */
+      this.flashCheck = null
+    }
+    return this.flashCheck
+  }
+
   /** @param {string | undefined} url - first address. @returns {Promise<SidecarPage>} the page. */
   async launch(url) {
     /* Chromium 87 opening the profile a current Chrome owns would downgrade it
@@ -2656,6 +2695,10 @@ export class Sidecar {
     await this.restoreSessionCookies()
     await this.page.cast()
     if (url !== undefined && url !== '') await this.page.navigate(url)
+    /* A runtime that opens a port is not yet a runtime that plays: ask the page
+       whether the plugin is really in it, so a broken install is said out loud
+       instead of showing up as a black movie. */
+    if (this.flash) await this.checkFlash()
     this.touch()
     /* Sign-ins outlive this browser: what works now is worth a copy, taken
        while the cookies are known good rather than after they are lost. */
@@ -3326,6 +3369,8 @@ export class Sidecar {
       alive: this.alive, // ui-copy-ignore
       profile: this.profile, // ui-copy-ignore
       headless: this.headless, // ui-copy-ignore
+      flash: this.flash, // ui-copy-ignore
+      flashCheck: this.flashCheck, // ui-copy-ignore
       url: this.page?.url ?? '', // ui-copy-ignore
       pages: this.pages.size,
       title: this.page?.title ?? '',

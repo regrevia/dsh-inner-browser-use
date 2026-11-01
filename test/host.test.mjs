@@ -159,6 +159,7 @@ test('registers the sidecar tools and nothing else', () => {
     'browser_hover',
     'browser_key',
     'browser_login',
+    'browser_look',
     'browser_media',
     'browser_mode',
     'browser_nav',

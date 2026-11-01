@@ -56,6 +56,16 @@ Electron 11 的两个真实限制，代码里已按它们写：
 - 它不会用当前 Chrome 的 profile 目录（会降级并上锁），Flash 分支固定用 `<profile>-flash` 独立目录；两边登录态各自独立。
 - `/json/new` 在 Chromium 87 上是 404，单窗口应用也没有第二个窗口，所以 Flash 分支不建新页签：会话要页签时把唯一那个窗口导航过去。
 
+### 起来之后还要证明它真在
+
+端口能连上不等于插件装上了：`/json/version` 由浏览器进程回答，插件加载失败时它照样 200，页面只是画出一块黑。所以启动流程在端口就绪之后还问页面一句 `navigator.plugins`，只认名字里带 `Shockwave Flash` 的那条，结果存成浏览器自己的状态：
+
+- `browser_open` 在正文里给一行 `flash runtime: plugin loaded (Shockwave Flash)`，或者 `open, but no Flash plugin is loaded — movies will not play; run scripts/flash-setup.mjs`；还没问到时写 `plugin not checked yet`，不猜。
+- `browser_state` 的运行时行把「模式」和「插件」分开：`Flash-era runtime — plugin loaded (…)` / `— no Flash plugin is loaded`。
+- `browser_prepare` 在真的找到 movie、但插件缺失时补一句「它们跑不起来」，免得把黑帧当成游戏还在加载。
+
+问不到（页面崩溃、CDP 早断）时记 `null`——没有证据就不下结论，这跟「没装运行时」是两回事：后者在启动阶段就抛 `sidecar: no Flash runtime on this machine`。
+
 实测数字（Apple 芯片 + Rosetta，1440×900）：
 
 | 指标 | 值 |
