@@ -168,8 +168,12 @@ window) costs one round trip on an animation-heavy page instead of one per frame
 ## Reading for an answer
 
 `browser_read` with a `query` does not return the page; it returns the sentences that answer the
-question. The page-side block reader already returns paragraphs with their heading and link
-density, so the work stays in `read.js` and costs no extra round trip.
+question. The page-side block reader already returns paragraphs with their heading trail
+(`Plans \u203a Trial`), their link density, a 0-1 quality score and table rows as one
+`column: value | column: value` line, so the work stays in `read.js` and costs no extra round trip.
+When the page's own menu would eat the budget, the blocks past the ceiling are chosen by quality and
+then put back in page order, so prose survives where document order would have spent everything
+above it.
 
 Paragraphs are ranked first (BM25 over the question's terms, link-heavy menus down-weighted), then
 split into sentences. Each sentence is scored on its own with the same saturation and length
@@ -177,7 +181,9 @@ normalisation, and that score is multiplied by three priors: the words of its he
 the paragraph it sits in, and inverse link density. Words the page says everywhere are dropped
 before scoring — a term in most sentences cannot point at anything — and a sentence that matches
 only part of the question is scaled by the share of the question's idf weight it actually covers,
-which is what stops a paragraph containing "to" from competing with one containing "refund".
+which is what stops a paragraph containing "to" from competing with one containing "refund". The
+block's quality score and its being a table row are priors as well, so a menu that repeats the
+question's words cannot outrank the sentence that explains them.
 
 Selection is not "the top N scores": each pick subtracts its Jaccard overlap with what is already
 chosen (MMR), selection stops when the best remaining sentence is worth nothing, and picked

@@ -100,6 +100,39 @@ document.getElementById('pick').onchange = (e) => { document.title = 'pick-' + e
     const body = Array.from({ length: 24 }, (_, i) => `<p>${i + 1}. ${filler}</p>`).join('')
     return `<!doctype html><html><head><title>story page</title></head><body><article><h1>Company handbook</h1><h2>Meetings</h2>${body}<h2>Billing</h2><p>Refunds are accepted within 30 days of purchase, and the money goes back to the same card. Anything older is handled case by case by the finance team.</p><h2>Travel</h2>${body}</article></body></html>`
   }
+  if (name === 'noise') {
+    /* Almost nothing above the article is prose: a menu of links, a rail of
+       links, and only then the page. Reading the top of it in document order
+       spends the budget on the menu. */
+    const menu = Array.from({ length: 40 }, (_, i) => `<a href="/m${i}">Section ${i}</a>`).join(' \u00b7 ')
+    const rail = Array.from({ length: 30 }, (_, i) => `<a href="/r${i}">Related story ${i}</a>`).join(' \u00b7 ')
+    const prose = Array.from({ length: 12 }, (_, i) => `<p>${i + 1}. The team met on Tuesday to look at the numbers and agree what to do next, and left with a list of open questions.</p>`).join('')
+    return `<!doctype html><html><head><title>noisy page</title></head><body>
+<header><p>${menu}</p></header>
+<p>${rail}</p>
+<p>${menu}</p>
+<h1>Plans and billing</h1>
+<h2>Trial</h2>
+<p>The trial lasts 14 days from the day you sign up, and no card is charged before it ends.</p>
+${prose}
+<h2>Cancelling</h2>
+<p>You can cancel from the billing page at any time and keep access until the period you paid for ends.</p>
+<p>${rail}</p>
+<footer><p>${menu}</p></footer></body></html>`
+  }
+  if (name === 'table') {
+    /* A fact that lives in a table: read column by column it costs a page, and
+       read as a row with its column names it costs a line. */
+    const filler = Array.from({ length: 24 }, (_, i) => `<tr><td>Add-on ${i + 1}</td><td>$${5 + i}</td><td>1 seat</td></tr>`).join('')
+    return `<!doctype html><html><head><title>pricing page</title></head><body style="font:16px system-ui;padding:24px"><h1>Pricing</h1>
+<p>All plans are billed monthly and can be changed at any time.</p>
+<table><thead><tr><th>Plan</th><th>Price per month</th><th>Seats</th></tr></thead><tbody>
+<tr><td>Starter</td><td>$29</td><td>1 seat</td></tr>
+<tr><td>Team</td><td>$49</td><td>3 seats</td></tr>
+<tr><td>Pro</td><td>$84</td><td>5 seats</td></tr>
+${filler}
+</tbody></table></body></html>`
+  }
   if (name === 'light') {
     return `<!doctype html><html><head><title>light page</title></head><body><main><h1>Hello</h1><p>A short page.</p></main>${ticker}</body></html>`
   }
@@ -115,7 +148,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'login-wall': 1600, 'login-import': 700, 'read-answer': 250, 'read-miss': 250, 'read-tabs': 400 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'login-wall': 1600, 'login-import': 700, 'read-answer': 250, 'read-miss': 250, 'read-tabs': 400, 'read-noise': 300, 'read-table': 300 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -131,7 +164,7 @@ async function main() {
   const live = process.argv.includes('--live')
   /** @type {Record<string, {server: import('node:http').Server, url: string}>} */
   const servers = {}
-  for (const name of ['dense', 'text', 'story', 'list', 'light', 'game', 'popup', 'hard']) {
+  for (const name of ['dense', 'text', 'story', 'list', 'light', 'game', 'popup', 'hard', 'noise', 'table']) {
     const html = page(name)
     const server = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -282,6 +315,44 @@ async function main() {
     saysSo: missNear.text === '',
   })
   budget('read-miss', missWholeMs + missNearMs)
+  /* A page that is mostly menu: reading it from the top in document order
+     spends the budget on links. Asking for the answer should cost the two
+     sentences that say it, and the same ceiling should no longer be all menu. */
+  await sidecar.page.navigate(servers.noise.url)
+  await wait(300)
+  const noisyWhole = renderPage(await readPage(sidecar.page, { mode: 'text', maxChars: 900 }), { maxChars: 900 })
+  const noisyAt = Date.now()
+  const noisy = await readRelevant(sidecar.page, 'how long does the trial last', { maxChars: 600 })
+  const noisyMs = Date.now() - noisyAt
+  emit('read-noise', {
+    wholeChars: noisyWhole.length,
+    answerChars: noisy.chars,
+    savedPct: noisyWhole.length === 0 ? 0 : Math.round((1 - noisy.chars / noisyWhole.length) * 100),
+    keepsAnswerOld: /14 days/.test(noisyWhole),
+    keepsAnswer: /14 days/.test(noisy.text),
+    matched: noisy.matched,
+    total: noisy.total,
+    ms: noisyMs,
+  })
+  budget('read-noise', noisyMs)
+  /* A fact that lives in a table: the row is read with its column names, so one
+     line answers a question that a column of numbers cannot. */
+  await sidecar.page.navigate(servers.table.url)
+  await wait(300)
+  const tableWhole = renderPage(await readPage(sidecar.page, { mode: 'text', maxChars: 900 }), { maxChars: 900 })
+  const rowAt = Date.now()
+  const row = await readRelevant(sidecar.page, 'what is the monthly price of the pro plan', { maxChars: 600 })
+  const rowMs = Date.now() - rowAt
+  emit('read-table', {
+    wholeChars: tableWhole.length,
+    answerChars: row.chars,
+    savedPct: tableWhole.length === 0 ? 0 : Math.round((1 - row.chars / tableWhole.length) * 100),
+    keepsAnswer: /84/.test(row.text),
+    namesColumn: /price/i.test(row.text) && /plan/i.test(row.text),
+    rows: row.matched,
+    ms: rowMs,
+  })
+  budget('read-table', rowMs)
   /* What the overlay probe costs: nothing on an uncovered control, one extra
      page-side look plus the banner's own click when something is in the way. */
   const probeTimes = []

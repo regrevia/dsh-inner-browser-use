@@ -1124,10 +1124,12 @@ export async function findOnPage(page, query, options = {}) {
 }
 
 /**
- * Collect the page as blocks of prose, each with the heading it sits under and
- * how much of it is links. Navigation, sidebars and footers are mostly links;
- * Readability's oldest signal is that such a block is not the content, and it
- * costs one number to carry instead of a guess.
+ * Collect the page as blocks of prose. Each block carries the trail of headings
+ * it sits under, how much of it is links, and one number for how much of it
+ * reads like written content: navigation, sidebars and footers are mostly links
+ * and mostly short, which is Readability's oldest signal. A table row is one
+ * block, with its column names written into it, so a fact that lives in a table
+ * costs a line instead of a page.
  * @param {number} budget - characters of block text to collect.
  * @returns {string} an expression to evaluate.
  */
@@ -1136,32 +1138,66 @@ export function blocks(budget) {
   const root = document.querySelector('article, main, [role="main"]') || document.body
   if (!root) return JSON.stringify({ blocks: [] })
   const limit = ${budget}
-  const BLOCK = new Set(['P', 'LI', 'TD', 'TH', 'BLOCKQUOTE', 'PRE', 'FIGCAPTION', 'DD', 'DT', 'SUMMARY'])
+  const guard = limit * 6
+  const BLOCK = new Set(['P', 'LI', 'BLOCKQUOTE', 'PRE', 'FIGCAPTION', 'DD', 'DT', 'SUMMARY'])
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS', 'VIDEO', 'HEADER', 'FOOTER', 'NAV', 'ASIDE', 'FORM', 'BUTTON', 'SELECT', 'TEXTAREA'])
   const out = []
   const seen = new Set()
+  const stack = []
   let chars = 0
-  let heading = ''
   const flatten = (text) => String(text ?? '').replace(/\\s+/g, ' ').trim()
+  const trail = () => stack.filter((one) => one !== '').join(' \\u203a ')
+  const said = () => stack.filter((one) => one !== '').pop() ?? ''
+  /* How much of a block reads like prose rather than a list of links: ends of
+     sentences per word, plus a length floor. One number, no dictionary. */
+  const written = (text) => {
+    const words = text.toLowerCase().match(/[a-z0-9]+|[\\u3400-\\u9fff]/g) ?? []
+    if (words.length === 0) return 0
+    const ends = text.match(/[.!?\\u3002\\uff01\\uff1f;\\uff1b]/g) ?? []
+    return Math.min(1, (ends.length / words.length) * 12)
+  }
+  const quality = (text, density) => Math.round((0.45 * (1 - density) + 0.35 * written(text) + 0.2 * Math.min(1, text.length / 180)) * 100) / 100
   const push = (el) => {
-    if (chars >= limit) return
+    if (chars >= guard) return
     const text = flatten(el.innerText ?? el.textContent ?? '')
     if (text === '' || text.length > 4000) return
     let linkChars = 0
     for (const link of el.querySelectorAll('a')) linkChars += flatten(link.innerText ?? '').length
     if (el.tagName === 'A') linkChars += text.length
-    const density = text.length === 0 ? 0 : Math.min(1, linkChars / text.length)
-    out.push({ h: heading, t: text, d: Math.round(density * 100) / 100 })
+    const density = Math.min(1, linkChars / text.length)
+    /* A block that is almost all link and short is a menu item, not a sentence;
+       carrying it only spends the budget. */
+    if (density >= 0.8 && text.length < 80) return
+    const path = trail()
+    out.push({ h: said(), p: path, t: text, d: Math.round(density * 100) / 100, q: quality(text, density) })
     chars += text.length
   }
+  const row = (tr) => {
+    if (chars >= guard) return
+    const cells = Array.from(tr.children).filter((cell) => cell.tagName === 'TD' || cell.tagName === 'TH')
+    const words = cells.map((cell) => flatten(cell.innerText ?? ''))
+    if (words.filter((one) => one !== '').length < 2) return
+    const table = tr.closest('table')
+    const first = table === null ? null : table.querySelector('tr')
+    const head = first === null || first === tr ? [] : Array.from(first.children).map((cell) => flatten(cell.innerText ?? ''))
+    const line = words.map((one, at) => (head[at] === undefined || head[at] === '' || head[at] === one ? one : head[at] + ': ' + one)).join(' | ')
+    out.push({ h: said(), p: trail(), t: line, d: 0, q: 0.95, r: 1 })
+    chars += line.length
+  }
   const walk = (el) => {
-    if (chars >= limit || el === null) return
+    if (el === null || chars >= guard) return
     const tag = el.tagName
     if (SKIP.has(tag) || el.hidden === true || el.getAttribute?.('aria-hidden') === 'true') return
     const style = getComputedStyle(el)
     if (style.display === 'none' || style.visibility === 'hidden') return
     if (/^H[1-6]$/.test(tag)) {
-      heading = flatten(el.innerText ?? '')
+      const level = Number(tag.slice(1))
+      stack.length = level
+      stack[level - 1] = flatten(el.innerText ?? '')
+      return
+    }
+    if (tag === 'TR') {
+      if (!seen.has(el)) { seen.add(el); row(el) }
       return
     }
     if (BLOCK.has(tag)) {
@@ -1172,7 +1208,23 @@ export function blocks(budget) {
   }
   walk(root)
   const title = document.title
-  return JSON.stringify({ title, blocks: out })
+  /* The page arrives in document order, so a menu at the top would spend the
+     whole budget before the article starts. Keep the blocks that read like
+     content, still in page order, until the budget is spent. */
+  let kept = out
+  const total = out.reduce((sum, block) => sum + block.t.length, 0)
+  if (total > limit) {
+    const byQuality = out.map((block, at) => ({ block, at })).sort((a, b) => b.block.q - a.block.q || a.at - b.at)
+    const keep = new Set()
+    let used = 0
+    for (const one of byQuality) {
+      if (used + one.block.t.length > limit) continue
+      keep.add(one.at)
+      used += one.block.t.length
+    }
+    kept = out.filter((block, at) => keep.has(at))
+  }
+  return JSON.stringify({ title, blocks: kept })
 })()`
 }
 
@@ -1218,6 +1270,20 @@ function brief(value) {
 }
 
 /**
+ * The trail of headings a block sits under, when it says more than the nearest
+ * one: "Pricing › Refunds" tells a caller where a fact lives, which a bare
+ * sentence cannot. Kept short so location never costs more than it explains.
+ * @param {{h?: string, p?: string}} block - the block.
+ * @returns {string} what to print above the passage.
+ */
+export function trailOf(block) {
+  const path = String(block?.p ?? '')
+  const near = String(block?.h ?? '')
+  if (path === '' || path === near || path.length > 90) return near
+  return path
+}
+
+/**
  * Rank blocks against a query the way a search engine ranks a passage: BM25,
  * with the heading counted as a place a term can match. Then read only the
  * blocks that carry the query, which is the token saving that matters.
@@ -1228,7 +1294,7 @@ function brief(value) {
 export function rank(blocks, query) {
   const asked = terms(query)
   if (asked.length === 0) return []
-  const docs = blocks.map((block) => ({ block, terms: terms(`${block.h ?? ''} ${block.t}`) }))
+  const docs = blocks.map((block) => ({ block, terms: terms(`${block.p ?? ''} ${block.h ?? ''} ${block.t}`) }))
   const average = docs.reduce((sum, one) => sum + one.terms.length, 0) / Math.max(1, docs.length)
   const seen = new Map()
   for (const one of docs) for (const term of new Set(one.terms)) seen.set(term, (seen.get(term) ?? 0) + 1)
@@ -1250,6 +1316,9 @@ export function rank(blocks, query) {
     /* A block that is nearly all link is a menu: it matches words without
        saying anything about them. */
     score *= 1 - 0.8 * Number(one.block.d ?? 0)
+    /* Prose that answers a question outranks a fragment of navigation that
+       happens to contain the same words; the quality number says which. */
+    score *= 0.85 + 0.15 * Number(one.block.q ?? 0.5)
     if (score > 0) scored.push({ block: one.block, score })
   }
   scored.sort((a, b) => b.score - a.score)
@@ -1297,7 +1366,7 @@ export function evidence(blocks, query, options = {}) {
   const near = rank(blocks, query).slice(0, Math.max(1, Math.min(60, Number(options.blocks ?? 40))))
   const units = []
   for (const row of near) {
-    const heading = String(row.block.h ?? '')
+    const heading = trailOf(row.block)
     const body = String(row.block.t ?? '')
     const parts = sentences(body)
     for (let step = 0; step < parts.length; step += 1) {
@@ -1339,8 +1408,9 @@ export function evidence(blocks, query, options = {}) {
        both say "this is the right place", so they lift their sentences. */
     const headingHit = asked.filter((term) => terms(unit.heading).includes(term)).length
     /* A menu sentence can match the words without saying anything about them;
-       the paragraph's link density is what tells the two apart. */
-    const linkish = 1 - 0.8 * Number(unit.block?.d ?? 0)
+       the paragraph's link density and how much it reads like prose tell the
+       two apart, and a table row is data rather than a sentence to distrust. */
+    const linkish = (1 - 0.8 * Number(unit.block?.d ?? 0)) * (unit.block?.r === 1 ? 1 : 0.9 + 0.1 * Number(unit.block?.q ?? 0.5))
     unit.score = score * linkish * (1 + 0.25 * headingHit) * (1 + 0.5 * (unit.prior > 0 ? 1 : 0))
   }
   /* Below a fifth of the best sentence, a match is coincidence rather than
@@ -1424,7 +1494,7 @@ export async function readRelevant(page, query, options = {}) {
     for (const row of pieces.slice(0, limit)) {
       const body = String(row.block.t ?? '')
       if (used + body.length > budget) continue
-      const heading = String(row.block.h ?? '')
+      const heading = trailOf(row.block)
       if (heading !== '' && heading !== lastHeading) { lines.push(`## ${heading}`); lastHeading = heading }
       lines.push(body)
       used += body.length
