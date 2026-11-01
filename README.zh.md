@@ -70,6 +70,13 @@ profile 是独立目录：`~/.dsh/inner-browser-use/chrome/default`。它在产�
 - **Harness 重启。** 重新打开同一个目录，cookie、`localStorage` 和 Chrome 存下的密码都留着。
 - **退出。** 关浏览器是请它自己关（`Browser.close`），Chrome 在这一步才把 cookie 落盘。
 
+## 常驻成本
+
+同机、同量法（Playwright MCP 与 Chrome DevTools MCP 用同一套 harness）：空闲 RSS
+**551 MB**（对方 1414 / 1280）、空闲 CPU **0.03–0.32%**（38.1% / 36.3%）、6 个页签共用
+4 个渲染进程；休息后唤醒 **0.84–0.86 s** 回到原页，对方要整棵重启 4.6–5.1 s。
+`npm run bench` 可复现，对照明细在 `docs/BENCH.md`。
+
 ## 没人看的时候
 
 每两秒用一次的人，两分钟后就休息；每九十秒用一次的人能等九分钟——窗口取自这个人最近 64 次

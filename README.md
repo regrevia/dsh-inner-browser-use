@@ -78,6 +78,13 @@ sign-in here is still there the next day.
 - **Shutdown.** The browser is asked to close rather than killed, which is when Chrome writes
   the last of its cookies.
 
+## What it costs
+
+Measured on the same machine with the same harness as Playwright MCP and Chrome
+DevTools MCP: idle RSS **551 MB** (1414 / 1280), idle CPU **0.03–0.32%**
+(38.1% / 36.3%), six tabs in four renderer processes, and a wake in
+**0.84–0.86 s** instead of a 4.6–5.1 s restart. `npm run bench` reproduces it.
+
 ## When nobody is looking
 
 A browser used every two seconds rests after two minutes; one used every ninety seconds waits

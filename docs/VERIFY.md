@@ -234,3 +234,21 @@ navigation — as a session that is not the owner. Both must answer 403, and the
 owner's stream must answer 200. Three `true` lines is the bar; `open · owner
 none` as the first line only means nothing is on screen, and the two refusals
 still have to hold.
+
+## 11. Compare against the neighbours
+
+```bash
+npm run bench            # writes JSON to stdout, exit 1 if a check fails
+npm run bench -- --json /tmp/bench.json
+```
+
+Cold start, one read, one action, 30 s idle, freeze, rest, wake — each with the
+real process tree's RSS and CPU seconds. Add flags for an A/B without editing
+the source:
+
+```bash
+DSH_INNER_BROWSER_CHROME_FLAGS="--renderer-process-limit=2" npm run bench
+```
+
+The competitor side of the comparison and its raw record live in
+`docs/BENCH.md` and `docs/measure-competitors-2026-11.json`.

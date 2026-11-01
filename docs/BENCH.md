@@ -1031,6 +1031,57 @@ not.
 | mirror SSE | 15 fps（66 ms 一轮），4 s 收 60 帧，均值 97.8 KB |
 | switch cost | 一次浏览器重启（`browser_open({flash:true})` → `browser_open({flash:false})`） |
 
+## Phase 25 — 和竞品同机同法的资源对照，0.47.0
+
+竞品数字不是估的：`@playwright/mcp` 0.0.84 与 `chrome-devtools-mcp` 1.12.0 用同一个
+`/tmp/compbench/bench.mjs`、同一台机器（macOS 27.2 / arm64 / Node 24.16 / Chrome
+156.0.8078.80，无头、`--use-mock-keychain`）、同一目标页（example.com），每项重复取
+min/median/max。原始记录（含每进程 RSS、失败点、方法说明）在
+`docs/measure-competitors-2026-11.json`，可直接对账。
+
+本插件一侧由 `scripts/bench-resource.mjs`（`npm run bench`）产出，同一套量法：真实进程树
+RSS、`ps -o time` 累计 CPU、同一页的读写往返。本地页面 /page（40 段正文＋60 个链接）。
+
+| what | this plugin 0.47.0 | Playwright MCP 0.0.84 | Chrome DevTools MCP 1.12.0 |
+| --- | --- | --- | --- |
+| 冷启动到可驱动页 | **1703–1757 ms**（机器忙时 2411） | 2464 / 2755 / 2887 | 1596 / 2185 / 2337 |
+| 读一页 | **2–3 ms**，2174 字 | 工具往返 24 ms（示例页） | 工具往返 15 ms |
+| 点/执行一次 | **0–1 ms** | 未单独计时 | 未单独计时 |
+| 空闲 RSS（整棵进程树） | **551 MB** / 8 进程 | 1414 MB / 9 进程（Chrome 1290） | 1280 MB / 8 进程（Chrome 1109） |
+| 空闲 CPU（单核占比） | **0.03–0.32%**（30 s 均值） | 38.1%（0–150 s 均值） | 36.3% |
+| 冻结（有人看、没人用） | CPU 0%，RSS 511–550 MB，唤醒 5–15 ms | 无此状态 | 无此状态 |
+| 休息（没人看） | **RSS 0**，唤醒 838–860 ms 回原页原地址 | 整棵关掉后冷启动 5133 ms | 无空闲回收 |
+| 页签切换 | 一个 `browser_tabs` 调用 | 3416 ms（其中 3392 是打开 wikipedia） | 2918 ms（2903 是打开） |
+
+读法：
+
+- 冷启动和 Chrome DevTools MCP 同一量级（中位 1703 vs 2185 ms），比 Playwright MCP 快一
+  档；它最低一档 1596 ms 仍比我们的中位低，这一项不能算全面领先。
+- 空闲 CPU 差约两个数量级，来源是它默认不做任何节流，而我们把后台网络、组件更新、崩溃
+  上报、翻译/媒体路由全关掉，再把页面冻结。
+- 空闲内存大约是一半：`--renderer-process-limit=4` 让 6 个页签共享 4 个渲染进程。
+- 休息后的唤醒 838–860 ms，对方恢复要整棵重启 4.6–5.1 s；但 Playwright MCP 确实有
+  `--idle-timeout`（无头默认一小时），只是不区分有没有人在看、也不先冻结再关。这一条是
+  「更细」而不是「只有我们有」。
+
+### 这一版为数字做的改动
+
+| change | measured effect |
+| --- | --- |
+| `--renderer-process-limit=4` | 空闲 RSS 660 → 551 MB；冷启动 2186 → 1703 ms |
+| 关掉后台网络 / 组件更新 / 崩溃上报 / 扩展 / 默认应用，功能表减去 5 项 | 空闲 CPU 1.87% → 0.03–0.32% |
+| `shed()`：冻结前 `gc()` + `Memory.simulatePressureNotification('critical')` | 冻结后 CPU 恒为 0；RSS 在有的轮次 812 → 511 MB，有的轮次不掉——掉多少取决于页面攒了多少缓存，不承诺固定回收量 |
+| 复用路径统一 `thaw()` | 冻结页被 `tabFor` / `openTab` / 并发合并任一路径拿到时都会先醒，不再当成活页读 |
+| 与 `--disable-gpu`、`--process-per-site`、`--renderer-process-limit=2/3` 对比 | gpu 关掉内存反升到 737 MB、空闲 CPU 8%；process-per-site 686 MB；limit=2 577 MB；limit=3 548 MB；limit=4 **540–551 MB** 且冷启动最好 |
+
+### 方法上的边界
+
+- 竞品的 RSS 是逐进程相加，共享页会重复计一次；我们同一量法，所以对比成立，绝对值偏高。
+- 竞品的空闲 CPU 高，一部分是 Chrome 自己在后台干活；用 `sleep 8` 走同一量法得 0.00
+  CPU-s、再用 `top -l 2` 交叉验证过，不是量法造成的。
+- 页签切换那两行主要花在 wikipedia 加载上（同一工具换 example.com 是 65 / 151 ms），
+  不是工具开销，别拿去当工具性能比较。
+
 ## Phase 24 — 长期运行的资源回收，0.46.0
 
 一台窗口隐藏的 Chrome 空转一晚就是几百 MB。这一版把「多久收」交给用法自己决定：记住这个人

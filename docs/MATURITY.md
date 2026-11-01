@@ -1,4 +1,4 @@
-# 成熟度（0.46.0，2026-11）
+# 成熟度（0.47.0，2026-11）
 
 结论：**可日常用，边界清楚**。能力面已经越过「能开网页」的层次，长跑与资源回收这条链路是本版
 重点并且有实测；短板集中在跨平台验证（只有 macOS 真机跑过）和少数只有真机才能验的交互（Flash、
@@ -8,9 +8,9 @@
 
 | | |
 | --- | --- |
-| 版本 / 许可 | 0.46.0 / MIT |
+| 版本 / 许可 | 0.47.0 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
-| npm | `dsh-inner-browser-use@0.46.0` |
+| npm | `dsh-inner-browser-use@0.47.0` |
 | 代码 | 约 11.9k 行（index 956 · sidecar 3683 · tools 4111 · read 2039 · rest 124 · client 954） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
@@ -20,9 +20,10 @@
 
 | 项 | 结果 |
 | --- | --- |
-| 单元测试 | `node --test test/*.test.mjs` → **305 项，303 通过，0 失败**（2 项按环境跳过） |
-| 长跑 | soak 24 轮 + 3 次真实休息：40.1 s，内存 **1427 → 956 MB**，页数始终 1，24 次读全部有答案 |
-| 休息/唤醒 | `npm run rest`：休息后内存 0、状态说 `stopped`，再读自愈回原页，唤醒 326–1010 ms |
+| 单元测试 | `node --test test/*.test.mjs` → **305 项，305 通过，0 失败** |
+| 资源对照 | 同机同法：冷启动中位 1703 ms、空闲 RSS 551 MB、空闲 CPU 0.03–0.32%、休息后 838–860 ms 唤醒；竞品 Playwright MCP 2755 ms / 1414 MB / 38.1%、Chrome DevTools MCP 2185 ms / 1280 MB / 36.3%（`docs/BENCH.md`、`docs/measure-competitors-2026-11.json`） |
+| 长跑 | soak 24 轮 + 3 次真实休息：40.3 s，内存 **1183 → 912 MB**，页数始终 1，24 次读全部有答案 |
+| 休息/唤醒 | `npm run rest`：休息后内存 0、状态说 `stopped`，再读自愈回原页，唤醒 838–860 ms |
 | 资源策略 | p95 学习窗口（90 s–15 min / 20 s–2 min）、内存预算 2400 MB、页签 LRU 10 min、崩溃循环守卫 |
 | 串行化 | 关闭单飞 + 启动等待；旧版「休息与调用相撞」的 `CDP session is closed` 已复现并修复，soak 不再失败 |
 | 不变量 | 一个 chat 一页；两点钟不会被别人抢；右栏只有本会话能开；镜像外会话一律 403 |
@@ -33,8 +34,9 @@
 - **查看器感知**：没人看才真释放；有人看最多停驻
 - **时间自己学**：不是拍一个固定超时，是这个人用法的 95 分位
 - **内存当策略**：超预算先收 LRU 页签、降码率，再决定休息
-- **唤醒回原页**：0.3–1.1 s，接着原地址，不是冷启动白页
-- 竞品对照与出处见 `docs/RESOURCES.md`（Playwright MCP 只有一个整点超时、Chrome DevTools MCP 没有、browser-use 只有 `keep_alive`、Stagehand 反而关掉 Chrome 节流）
+- **唤醒回原页**：0.84–0.86 s（竞品恢复是整棵重启 4.6–5.1 s），接着原地址，不是冷启动白页
+- **常驻成本**：6 个页签共用 4 个渲染进程，空闲 RSS 551 MB、空闲 CPU 0.03–0.32%；按同机同法测，竞品是 1280–1414 MB 和 36–38%
+- 竞品对照与出处见 `docs/RESOURCES.md` 与 `docs/BENCH.md`（Playwright MCP 有 `--idle-timeout` 但只按时辰、Chrome DevTools MCP 没有、browser-use 只有 `keep_alive`、Stagehand 反而关掉 Chrome 节流）
 
 ## 短板（如实）
 

@@ -1,3 +1,14 @@
+## 0.47.0
+
+- 冷启动、空闲内存、空闲 CPU 三项不再靠猜：新增 `scripts/bench-resource.mjs`（`npm run bench`），一次跑完冷启动、读一次、点一次、空闲 30 秒、冻结、休息、唤醒八个阶段，每项都是这台机器上的真实进程数、RSS 和 CPU 秒
+- 六个页签不需要六个渲染进程：Chrome 命令行加上 `--renderer-process-limit=4`，本机实测空闲内存 660 → 551 MB、冷启动 2186 → 1703 ms，页签上限仍是 6，四个进程仍把不相关站点隔开
+- 后台那堆没人要的活全部关掉：`--disable-background-networking`、`--disable-component-update`、`--disable-domain-reliability`、`--disable-breakpad`、`--no-pings`、`--disable-extensions`、`--disable-default-apps`，并把 `Translate / MediaRouter / OptimizationHints / InterestFeedContentSuggestions / CalculateNativeWinOcclusion` 一起从功能表里去掉；空闲 CPU 从 1.87% 降到 0.03–0.32%
+- 冻结前先真的松手：`shed()` 在 `Page.setWebLifecycleState` 之前调用 `gc()` 和 `Memory.simulatePressureNotification('critical')`（配合 `--js-flags=--expose-gc`），冻结后 CPU 归 0，RSS 在 812 → 511 MB 那一档能看到实际回收；不是每次都掉，掉多少取决于页面自己攒了多少缓存，这一点照实写进 `docs/BENCH.md`
+- 被停驻的页签在任何复用路径上都会先醒：`tabFor`、`openTab` 的两处直接复用和并发合并那条路都补了 `thaw()`，以前只有 `ensure()` 这一条会醒，别的路径把冻结页当成活页读
+- 想自己比参数不用改源码：`DSH_INNER_BROWSER_CHROME_FLAGS` 接受一串空格分隔的额外开关，只追加、不替换
+- 和四家竞品做了同机同法的对照，测量明细落进 `docs/measure-competitors-2026-11.json`，结论写进 `docs/BENCH.md` 与 `docs/RESOURCES.md`：本插件冷启动中位 1703 ms（Playwright MCP 2755、Chrome DevTools MCP 2185）、空闲 RSS 551 MB（1414 / 1280）、空闲 CPU 0.03–0.32%（38.1% / 36.3%）、动作往返 0–1 ms、休息后内存归零 838 ms 唤醒回原页
+- 说清楚对方也有跟我们重叠的能力：Playwright MCP 有 `--idle-timeout`（无头默认一小时）且实测确实会关掉整个浏览器，差别在时机和「谁在看」——它不看有没有人在看，也不会先冻结、再关；Chrome DevTools MCP 没有任何空闲机制
+
 ## 0.46.0
 
 - 没人用的浏览器现在会自己停：右栏点 x 之后若没有别的栏在看，一分钟后就整个关掉（cookies 先存好），内存归零；下次调用自己开回来，回到同一个地址、同一页，唤醒 0.3–1.1 秒

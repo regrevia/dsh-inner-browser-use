@@ -1,0 +1,523 @@
+{
+  "generated_at": "2026-11-01T17:15:17.022Z",
+  "machine": {
+    "arch": "arm64",
+    "os": "macOS 27.2",
+    "os_build": "26B123",
+    "node": "v24.16.0",
+    "npm": "11.13.0",
+    "chrome": "156.0.8078.80 (Google Chrome.app, arm64)",
+    "note": "No other browser was running during the measurements (see method.failure_points)."
+  },
+  "competitors": {
+    "playwright_mcp": {
+      "package": "@playwright/mcp",
+      "package_version": "0.0.84",
+      "launch_command": "npx -y @playwright/mcp@latest --headless --isolated --config /tmp/compbench/pw-config.json",
+      "mcp_server_info": {
+        "name": "Playwright",
+        "version": "1.65.0-alpha-2026-10-30"
+      },
+      "cold_start_ms": {
+        "runs_ms": [
+          2887,
+          2755,
+          2464
+        ],
+        "min": 2464,
+        "median": 2755,
+        "max": 2887,
+        "definition": "wall clock from spawn(npx) to the navigate tool call returning the page URL, npx package cache warm (already downloaded). For chrome-devtools-mcp this includes the mandatory list_pages call that the tool schema requires to obtain a pageId; that extra round trip is inherent to its API."
+      },
+      "first_npx_ms": 3439,
+      "first_npx_ms_method": "wall clock of the very first `npx -y <pkg>@latest --help` on a cold npm cache (download + install + start); later runs reuse the npx cache",
+      "idle_rss_mb": {
+        "total_mb": 1414,
+        "chrome_tree_mb": 1290.1,
+        "node_npx_mb": 123.9,
+        "chrome_process_count": 8,
+        "total_process_count": 10,
+        "chrome_processes": [
+          {
+            "pid": 27560,
+            "rss_mb": 581.3
+          },
+          {
+            "pid": 29419,
+            "rss_mb": 134.8
+          },
+          {
+            "pid": 27575,
+            "rss_mb": 125.2
+          },
+          {
+            "pid": 27572,
+            "rss_mb": 121.7
+          },
+          {
+            "pid": 27566,
+            "rss_mb": 101.5
+          },
+          {
+            "pid": 27567,
+            "rss_mb": 82
+          },
+          {
+            "pid": 27574,
+            "rss_mb": 78.8
+          },
+          {
+            "pid": 27568,
+            "rss_mb": 65.4
+          }
+        ],
+        "method": "sum of `ps -Ao rss=` (KB) over every descendant of the spawned npx pid, 180 s after navigate returned; chrome_tree_mb restricts that sum to the subtree rooted at the launched Google Chrome binary. macOS RSS counts private + shared mapped pages per process, so summing over Chrome helpers (each mapping the same Chrome Framework) overstates true memory use; the per-process list is included so the double counting is visible. No dedup is applied because the task asks for the RSS sum."
+      },
+      "restart_ms": 5133,
+      "tab_switch_ms": {
+        "total_ms": 3416,
+        "open_second_page_ms": 3392,
+        "switch_back_and_read_ms": 24,
+        "second_page_url": "https://en.wikipedia.org/wiki/Main_Page",
+        "second_page_loaded": true,
+        "read_ok": true,
+        "control_open_second_page_same_tool_example_com_ms": 65
+      },
+      "idle_cpu_pct": {
+        "avg_pct_all_windows": 38.07,
+        "steady_state_avg_pct_after_60s": 40.38,
+        "peak_window_pct": 62.87,
+        "windows": [
+          {
+            "window": "0-30s after navigate",
+            "avg_cpu_pct_of_one_core": 6.37,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 33217,
+                "sec": 1.77
+              },
+              {
+                "pid": 33223,
+                "sec": 0.04
+              },
+              {
+                "pid": 33229,
+                "sec": 0.04
+              }
+            ]
+          },
+          {
+            "window": "30-60s after navigate",
+            "avg_cpu_pct_of_one_core": 62.87,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 33217,
+                "sec": 18.85
+              },
+              {
+                "pid": 33224,
+                "sec": 0.01
+              }
+            ]
+          },
+          {
+            "window": "60-90s after navigate",
+            "avg_cpu_pct_of_one_core": 7.13,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 33217,
+                "sec": 2.09
+              },
+              {
+                "pid": 33216,
+                "sec": 0.01
+              },
+              {
+                "pid": 33223,
+                "sec": 0.01
+              }
+            ]
+          },
+          {
+            "window": "90-120s after navigate",
+            "avg_cpu_pct_of_one_core": 52.6,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 33217,
+                "sec": 15.67
+              },
+              {
+                "pid": 33199,
+                "sec": 0.06
+              },
+              {
+                "pid": 33216,
+                "sec": 0.05
+              }
+            ]
+          },
+          {
+            "window": "120-150s after navigate",
+            "avg_cpu_pct_of_one_core": 61.4,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 33217,
+                "sec": 18.42
+              }
+            ]
+          }
+        ],
+        "cross_check_bench_run_avg_pct": 35.75,
+        "cross_check_top_instantaneous_pct": [
+          {
+            "window": "0-15s",
+            "delta_method_pct": 28.7,
+            "top_l2_pct": 0
+          },
+          {
+            "window": "15-30s",
+            "delta_method_pct": 59.6,
+            "top_l2_pct": 49.6
+          },
+          {
+            "window": "30-45s",
+            "delta_method_pct": 26.5,
+            "top_l2_pct": 45.1
+          },
+          {
+            "window": "45-60s",
+            "delta_method_pct": 0.2,
+            "top_l2_pct": 0
+          },
+          {
+            "window": "60-75s",
+            "delta_method_pct": 64,
+            "top_l2_pct": 61.4
+          },
+          {
+            "window": "75-90s",
+            "delta_method_pct": 50.6,
+            "top_l2_pct": 48.3
+          },
+          {
+            "window": "90-105s",
+            "delta_method_pct": 29.7,
+            "top_l2_pct": 0
+          },
+          {
+            "window": "105-120s",
+            "delta_method_pct": 86.7,
+            "top_l2_pct": 53.4
+          }
+        ],
+        "method_controls": {
+          "sleep_process_cpu_seconds": 0,
+          "note": "The same ps-time delta applied to a plain `sleep 8` yields 0.00 CPU s, and top -l 2 (instantaneous per-process %CPU) on the Chrome main process tracks the delta method within sampling noise, so the numbers are CPU actually burned by the tree and not an accounting artifact."
+        },
+        "error": null,
+        "method": "Instantaneous CPU of the benchmark process tree, not the ps %cpu column. Every 30 s the cumulative CPU seconds of all tree pids are read from `ps -Ao pid=,time=`, and the delta divided by the 30 s wall window gives the average fraction of one core used by the whole tree (npx + node + all Chrome processes). Each window starts where the previous ended, from navigate +0 s; the early windows include Chrome post-load work and the ones after 60 s are the settled state. The ps %cpu column is a lifetime average and inflates for short-lived helpers, so it is only kept for reference."
+      },
+      "auto_release": {
+        "has_mechanism": true,
+        "parameter": "--idle-timeout <ms> | env PLAYWRIGHT_MCP_IDLE_TIMEOUT | config browser.idle",
+        "default_behavior": "one hour for headless browsers it launched, no timeout for headed or attached ones, 0 disables; the next tool call relaunches the browser",
+        "evidence": [
+          "https://github.com/microsoft/playwright-mcp/blob/main/README.md (README.md:431 in @playwright/mcp@0.0.84): \"--idle-timeout <timeout> | close the browser after this many milliseconds without a completed tool call, the next tool call relaunches it.\"",
+          "config.d.ts:240 in @playwright/mcp@0.0.84: \"idle?: number;\" with the comment \"Close the browser after this many milliseconds without a tool call, and relaunch it on the next one.\""
+        ],
+        "empirical": {
+          "flag_used": "--idle-timeout=6000",
+          "browser_auto_closed": true,
+          "details": "navigate, then 14 s without any tool call: chrome roots alive = 0, MCP process alive = true"
+        }
+      },
+      "notes": [
+        "cold_start run1 2887ms",
+        "cpu interval 1: 65.11% (ps %cpu sum for reference 63.5%) pids=9",
+        "cpu interval 2: 62.38% (ps %cpu sum for reference 63.7%) pids=9",
+        "cpu interval 3: 57.41% (ps %cpu sum for reference 13.1%) pids=9",
+        "cpu interval 4: 0.4% (ps %cpu sum for reference 0%) pids=9",
+        "cpu interval 5: 0.2% (ps %cpu sum for reference 0%) pids=9",
+        "cpu interval 6: 29.02% (ps %cpu sum for reference 64.3%) pids=9",
+        "idle rss total=1414MB chrome=1290.1MB node=123.9MB procs=10",
+        "tab_switch total 3416ms (open2 3392, back+read 24)",
+        "control second tab to example.com 65ms",
+        "kill tree pids 11, chrome roots 1, survivors after kill 1",
+        "restart_ms 5133ms (kill -> navigate return), cold run2 2755ms",
+        "cold_start run3 2464ms"
+      ],
+      "error": null
+    },
+    "chrome_devtools_mcp": {
+      "package": "chrome-devtools-mcp",
+      "package_version": "1.12.0",
+      "launch_command": "npx -y chrome-devtools-mcp@latest --headless --chromeArg=--use-mock-keychain",
+      "mcp_server_info": {
+        "name": "chrome_devtools",
+        "title": "Chrome DevTools MCP server",
+        "version": "1.12.0"
+      },
+      "cold_start_ms": {
+        "runs_ms": [
+          1596,
+          2185,
+          2337
+        ],
+        "min": 1596,
+        "median": 2185,
+        "max": 2337,
+        "definition": "wall clock from spawn(npx) to the navigate tool call returning the page URL, npx package cache warm (already downloaded). For chrome-devtools-mcp this includes the mandatory list_pages call that the tool schema requires to obtain a pageId; that extra round trip is inherent to its API."
+      },
+      "first_npx_ms": 17891,
+      "first_npx_ms_method": "wall clock of the very first `npx -y <pkg>@latest --help` on a cold npm cache (download + install + start); later runs reuse the npx cache",
+      "idle_rss_mb": {
+        "total_mb": 1279.8,
+        "chrome_tree_mb": 1108.8,
+        "node_npx_mb": 171,
+        "chrome_process_count": 7,
+        "total_process_count": 10,
+        "chrome_processes": [
+          {
+            "pid": 29867,
+            "rss_mb": 512.5
+          },
+          {
+            "pid": 30891,
+            "rss_mb": 132.5
+          },
+          {
+            "pid": 29877,
+            "rss_mb": 128
+          },
+          {
+            "pid": 29871,
+            "rss_mb": 102
+          },
+          {
+            "pid": 29872,
+            "rss_mb": 83.1
+          },
+          {
+            "pid": 29876,
+            "rss_mb": 79.9
+          },
+          {
+            "pid": 29873,
+            "rss_mb": 64.2
+          }
+        ],
+        "method": "sum of `ps -Ao rss=` (KB) over every descendant of the spawned npx pid, 180 s after navigate returned; chrome_tree_mb restricts that sum to the subtree rooted at the launched Google Chrome binary. macOS RSS counts private + shared mapped pages per process, so summing over Chrome helpers (each mapping the same Chrome Framework) overstates true memory use; the per-process list is included so the double counting is visible. No dedup is applied because the task asks for the RSS sum."
+      },
+      "restart_ms": 4585,
+      "tab_switch_ms": {
+        "total_ms": 2918,
+        "open_second_page_ms": 2903,
+        "switch_back_and_read_ms": 15,
+        "second_page_url": "https://en.wikipedia.org/wiki/Main_Page",
+        "second_page_loaded": true,
+        "read_ok": true,
+        "control_open_second_page_same_tool_example_com_ms": 151
+      },
+      "idle_cpu_pct": {
+        "avg_pct_all_windows": 36.29,
+        "steady_state_avg_pct_after_60s": 38.87,
+        "peak_window_pct": 60.27,
+        "windows": [
+          {
+            "window": "0-30s after navigate",
+            "avg_cpu_pct_of_one_core": 4.57,
+            "pids": 11,
+            "top": [
+              {
+                "pid": 34503,
+                "sec": 1.26
+              },
+              {
+                "pid": 34510,
+                "sec": 0.03
+              },
+              {
+                "pid": 34509,
+                "sec": 0.02
+              }
+            ]
+          },
+          {
+            "window": "30-60s after navigate",
+            "avg_cpu_pct_of_one_core": 60.27,
+            "pids": 10,
+            "top": [
+              {
+                "pid": 34503,
+                "sec": 18.07
+              },
+              {
+                "pid": 34510,
+                "sec": 0.01
+              }
+            ]
+          },
+          {
+            "window": "60-90s after navigate",
+            "avg_cpu_pct_of_one_core": 3.77,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 34503,
+                "sec": 1.1
+              },
+              {
+                "pid": 34509,
+                "sec": 0.01
+              },
+              {
+                "pid": 34510,
+                "sec": 0.01
+              }
+            ]
+          },
+          {
+            "window": "90-120s after navigate",
+            "avg_cpu_pct_of_one_core": 56.87,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 34503,
+                "sec": 16.93
+              },
+              {
+                "pid": 34466,
+                "sec": 0.06
+              },
+              {
+                "pid": 34500,
+                "sec": 0.06
+              }
+            ]
+          },
+          {
+            "window": "120-150s after navigate",
+            "avg_cpu_pct_of_one_core": 55.97,
+            "pids": 9,
+            "top": [
+              {
+                "pid": 34503,
+                "sec": 16.78
+              },
+              {
+                "pid": 34512,
+                "sec": 0.01
+              }
+            ]
+          }
+        ],
+        "cross_check_bench_run_avg_pct": 33.55,
+        "cross_check_top_instantaneous_pct": [
+          {
+            "window": "0-15s",
+            "delta_method_pct": 28.7,
+            "top_l2_pct": 0
+          },
+          {
+            "window": "15-30s",
+            "delta_method_pct": 59.6,
+            "top_l2_pct": 49.6
+          },
+          {
+            "window": "30-45s",
+            "delta_method_pct": 26.5,
+            "top_l2_pct": 45.1
+          },
+          {
+            "window": "45-60s",
+            "delta_method_pct": 0.2,
+            "top_l2_pct": 0
+          },
+          {
+            "window": "60-75s",
+            "delta_method_pct": 64,
+            "top_l2_pct": 61.4
+          },
+          {
+            "window": "75-90s",
+            "delta_method_pct": 50.6,
+            "top_l2_pct": 48.3
+          },
+          {
+            "window": "90-105s",
+            "delta_method_pct": 29.7,
+            "top_l2_pct": 0
+          },
+          {
+            "window": "105-120s",
+            "delta_method_pct": 86.7,
+            "top_l2_pct": 53.4
+          }
+        ],
+        "method_controls": {
+          "sleep_process_cpu_seconds": 0,
+          "note": "The same ps-time delta applied to a plain `sleep 8` yields 0.00 CPU s, and top -l 2 (instantaneous per-process %CPU) on the Chrome main process tracks the delta method within sampling noise, so the numbers are CPU actually burned by the tree and not an accounting artifact."
+        },
+        "error": null,
+        "method": "Instantaneous CPU of the benchmark process tree, not the ps %cpu column. Every 30 s the cumulative CPU seconds of all tree pids are read from `ps -Ao pid=,time=`, and the delta divided by the 30 s wall window gives the average fraction of one core used by the whole tree (npx + node + all Chrome processes). Each window starts where the previous ended, from navigate +0 s; the early windows include Chrome post-load work and the ones after 60 s are the settled state. The ps %cpu column is a lifetime average and inflates for short-lived helpers, so it is only kept for reference."
+      },
+      "auto_release": {
+        "has_mechanism": false,
+        "parameter": null,
+        "default_behavior": "browser starts on the first tool call that needs it and stays alive until the MCP client disconnects the CDP session or the server process exits; no idle timer",
+        "evidence": [
+          "https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/README.md (README.md:101 in chrome-devtools-mcp@1.12.0): \"The MCP server will start the browser automatically once the MCP client uses a tool that requires a running browser instance.\"",
+          "`chrome-devtools-mcp --help` (v1.12.0) lists no idle/close/timeout flag; the only flag mentioning cleanup is --isolated (\"temporary user-data-dir that is automatically cleaned up after the browser is closed\").",
+          "build/src/BrowserManager.js:476 in chrome-devtools-mcp@1.12.0 defines #closeBrowser(), reached from the shutdown path (line 184) and from the disconnected handler (#evictIfCurrent, line 442); nothing schedules it on idleness."
+        ],
+        "empirical": {
+          "flag_used": null,
+          "browser_auto_closed": null,
+          "details": "no flag exists to shorten a timeout, so this side was established from --help and source only, not by waiting an hour."
+        }
+      },
+      "notes": [
+        "cold_start run1 1596ms",
+        "cpu interval 1: 63.49% (ps %cpu sum for reference 62.8%) pids=10",
+        "cpu interval 2: 59.24% (ps %cpu sum for reference 63.4%) pids=10",
+        "cpu interval 3: 56.53% (ps %cpu sum for reference 50%) pids=10",
+        "cpu interval 4: 21.45% (ps %cpu sum for reference 0.4%) pids=10",
+        "cpu interval 5: 0.3% (ps %cpu sum for reference 0%) pids=9",
+        "cpu interval 6: 0.3% (ps %cpu sum for reference 0%) pids=9",
+        "idle rss total=1279.8MB chrome=1108.8MB node=171MB procs=10",
+        "tab_switch total 2918ms (open2 2903, back+read 15)",
+        "control second tab to example.com 151ms",
+        "kill tree pids 12, chrome roots 1, survivors after kill 1",
+        "restart_ms 4585ms (kill -> navigate return), cold run2 2185ms",
+        "cold_start run3 2337ms"
+      ],
+      "error": null
+    }
+  },
+  "method": {
+    "overview": "macOS arm64, one competitor at a time, no other Chrome running. Each competitor was driven over MCP stdio (newline-delimited JSON-RPC: initialize with protocolVersion 2024-11-05, notifications/initialized, then tools/call) by a ~200-line Node client with no dependencies (/tmp/compbench/mcp_client.mjs). Both were launched exactly the way a user would launch them with npx, headless, plus --use-mock-keychain so macOS does not open a keychain dialog. The navigated page was always https://example.com.",
+    "steps": {
+      "first_npx_ms": "Before any measurement, `time npx -y <pkg>@latest --help` was run once for each package against a cold npm cache; that number is first_npx_ms (download + install + start). All later runs reused the npx cache, so cold_start_ms excludes the download.",
+      "package_version": "The version npx resolves is what `npm view <pkg> version` reports at measurement time: @playwright/mcp 0.0.84, chrome-devtools-mcp 1.12.0. The MCP serverInfo is recorded alongside it.",
+      "cold_start_ms": "Timer starts immediately before spawn(npx) and stops when the navigate tool call returns. Three repetitions per competitor, each from a freshly spawned server; min/median/max over the three. For chrome-devtools-mcp the tool schema requires a pageId, so the flow includes one list_pages round trip before navigate_page.",
+      "idle_rss_mb": "After navigate returned the process tree was left alone for 180 s, then every descendant of the spawned npx pid was read with `ps -Ao pid=,ppid=,rss=` and RSS summed (total_mb). chrome_tree_mb is the same sum restricted to the subtree rooted at the launched Google Chrome binary; node_npx_mb is the remainder. macOS RSS counts shared mapped pages in every process, so a Chrome helper set that maps the same framework inflates the sum; the per-process list is kept in the report so that double counting stays visible, and no dedup is applied because the requested metric is the RSS sum.",
+      "idle_cpu_pct": "Cumulative CPU seconds (`ps -Ao time=`) of every tree pid were sampled every 30 s and differenced, giving the fraction of one core burned by npx+node+Chrome in each window, from the moment navigate returned. The method was validated twice: a plain `sleep 8` shows 0.00 CPU s under the same delta, and `top -l 2` (instantaneous %CPU) on the Chrome main process matches the delta values window by window. The ps %cpu column was not used because it is a lifetime average. The measured CPU is not near zero even with no tool call issued: the Chrome main process alone swings between ~0 and ~87 % of one core, which is Chrome background work, not benchmark overhead.",
+      "tab_switch_ms": "With example.com already open, a second page was opened at https://en.wikipedia.org/wiki/Main_Page (Playwright MCP: browser_tabs new + browser_navigate; chrome-devtools-mcp: new_page), then the browser switched back to the first page and read it (browser_tabs select index 0 + browser_snapshot / list_pages + select_page + take_snapshot). total_ms covers the whole cycle. Because wikipedia load time dominates, the same \"open a second page\" call was repeated against example.com as a control, which isolates tool overhead from page load.",
+      "restart_ms": "The whole spawned tree was SIGKILLed deepest-first, the death was verified with a fresh ps snapshot (any survivor re-killed), then a new npx process was spawned, initialized and navigated to example.com; restart_ms is kill-start to navigate-return.",
+      "auto_release": "Documented behaviour was read from the shipped README and source of the exact installed versions, with line numbers. For Playwright MCP the idle timeout was additionally verified empirically: server started with --idle-timeout=6000, navigate, then 14 s without any tool call, then a fresh process-tree snapshot to see whether Chrome was gone.",
+      "process_hygiene": "Every kill was scoped to the descendants of the npx pid this benchmark spawned (tree walk from ps ppid, deepest first) plus the Chrome roots recorded in that tree; no name-based kill was used against system Chrome, and after each kill a fresh snapshot verified that nothing was left."
+    },
+    "failure_points": [
+      "chrome-devtools-mcp navigate_page requires a pageId, and the id is 1-based: pageId 0 returns \"Error: No page found\". Its list_pages result is human-formatted Markdown (\"1: Example Domain (https://example.com/) [selected]\"), not JSON, so the id has to be parsed from the text. Two early probe runs failed on these two points before the driver was fixed.",
+      "An early smoke test cleaned up by SIGKILLing every process whose command line matched \"Contents/MacOS/Google Chrome\"; that killed the user's own Chrome main process (pid 97712) instead of only the benchmark tree. It was replaced by the tree-scoped kill now used everywhere. Consequence for this report: no user Chrome was running for any of the measurements below, which removes browser noise from CPU and memory, and the machine was otherwise idle.",
+      "A first version of the idle CPU metric summed the ps %cpu column; with freshly forked Chrome helpers that column reports a lifetime average and produced implausible values (up to 98.7 % in an early run). It was replaced by the CPU-seconds-delta method.",
+      "wikipedia.org load time varied between runs (3.4 s and 2.9 s in the reported run, 10 s in an earlier run on the same machine and network), which is why tab_switch_ms is reported together with its example.com control and not as tool overhead.",
+      "No measurement required a system-level change; nothing outside /tmp/compbench was written and no project repository was touched."
+    ]
+  }
+}

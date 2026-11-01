@@ -1504,9 +1504,26 @@ export class SidecarPage {
    * a launch and a sign-in. Chrome's own docs define the two states.
    * @returns {Promise<void>} done, even on a page that cannot be frozen.
    */
+  /**
+   * What a parked page gives back: the heap it grew while it was being read,
+   * and the decoded images and back/forward caches the renderer keeps for a
+   * page a person may look at again. Frozen pages cannot run the collector, so
+   * this happens before the freeze — the DOM, the scroll position and the
+   * cookies are untouched, which is the whole point of parking instead of
+   * closing.
+   * @returns {Promise<void>} done, even on a renderer that refuses.
+   */
+  async shed() {
+    await this.cdp.send('Runtime.evaluate', {
+      expression: 'globalThis.gc?.()', silent: true, returnByValue: true,
+    }).catch(() => {})
+    await this.cdp.send('Memory.simulatePressureNotification', { level: 'critical' }).catch(() => {})
+  }
+
   async freeze() {
     if (this.frozen === true) return
     try {
+      await this.shed()
       await this.cdp.send('Page.setWebLifecycleState', { state: 'frozen' })
       this.frozen = true
       this.casting = false
@@ -2381,6 +2398,10 @@ export class Sidecar {
     this.expired?.delete(id)
     const had = this.pageFor(id)
     if (had !== null) {
+      /* A parked page is still the chat's page: waking it costs a protocol call,
+         and a tool that read without waking it would see a page that never runs
+         its scripts again. */
+      await had.thaw?.()
       if (url !== undefined && url !== '') await had.navigate(url)
       return had
     }
@@ -2389,6 +2410,7 @@ export class Sidecar {
     const underway = this.opening?.get(id)
     if (underway !== undefined) {
       const page = await underway
+      await page.thaw?.()
       const want = String(url ?? '')
       if (want !== '' && String(page.url ?? '') !== want) await page.navigate(want)
       return page
@@ -2541,6 +2563,10 @@ export class Sidecar {
     this.expired?.delete(String(id))
     const had = this.pageFor(id)
     if (had !== null) {
+      /* A parked page is still the chat's page: waking it costs a protocol call,
+         and a tool that read without waking it would see a page that never runs
+         its scripts again. */
+      await had.thaw?.()
       if (url !== undefined && url !== '') await had.navigate(url)
       return had
     }
@@ -2865,7 +2891,7 @@ export class Sidecar {
       '--no-default-browser-check',
       '--use-mock-keychain',
       '--disable-blink-features=AutomationControlled',
-      '--disable-features=Translate,MediaRouter,OptimizationHints',
+      '--disable-features=Translate,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion',
       '--disable-sync',
       /* The driver clicks for a person, and a page that opens a tab on a click
          is doing what the page means to do. Blocking it would strand the
@@ -2882,6 +2908,24 @@ export class Sidecar {
       '--disable-renderer-backgrounding',
       '--disable-ipc-flooding-protection',
       '--metrics-recording-only',
+      /* Nothing here talks to Google while the person is not reading: the
+         update, the crash reporter and the network pings all cost a process,
+         a socket and a wake-up on a page that is only being looked at. */
+      '--disable-background-networking',
+      '--disable-component-update',
+      '--disable-domain-reliability',
+      '--disable-client-side-phishing-detection',
+      '--disable-breakpad',
+      '--disable-crash-reporter',
+      '--no-pings',
+      '--disable-extensions',
+      '--disable-default-apps',
+      /* A page nobody looks at can hand its heap back when it is parked; the
+         renderer needs the flag before it will collect on request. */
+      '--js-flags=--expose-gc',
+      /* Six tabs never need six renderers: the cap keeps the resident cost of a
+         browsing session flat, while four still keeps unrelated sites apart. */
+      '--renderer-process-limit=4',
       '--no-service-autorun',
       '--password-store=basic',
       '--lang=zh-CN',
@@ -2895,6 +2939,10 @@ export class Sidecar {
       '--window-position=-3000,-3000',
       'about:blank',
     ]
+    /* An escape hatch for measuring one flag against another without editing
+     * the source: space-separated extra switches, never a replacement. */
+    const extra = String(process.env.DSH_INNER_BROWSER_CHROME_FLAGS ?? '').trim()
+    if (extra !== '') args.push(...extra.split(/\s+/))
     if (flash !== null) {
       /* Electron takes these switches through its own command line, not the
          argv it hands the app, so the runtime app reads them from here. */

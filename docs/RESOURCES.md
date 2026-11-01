@@ -64,15 +64,24 @@ person is looking at.
 ## Neighbours
 
 Compared with the projects this one is usually put next to (`--idle-timeout`,
-`keep_alive`, and their documentation):
+`keep_alive`, and their documentation). The numbers come from the same harness
+on the same machine; the raw record is
+`docs/measure-competitors-2026-11.json` and the method is in `docs/BENCH.md`.
 
-| project | idle handling | what a wake costs | notes |
-| --- | --- | --- | --- |
-| Playwright MCP | one flag, `--idle-timeout`, default one hour for headless, whole browser closed | a cold start | no viewer awareness; each client gets its own Chrome; `src/` is no longer in the repository |
-| Chrome DevTools MCP | none — the browser lives until the process exits | n/a | one dispose chain, no idle clock, screencast never pauses for a detached viewer |
-| browser-use | `keep_alive` flag, no timeout value | n/a | teardown skipped while `keep_alive`; no idle timer, no memory policy |
-| Stagehand | none | n/a | deliberately disables Chrome's background throttling, then tears down and removes the profile |
-| this plugin | viewer-aware ladder, timings learned from use, memory pressure, single-flight close | 0.3–1.1 s, same page and address | freeze keeps the DOM; rest keeps the cookies; nothing cold-starts unless the process is new |
+| project | idle handling | idle CPU / RSS | what a wake costs | notes |
+| --- | --- | --- | --- | --- |
+| Playwright MCP 0.0.84 | `--idle-timeout`, default one hour for headless, whole browser closed | 38.1% / 1414 MB | cold start, 5.1 s | does release, but never looks at whether anyone is watching and never parks a page first; each client gets its own Chrome |
+| Chrome DevTools MCP 1.12.0 | none — the browser lives until the process exits | 36.3% / 1280 MB | n/a | one dispose chain, no idle clock, screencast never pauses for a detached viewer |
+| browser-use | `keep_alive` flag, no timeout value | not measured | n/a | teardown skipped while `keep_alive`; no idle timer, no memory policy |
+| Stagehand | none | not measured | n/a | deliberately disables Chrome's background throttling, then tears down and removes the profile |
+| this plugin 0.47.0 | viewer-aware ladder, timings learned from use, memory pressure, single-flight close | 0.03–0.32% / 551 MB | 0.84–0.86 s, same page and address | freeze keeps the DOM; rest keeps the cookies; nothing cold-starts unless the process is new |
+
+Playwright MCP's idle timeout was measured working (`--idle-timeout=6000` left no
+Chrome after 14 s idle while the MCP process stayed up), so "we are the only one
+that releases" would be false. What differs is the shape of the ladder: it is
+one timer and one action, while this plugin never closes a page someone is
+watching, freezes before it closes, and derives both windows from how often the
+person actually calls.
 
 The gaps that remain in the field, and that this document treats as the design
 brief: nobody freezes a page instead of closing it; nobody pauses a screencast
