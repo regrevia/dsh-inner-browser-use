@@ -266,3 +266,24 @@ One line per launch, cumulative milliseconds at each phase (`closing · login ·
 browser · socket · cdp · page · cookies · cast · navigate`). Compare one phase
 against itself across runs — `closing` ranges from 0 to about 370 ms depending on
 whether a rest was in flight.
+
+## 12. Six tabs, and two chats at once
+
+Two shapes that single-page checks never hit: more tabs than renderers, and a
+second chat opening a page while the first one is still settling.
+
+```bash
+npm run tabs
+```
+
+Six chats each open one page, with the whole process tree weighed after every
+open, then 12 s of silence for the idle CPU, then a seventh chat to prove the
+cap. Expected: RSS rising by roughly 2 MB per tab (not one renderer per tab),
+the process tree staying the same size, idle CPU in single digits, and the
+seventh chat leaving the page count at six. The CPU number is a slope over a
+real interval — `ps %cpu` on its own is the average since start-up and will
+report about 10 % on a browser that has been idle for ten seconds.
+
+Two chats, sequentially, is the cheapest reproduction of the popup race that
+0.47.1 had (`Page.enable: sidecar closed` on the second chat). Any run that
+opens a page per chat exercises it; `npm run tabs` does it six times.

@@ -86,3 +86,28 @@ test('a window list drops tabs the browser no longer has', async () => {
   await sidecar.windowsFor('chat-a')
   assert.deepEqual([...sidecar.claims.get('chat-a')], ['own'])
 })
+
+test('a tab this sidecar asked for is not adopted as a popup', async () => {
+  const { SidecarPage } = await import('../sidecar.js')
+  /* The follow armed by the last snapshot would otherwise close the tab a
+     second chat is opening, while its first CDP call is still in flight. */
+  const ctx = { opened: null, followUntil: Date.now() + 5000, targetId: 'mine', siblings: () => [], busy: () => true, wakePopup: () => {}, adoptOpened: async () => '' }
+  SidecarPage.prototype.watch.call(ctx, { method: 'Target.targetCreated', params: { targetInfo: { type: 'page', targetId: 'new-one', url: 'https://example.com/' } } })
+  assert.equal(ctx.opened, null)
+
+  const idle = { ...ctx, busy: () => false, adoptOpened: async () => '' }
+  SidecarPage.prototype.watch.call(idle, { method: 'Target.targetCreated', params: { targetInfo: { type: 'page', targetId: 'popup', url: 'https://example.com/' } } })
+  assert.equal(idle.opened.targetId, 'popup')
+})
+
+test('a page can tell that its sidecar is opening a tab', async () => {
+  const sidecar = driver()
+  sidecar.pages = new Map()
+  sidecar.flashBridge = null
+  sidecar.page = { targetId: 'base' }
+  sidecar.making = 0
+  const page = sidecar.bind({ targetId: 'next', view: { width: 800, height: 600 }, setViewport: async () => {} })
+  assert.equal(page.busy(), false)
+  sidecar.making = 1
+  assert.equal(page.busy(), true)
+})

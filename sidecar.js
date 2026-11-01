@@ -687,6 +687,9 @@ export class SidecarPage {
        page to its address, would take a page away from somebody else. */
     this.targetId = ''
     this.siblings = () => []
+    /* Opening a tab on purpose is not a popup to follow: while the browser is
+       being asked for one, a page target that appears is ours. */
+    this.busy = () => false
     this.port = Number(port ?? 0) // ui-copy-ignore
   }
 
@@ -733,7 +736,8 @@ export class SidecarPage {
       const info = message.params?.targetInfo ?? {}
       /* A page target that is not this tab is a popup this click opened:
          remember it while it is still blank, so no polling is needed later. */
-      if (String(info.type ?? '') === 'page' && String(info.targetId ?? '') !== String(this.targetId ?? '')) {
+      const ours = typeof this.busy === 'function' && this.busy() === true
+      if (!ours && String(info.type ?? '') === 'page' && String(info.targetId ?? '') !== String(this.targetId ?? '')) {
         const siblings = typeof this.siblings === 'function' ? this.siblings().map(String) : []
         if (!siblings.includes(String(info.targetId ?? ''))) {
           this.opened = { targetId: String(info.targetId ?? ''), url: String(info.url ?? ''), at: Date.now() }
@@ -2171,6 +2175,8 @@ export class Sidecar {
     /* One tab per chat: a second chat opening an address gets a tab of its
        own, so neither can navigate the other's page away. */
     this.pages = new Map()
+    /* Non-zero while this sidecar is asking the browser for a tab of its own. */
+    this.making = 0
     /* Every tab a chat has driven, so its column can offer its own windows
        back after it switches away: a tab the chat left is still its own, and a
        tab nobody claimed belongs to no column at all. */
@@ -2598,9 +2604,20 @@ export class Sidecar {
       this.rememberTab(id, address)
       return page
     }
-    const created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
-    if (!created.ok) throw new Error('sidecar: could not open a tab')
-    const target = await created.json()
+    /* A tab opened here is not a popup a click opened: the follow armed by the
+       last snapshot would otherwise adopt this tab and close it while the
+       first CDP call was still on its way. */
+    this.page?.disarmFollow?.()
+    this.making += 1
+    let created
+    let target
+    try {
+      created = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(address)}`, { method: 'PUT', signal: AbortSignal.timeout(3000) }) // ui-copy-ignore
+      if (!created.ok) throw new Error('sidecar: could not open a tab')
+      target = await created.json()
+    } finally {
+      this.making -= 1
+    }
     if (typeof target.webSocketDebuggerUrl !== 'string') throw new Error('sidecar: new tab has no socket')
     const cdp = new Cdp(target.webSocketDebuggerUrl)
     await cdp.ready
@@ -3164,6 +3181,7 @@ export class Sidecar {
    */
   bind(page) {
     page.flashBridge = this.flashBridge
+    page.busy = () => this.making > 0
     /* The launch window is landscape; shrink it to the capture budget before
        anyone asks, so the first judged frame is not a 2 fps one. */
     if (this.flashBridge !== null) void page.setViewport(page.view.width, page.view.height).catch(() => {})
