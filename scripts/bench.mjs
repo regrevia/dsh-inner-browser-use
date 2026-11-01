@@ -9,7 +9,9 @@
  * Every number is one JSON line, so a run can be diffed against the last.
  */
 import { createServer } from 'node:http'
-import { mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Sidecar } from '../sidecar.js?v=1'
@@ -113,7 +115,7 @@ function emit(label, row) {
 }
 
 /** Latency ceilings a release must stay under, checked at the end. */
-const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'read-answer': 250, 'read-miss': 250, 'read-tabs': 400 }
+const LIMITS = { 'shot-region': 200, 'find-text': 90, click: 220, 'cover-click': 240, 'double-click': 300, 'do-step': 240, 'do-session': 110, 'popup-wait': 40, 'crash-recovery': 2600, 'mirror-fps': 36, 'hard-forms': 240, type: 200, 'media-sniff': 400, 'media-save': 500, 'media-pick': 150, 'wait-late': 600, 'login-vault': 1600, 'login-wall': 1600, 'login-import': 700, 'read-answer': 250, 'read-miss': 250, 'read-tabs': 400 }
 const tried = []
 /** @param {string} name - a key of LIMITS. @param {number} ms - measured. */
 function budget(name, ms) {
@@ -802,6 +804,108 @@ document.cookie = 'bench_session=bench-cookie-secret; path=/'
   })
   budget('login-vault', reuseMs)
   loginServer.close()
+  delete process.env.DSH_INNER_BROWSER_STATE_DIR
+  delete process.env.DSH_INNER_BROWSER_VAULT_KEY
+
+  /* A page behind a sign-in wall. The old way was four round trips - read, list,
+     use, read again; one read now puts the kept sign-in back and answers from
+     the same page. The row also proves it never guesses when two accounts match. */
+  const wallTemp = mkdtempSync(join(tmpdir(), 'dshib-bench-wall-'))
+  process.env.DSH_INNER_BROWSER_VAULT_KEY = Buffer.alloc(32, 4).toString('base64')
+  process.env.DSH_INNER_BROWSER_STATE_DIR = wallTemp
+  const wallServer = createServer((req, res) => {
+    const inside = String(req.headers.cookie ?? '').includes('bench_wall=1') || String(req.url ?? '').startsWith('/enter')
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': 'bench_wall=1; path=/' })
+    res.end(inside
+      ? '<!doctype html><meta charset="utf-8"><title>Account</title><h1>Account</h1><p>The bench notice period is forty two days.</p>'
+      : '<!doctype html><meta charset="utf-8"><title>Sign in</title><h1>Sign in</h1><form><input type="password" name="password"><button>Sign in</button></form>')
+  })
+  await new Promise((ready) => wallServer.listen(0, '127.0.0.1', ready))
+  const wallBase = `http://127.0.0.1:${String(wallServer.address().port)}/`
+  const wallTools = sidecarTools(sidecar, { last: undefined })
+  const wallLogin = wallTools.find((tool) => tool.name === 'browser_login')
+  const wallRead = wallTools.find((tool) => tool.name === 'browser_read')
+  await sidecar.page.navigate(wallBase + 'enter')
+  await wallLogin.execute({ action: 'save', name: 'bench-wall' })
+  /** Clear the page's own cookie and storage, the way a new tab arrives. */
+  const wallClear = async () => {
+    await sidecar.page.cdp.send('Network.clearBrowserCookies').catch(() => {})
+    await sidecar.page.cdp.send('Runtime.evaluate', {
+      expression: 'localStorage.clear(); document.cookie = "bench_wall=; Max-Age=0; path=/"',
+      returnByValue: true,
+    }).catch(() => {})
+    await sidecar.page.navigate(wallBase)
+  }
+  await wallClear()
+  const wallOldAt = Date.now()
+  const wallMiss = await wallRead.execute({ query: 'notice period' })
+  await wallLogin.execute({ action: 'list' })
+  await wallLogin.execute({ action: 'use', name: 'bench-wall' })
+  const wallOldResult = await wallRead.execute({ query: 'notice period' })
+  const wallOldMs = Date.now() - wallOldAt
+  await wallClear()
+  const wallNewAt = Date.now()
+  const wallNewResult = await wallRead.execute({ query: 'notice period' })
+  const wallNewMs = Date.now() - wallNewAt
+  const wallSays = String(wallNewResult?.text ?? '')
+  /* Two accounts that both cover the page: it must report both and restore neither. */
+  await wallLogin.execute({ action: 'save', name: 'bench-wall-two' })
+  await wallClear()
+  const wallTwo = await wallRead.execute({ query: 'notice period' })
+  const wallTwoSays = String(wallTwo?.text ?? '')
+  emit('login-wall', {
+    oldCalls: 4,
+    newCalls: 1,
+    wallChars: String(wallMiss?.text ?? '').length,
+    oldChars: String(wallOldResult?.text ?? '').length,
+    newChars: wallSays.length,
+    recovered: wallSays.includes('forty two days'),
+    oldMs: wallOldMs,
+    newMs: wallNewMs,
+    namesBoth: wallTwoSays.includes('bench-wall') && wallTwoSays.includes('bench-wall-two'),
+    guessed: wallTwoSays.includes('forty two days'),
+  })
+  budget('login-wall', wallNewMs)
+
+  /* A sign-in that is already in the browser on this Mac: one call imports it,
+     sealed, without an extension, a pairing code or a copied profile. The store
+     is synthesised the way the browser writes it, so the row measures our work
+     and not somebody's real browsing history. */
+  const chromeHome = mkdtempSync(join(tmpdir(), 'dshib-bench-chrome-'))
+  process.env.DSH_INNER_BROWSER_CHROME_HOME = chromeHome
+  process.env.DSH_INNER_BROWSER_COOKIE_KEY = 'bench-safe-storage-password'
+  const benchKey = pbkdf2Sync('bench-safe-storage-password', 'saltysalt', 1003, 16, 'sha1')
+  const benchSeal = (host, value) => {
+    const cipher = createCipheriv('aes-128-cbc', benchKey, Buffer.alloc(16, ' '))
+    const hash = createHash('sha256').update(host).digest()
+    return Buffer.concat([Buffer.from('v10', 'latin1'), cipher.update(Buffer.concat([hash, Buffer.from(value, 'utf8')])), cipher.final()])
+  }
+  const profileDir = join(chromeHome, 'Library', 'Application Support', 'Google', 'Chrome', 'Default', 'Network')
+  mkdirSync(profileDir, { recursive: true })
+  const benchDb = join(profileDir, 'Cookies')
+  const hex = (blob) => `X'${Buffer.from(blob).toString('hex')}'`
+  const benchSql = 'CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER);'
+    + ` INSERT INTO cookies VALUES ('.127.0.0.1','from_chrome','',${hex(benchSeal('.127.0.0.1', 'chrome-secret'))},'/',13500000000000000,1,1,1);`
+    + ` INSERT INTO cookies VALUES ('.elsewhere.test','other','',${hex(benchSeal('.elsewhere.test', 'no'))},'/',0,0,0,-1);`
+  spawnSync('/usr/bin/sqlite3', [benchDb], { input: benchSql, encoding: 'utf8' })
+  await sidecar.page.navigate(wallBase + 'enter')
+  const importAt = Date.now()
+  const importNote = await wallLogin.execute({ action: 'import', name: 'bench-import' })
+  const importMs = Date.now() - importAt
+  const importText = String(importNote?.text ?? '')
+  const importedList = await wallLogin.execute({ action: 'list' })
+  emit('login-import', {
+    importMs,
+    calls: 1,
+    cookies: /(\d+) cookies/u.exec(importText)?.[1] ?? '0',
+    namesSite: importText.includes('127.0.0.1'),
+    keepsSecret: !importText.includes('chrome-secret'),
+    listed: String(importedList?.text ?? '').includes('bench-import'),
+  })
+  budget('login-import', importMs)
+  wallServer.close()
+  delete process.env.DSH_INNER_BROWSER_CHROME_HOME
+  delete process.env.DSH_INNER_BROWSER_COOKIE_KEY
   delete process.env.DSH_INNER_BROWSER_STATE_DIR
   delete process.env.DSH_INNER_BROWSER_VAULT_KEY
 

@@ -305,6 +305,51 @@ export function dropLogin(name) {
   return true
 }
 
+/** @param {string} value - an address. @returns {string} its host, without a leading www. */ // ui-copy-ignore
+function hostOf(value) {
+  try {
+    return new URL(String(value)).hostname.replace(/^www\./u, '').toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/** @param {string} host - the page. @param {string} domain - a cookie domain or an address host. @returns {boolean} whether the page is on it. */ // ui-copy-ignore
+function onSite(host, domain) { // ui-copy-ignore
+  const bare = String(domain ?? '').replace(/^\./u, '').toLowerCase()
+  if (bare === '' || host === '') return false // ui-copy-ignore
+  return host === bare || host.endsWith(`.${bare}`) // ui-copy-ignore
+}
+
+/**
+ * The kept sign-ins that could sign this address in: a cookie domain of the
+ * page's host or its parent, or the very site it was saved on. Names and counts // ui-copy-ignore
+ * only — the cookies stay sealed until one of them is actually put back.
+ * @param {string} url - the page asking.
+ * @returns {Array<{name: string, savedAt: number, cookieCount: number}>} matches, newest first.
+ */
+export function signInsFor(url) {
+  const host = hostOf(url) // ui-copy-ignore
+  if (host === '') return [] // ui-copy-ignore
+  const dir = loginDir()
+  let names = []
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith('.json'))
+  } catch {
+    return []
+  }
+  const rows = []
+  for (const name of names) {
+    const held = readSealed(join(dir, name))
+    if (held === null || typeof held !== 'object') continue
+    const cookies = Array.isArray(held.cookies) ? held.cookies : []
+    const covers = cookies.some((cookie) => onSite(host, String(cookie?.domain ?? ''))) || onSite(host, hostOf(held.url)) // ui-copy-ignore
+    if (!covers) continue
+    rows.push({ name: String(held.name ?? name.replace(/\.json$/u, '')), savedAt: Number(held.savedAt ?? 0), cookieCount: cookies.length })
+  }
+  return rows.sort((a, b) => b.savedAt - a.savedAt)
+}
+
 /**
  * How big the vault is, and whether the key is outside it: the two facts a
  * person wants when deciding whether a sign-in is safe to leave here.

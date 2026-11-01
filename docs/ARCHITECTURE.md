@@ -223,6 +223,14 @@ Three layers, each adding one thing the previous cannot do:
   browser closes, and put back on the next launch. A cookie the browser already holds is
   never overwritten from the jar — a rotation happened in the live browser, and the jar is
   the older truth.
+- **`chromecookies.js`** reads a browser's own cookie store off disk, in memory only: copy `Cookies`
+  (with `-wal`/`-shm`, since the browser holds the lock) to a temp dir, then `node:sqlite` or
+  `/usr/bin/sqlite3 -readonly`. Values are sealed with the browser's Safe Storage password from the
+  macOS keychain: PBKDF2-SHA1 (1003 iterations, `saltysalt`) → AES-128-CBC with a space IV, and the
+  SHA-256 host prefix newer Chromium builds prepend is checked and stripped. Values it cannot open
+  (Chrome 127+ app-bound `v20`) are counted, never guessed; cookie values are never returned to the
+  model or logged. On macOS the process needs Full Disk Access for the profile root, and the tool says
+  exactly that instead of pretending there is no profile.
 - **`browser_login`** (`vault.js`) turns that state into named snapshots a chat can call
   back: cookies plus per-origin `localStorage`, saved under a name, listed, restored, or
   dropped. `list` is a directory read, so it costs nothing while the browser is down.

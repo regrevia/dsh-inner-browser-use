@@ -16,7 +16,8 @@ import { basename, join } from 'node:path'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
 import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
-import { dropLogin, listLogins, readLogin, saveLogin, vaultState } from './vault.js'
+import { dropLogin, listLogins, readLogin, saveLogin, signInsFor, vaultState } from './vault.js'
+import { readBrowserCookies, siteOf } from './chromecookies.js'
 import { readPage, renderPage, readArticle, readRelevant, readTabs, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
@@ -964,6 +965,106 @@ async function evaluate(page, expression, route, raceMs = 2000) {
     return { error: String(exceptionDetails.exception?.description ?? exceptionDetails.text ?? 'evaluate failed') }
   }
   return result?.value
+}
+
+/**
+ * A password field and little else is the one shape of page that can never
+ * answer a read: it is the site asking who this is, not the site's content.
+ * @param {any} page - sidecar page.
+ * @returns {Promise<boolean>} whether the page is asking for a sign-in.
+ */
+async function signInWall(page) {
+  const raw = await evaluate(
+    page,
+    '(() => { try { if (document.querySelector("input[type=password]") === null) return "0"; const text = document.body === null ? "" : String(document.body.innerText); return text.length > 3000 ? "0" : "1" } catch { return "0" } })()',
+    null,
+    2000,
+  )
+  return String(raw ?? '') === '1'
+}
+
+/**
+ * Puts a kept sign-in back on the page: cookies first, then the local storage of
+ * the sites it kept, which is where some sites keep the sign-in itself.
+ * @param {any} page - sidecar page.
+ * @param {any} held - what the vault opened.
+ * @returns {Promise<{put: number, stored: number}>} cookies and storage entries written.
+ */
+async function applySignIn(page, held) {
+  let put = 0
+  for (const cookie of (Array.isArray(held?.cookies) ? held.cookies : []).slice(0, 400)) {
+    const domain = String(cookie?.domain ?? '').replace(/^\./u, '')
+    if (domain === '' || cookie?.name === undefined) continue
+    try {
+      await page.setCookie({
+        name: String(cookie.name),
+        value: String(cookie.value ?? ''),
+        domain,
+        path: String(cookie.path ?? '/'),
+        secure: cookie.secure === true,
+        httpOnly: cookie.httpOnly === true,
+        sameSite: cookie.sameSite,
+        expires: cookie.session === true ? undefined : Number(cookie.expires) || undefined,
+      })
+      put += 1
+    } catch {
+      /* one cookie a site refuses is not a reason to stop */
+    }
+  }
+  let stored = 0
+  for (const row of (Array.isArray(held?.storage) ? held.storage : []).slice(0, 4)) stored += await restoreStorage(page, row)
+  return { put, stored }
+}
+
+/**
+ * Waits, briefly, for a navigation to actually land: the page reports its own
+ * address and load state, so a read after it never runs against the page being
+ * left behind.
+ * @param {any} page - sidecar page.
+ * @param {string} url - where it was sent.
+ * @returns {Promise<boolean>} whether it got there.
+ */
+async function arrived(page, url, was) {
+  for (let i = 0; i < 20; i += 1) {
+    const raw = await evaluate(page, 'JSON.stringify([location.href, document.readyState, performance.timeOrigin])', null, 1500)
+    if (typeof raw === 'string' && raw !== '') {
+      try {
+        const [here, state, born] = JSON.parse(raw)
+        if (String(here) === String(url) && String(state) === 'complete' && Number(born) !== Number(was)) return true
+      } catch {
+        /* a page mid-navigation can answer with half a document; ask again */
+      }
+    }
+    await new Promise((settle) => setTimeout(settle, 100))
+  }
+  return false
+}
+
+/**
+ * A sign-in form answers nothing, and the sign-in may already be kept. Putting
+ * it back and reading once is one call where naming the account, using it and
+ * reading again is three. Never guesses: one site with one kept sign-in only.
+ * @param {any} page - sidecar page.
+ * @param {string} url - the address that showed the form.
+ * @param {boolean} [wall] - already known to be a sign-in form.
+ * @returns {Promise<{name: string, note: string, wall: boolean}>} the account put back, what to say when none was, and whether a form is what is there.
+ */
+async function signInFor(page, url, wall) {
+  if (page === null || page === undefined) return { name: '', note: '', wall: false }
+  const form = wall === undefined ? await signInWall(page) : wall === true
+  if (!form) return { name: '', note: '', wall: false }
+  const matches = signInsFor(String(url ?? page.url ?? ''))
+  const names = matches.map((one) => one.name)
+  if (names.length === 0) return { name: '', note: '', wall: true }
+  if (names.length > 1) return { name: '', note: ` (${String(names.length)} saved sign-ins cover this site: ${names.join(', ')} — browser_login {action:"use", name:"…"} picks one)`, wall: true }
+  const held = readLogin(names[0])
+  if (held === null) return { name: '', note: '', wall: true }
+  const { put } = await applySignIn(page, held)
+  if (put === 0) return { name: '', note: ` (the saved sign-in "${names[0]}" had nothing this site accepts)`, wall: true }
+  const born = await evaluate(page, 'performance.timeOrigin', null, 1500).catch(() => undefined)
+  await page.navigate(String(url ?? page.url ?? held.url ?? ''))
+  await arrived(page, String(url ?? page.url ?? held.url ?? ''), born)
+  return { name: names[0], note: '', wall: true }
 }
 
 /**
@@ -2234,6 +2335,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           query: { type: 'string', description: 'What you want to know. With a query, only the passages that answer it come back, ranked — the cheapest way to read a long page. Without one, the whole page comes back.' },
           force: { type: 'boolean', description: 'Read again even if the page has not changed since this chat last read it.' },
           across: { type: 'boolean', description: 'When this tab has no answer, also read the other tabs this chat holds and answer from whichever has it. Default true; pass false to stay on this one.' },
+          signin: { type: 'boolean', description: 'When the page is showing a sign-in form and the vault holds exactly one sign-in for the site, put it back and read once. Default true; pass false to read the form itself.' },
         },
         additionalProperties: false,
       },
@@ -2264,7 +2366,29 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
             /* The answer may be in the tab behind this one. Reading every tab
                this chat holds is one call, where switching and reading again is
                two, so the miss tries the others before it gives up. */
+            /* A sign-in form is the one page that can never answer: it is asking
+               who this is. If the vault holds exactly one sign-in for the site,
+               put it back and read once, where looking it up, using it and
+               reading again is three calls. */
+            const wall = await signInWall(page)
             let note = ''
+            if (wall && args?.signin !== false) {
+              const put = await signInFor(page, String(found.url ?? ''), true)
+              if (put.name !== '') {
+                const after = await readRelevant(page, asked, { maxChars: ceiling })
+                if (after.text !== '') {
+                  return `${after.url}\n# ${after.title === '' ? '(untitled)' : after.title}\n\nsigned back in as "${put.name}" before reading (the page was showing a sign-in form):\n\n${after.text}\n\n(${String(after.matched)} of ${String(after.total)} blocks, ranked for ${JSON.stringify(asked)})`
+                }
+                note = ` (put the saved sign-in "${put.name}" back, and the page still does not answer)`
+              } else {
+                note = put.note
+              }
+            }
+            /* A page still showing a sign-in form is not worth remembering as
+               read: the same text on the next call would hide that the form is
+               all that is there, and a sign-in that arrives later would never be
+               tried. Only the miss on a real page is kept. */
+            const save = (text) => (wall ? text : keep(text))
             if (args?.across !== false) {
               const others = await sidecar.elsewhere(currentSession()).catch(() => [])
               if (others.length > 0) {
@@ -2291,11 +2415,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
               const body = closest
                 .map((row) => `${row.heading === '' ? '' : `## ${String(row.heading)}\n`}${String(row.text)}`)
                 .join('\n\n')
-              return keep(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing directly answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} The closest passages:\n\n${body}\n\nask for the whole page with browser_view, or try other words.`)
+              return save(`${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing directly answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} The closest passages:\n\n${body}\n\nask for the whole page with browser_view, or try other words.`)
             }
             const whole = await readArticle(page, { maxChars: ceiling })
             if (whole.fault === undefined && whole.text !== '') {
-              return keep(`${whole.url}\n# ${whole.title === '' ? '(untitled)' : whole.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} so the whole page follows:\n\n${whole.text}${whole.truncated ? `\n\n(cut at ${String(whole.chars)} characters; raise max_chars for more)` : ''}`)
+              return save(`${whole.url}\n# ${whole.title === '' ? '(untitled)' : whole.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} so the whole page follows:\n\n${whole.text}${whole.truncated ? `\n\n(cut at ${String(whole.chars)} characters; raise max_chars for more)` : ''}`)
             }
             return `${found.url}\n# ${found.title === '' ? '(untitled)' : found.title}\n\nnothing here answers ${JSON.stringify(asked)} (${String(found.total)} blocks read).${note} Call browser_view for the whole page, or try other words.`
           }
@@ -2306,6 +2430,16 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (read.text === '') {
           const pdf = await pdfNote(page)
           if (pdf !== '') return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}${pdf}`
+          if (args?.signin !== false) {
+            const put = await signInFor(page, String(read.url ?? ''))
+            if (put.name !== '') {
+              const again = await readArticle(page, { maxChars: ceiling })
+              if (again.text !== '') {
+                const tail2 = again.truncated ? `\n\n(cut at ${String(again.chars)} characters; raise max_chars for more)` : ''
+                return `${again.url}\n# ${again.title === '' ? '(untitled)' : again.title}\n\nsigned back in as "${put.name}" before reading (the page was showing a sign-in form):\n\n${again.text}${tail2}`
+              }
+            }
+          }
           return `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}\n\nnothing to read here: the page draws its content, or it is still loading. Call browser_view to see what is on screen.`
         }
         const head = `${read.url}\n# ${read.title === '' ? '(untitled)' : read.title}`
@@ -3145,12 +3279,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
 
     {
       name: 'browser_login', // ui-copy-ignore
-      description: 'Sign-ins belong to the browser, not to a chat: every chat uses them and they survive a restart. "save" keeps the sign-in showing right now under a name, "list" shows what is kept, "use" signs the browser back in as that account and reopens the page, "drop" forgets it. What is written is sealed, and the key is the one in the system keystore. One site can hold several accounts: save them under different names and switch with "use".',
+      description: 'Sign-ins belong to the browser, not to a chat: every chat uses them and they survive a restart. "save" keeps the sign-in showing right now under a name, "list" shows what is kept, "use" signs the browser back in as that account and reopens the page, "drop" forgets it, "import" takes a sign-in that is already in Chrome on this Mac and keeps it under a name. What is written is sealed, and the key is the one in the system keystore. One site can hold several accounts: save them under different names and switch with "use".',
       parameters: { // ui-copy-ignore
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'save', 'use', 'drop'], description: 'list, save, use or drop.' },
-          name: { type: 'string', description: 'Account name, for example "work" or "personal". Needed by save, use and drop.' },
+          action: { type: 'string', enum: ['list', 'save', 'use', 'drop', 'import'], description: 'list, save, use, drop or import.' },
+          name: { type: 'string', description: 'Account name, for example "work" or "personal". Needed by save, use, drop and import.' },
+          browser: { type: 'string', enum: ['chrome', 'brave', 'edge', 'chromium'], description: 'Where import looks for the sign-in. Default chrome.' },
         },
         required: ['action'], // ui-copy-ignore
         additionalProperties: false,
@@ -3179,6 +3314,25 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (action === 'drop') {
           return { text: dropLogin(name) ? `Forgot "${name}".` : `Nothing saved as "${name}".` }
         }
+        if (action === 'import') {
+          if (name === '') return { text: 'Name the account: browser_login {action:"import", name:"work"}.' }
+          const page = await sidecar.ensure({ session: currentSession() })
+          const url = String(page.url ?? '')
+          if (!/^https?:/u.test(url)) return { text: 'Open the site first, then import its sign-in.' }
+          let found
+          try {
+            found = readBrowserCookies({ browser: String(args?.browser ?? 'chrome'), url })
+          } catch (error) {
+            return { text: String(error?.message ?? error) }
+          }
+          const kept = saveLogin(name, { cookies: found.cookies, storage: [], url })
+          const was = await evaluate(page, 'performance.timeOrigin', null, 1500).catch(() => undefined)
+          await applySignIn(page, readLogin(name))
+          await page.navigate(url)
+          await arrived(page, url, was)
+          const skipped = found.sealed === 0 ? '' : ', ' + String(found.sealed) + ' could not be opened'
+          return { text: 'Imported "' + kept.name + '" from ' + found.label + ': ' + String(kept.cookieCount) + ' cookies for ' + siteOf(url) + skipped + ', sealed on disk. The page is open again.' }
+        }
         if (action === 'save') {
           const page = await sidecar.ensure({ session: currentSession() })
           const cookies = await page.cookies()
@@ -3191,35 +3345,14 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const held = readLogin(name)
           if (held === null) return { text: `Nothing saved as "${name}". browser_login {action:"list"} shows what is kept.` }
           const page = await sidecar.ensure({ session: currentSession() })
-          let put = 0
-          for (const cookie of (Array.isArray(held.cookies) ? held.cookies : []).slice(0, 400)) {
-            const domain = String(cookie?.domain ?? '').replace(/^\./u, '')
-            if (domain === '' || cookie?.name === undefined) continue
-            try {
-              await page.setCookie({
-                name: String(cookie.name),
-                value: String(cookie.value ?? ''),
-                domain,
-                path: String(cookie.path ?? '/'),
-                secure: cookie.secure === true,
-                httpOnly: cookie.httpOnly === true,
-                sameSite: cookie.sameSite,
-                expires: cookie.session === true ? undefined : Number(cookie.expires) || undefined,
-              })
-              put += 1
-            } catch {
-              /* one cookie a site refuses is not a reason to stop */
-            }
-          }
-          let stored = 0
-          for (const row of (Array.isArray(held.storage) ? held.storage : []).slice(0, 4)) stored += await restoreStorage(page, row)
+          const { put, stored } = await applySignIn(page, held)
           const back = String(held.url ?? '')
           if (back !== '') await page.navigate(back)
           else await page.reload()
           const said = stored === 0 ? '' : `, ${stored} local storage entries`
           return { text: `Signed in as "${name}": ${put} cookies${said}, page reopened.` }
         }
-        return { text: 'Pass action "list", "save", "use" or "drop".' }
+        return { text: 'Pass action "list", "save", "use", "drop" or "import".' }
       },
     },
 

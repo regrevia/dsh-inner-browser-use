@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 process.env.DSH_INNER_BROWSER_VAULT_KEY = Buffer.alloc(32, 9).toString('base64')
 process.env.DSH_INNER_BROWSER_STATE_DIR = mkdtempSync(join(tmpdir(), 'dshib-vault-'))
 
-const { seal, unseal, readSealed, writeSealed, saveLogin, listLogins, readLogin, dropLogin, loginSlug, vaultState } =
+const { seal, unseal, readSealed, writeSealed, saveLogin, listLogins, readLogin, dropLogin, loginSlug, signInsFor, vaultState } =
   await import(new URL('../vault.js', import.meta.url).href)
 
 const root = process.env.DSH_INNER_BROWSER_STATE_DIR
@@ -87,4 +87,26 @@ test('the vault reports its size and that the key is not in it', () => {
   assert.equal(shape.keyInKeychain, false, 'a key handed in by the environment is not a keystore key')
   assert.equal(shape.keySource, 'env', 'the key in use is the one the test handed in')
   dropLogin('one')
+})
+
+test('a kept sign-in is found by the site it covers, names only, newest first', () => {
+  saveLogin('work', { cookies: [{ name: 'sid', value: '1', domain: 'app.example.com' }], storage: [], url: 'https://app.example.com/inbox' })
+  saveLogin('home', { cookies: [{ name: 'sid', value: '2', domain: '.example.com' }], storage: [], url: 'https://www.example.com/' })
+  saveLogin('elsewhere', { cookies: [{ name: 'sid', value: '3', domain: 'shop.other.test' }], storage: [], url: 'https://shop.other.test/' })
+
+  assert.deepEqual(signInsFor('https://example.com/reports').map((row) => row.name), ['home'], 'a cookie for the whole site covers the site')
+  assert.deepEqual(signInsFor('https://www.example.com/x').map((row) => row.name), ['home'], 'www is the same site')
+  assert.deepEqual(signInsFor('https://app.example.com/x').map((row) => row.name).sort(), ['home', 'work'], 'a subdomain sees both the site cookie and its own')
+  assert.deepEqual(signInsFor('https://example.com/').map((row) => row.name), ['home'], 'the parent does not cover a sign-in kept for one subdomain')
+  assert.deepEqual(signInsFor('https://shop.other.test/cart').map((row) => row.name), ['elsewhere'])
+  assert.deepEqual(signInsFor('https://other.test/'), [], 'a sibling site does not cover it')
+  assert.deepEqual(signInsFor('https://nothing.test/'), [])
+  assert.deepEqual(signInsFor('not a url'), [])
+
+  const one = signInsFor('https://example.com/')[0]
+  assert.equal(typeof one.cookieCount, 'number')
+  assert.equal(typeof one.savedAt, 'number')
+  assert.equal(one.value, undefined, 'a search for a page never hands back the sealed cookies')
+  assert.ok(!JSON.stringify(signInsFor('https://example.com/')).includes('sid'), 'not even the cookie names')
+  for (const name of ['work', 'home', 'elsewhere']) dropLogin(name)
 })
