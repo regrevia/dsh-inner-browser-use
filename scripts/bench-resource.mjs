@@ -158,6 +158,13 @@ try {
   report.asleep_mb = asleep.memory
   check(report.rested && asleep.memory === 0, `rest releases everything (${String(asleep.memory)} bytes)`)
 
+  /* A person coming back arrives long after the browser has finished going
+     away. Timing the wake while a shutdown is still in flight charges the
+     wake for work that belongs to the rest. */
+  for (let i = 0; i < 50 && sidecar.closing !== null; i += 1) await wait(100)
+  const settled = await sidecar.state()
+  report.awake_after_rest = settled.alive === true
+
   const wakeAt = Date.now()
   const back = text(await run('browser_view', {}))
   report.wake_ms = Date.now() - wakeAt

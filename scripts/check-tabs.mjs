@@ -103,7 +103,7 @@ try {
   check(six.mb < 1400, `six tabs cost ${String(six.mb)} MB`)
 
   const samples = []
-  const until = Date.now() + 12_000
+  const until = Date.now() + 20_000
   let last = weigh()
   while (Date.now() < until) {
     await wait(2500)
@@ -113,8 +113,13 @@ try {
     last = now
   }
   const avg = Number((samples.reduce((a, b) => a + b, 0) / Math.max(1, samples.length)).toFixed(2))
-  report.idle = { samples_pct: samples, avg_pct: avg }
+  /* The first windows still carry the work of drawing six pages; the number a
+     person lives with is the one after that has settled. */
+  const settledSamples = samples.slice(3)
+  const settled = Number((settledSamples.reduce((a, b) => a + b, 0) / Math.max(1, settledSamples.length)).toFixed(2))
+  report.idle = { samples_pct: samples, avg_pct: avg, settled_pct: settled }
   check(avg <= 5, `six idle tabs averaged ${String(avg)}% of a core`)
+  check(settled <= 2, `six idle tabs settled at ${String(settled)}% of a core`)
 
   const seventh = 'session-tabs-7'
   const said = text(await run(seventh, 'browser_open', { url: `${base}/p7` }))

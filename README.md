@@ -83,8 +83,8 @@ sign-in here is still there the next day.
 Measured on the same machine with the same harness as Playwright MCP and Chrome
 DevTools MCP: idle RSS **551 MB** (1414 / 1280), idle CPU **0.03–0.32%**
 (38.1% / 36.3%), and a wake in **0.82–0.85 s** instead of a 4.6–5.1 s restart.
-With six tabs open it is **876 MB**, about +2 MB per tab, still four renderer
-processes and 1.36 % of a core idle. `npm run bench` and `npm run tabs`
+With six tabs open it is **864–921 MB**, about +2 MB per tab, still four renderer
+processes and 0.9 % of a core idle (0.24 % once the pages settle). `npm run bench` and `npm run tabs`
 reproduce both.
 
 ## When nobody is looking
