@@ -34,6 +34,10 @@ test('a browser nobody draws is nobody watching, even before Chrome starts', () 
 
 test('a browser nobody watches is put away when its rest is over', async () => {
   const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-rest-${process.pid}`) })
+  /* A clock only runs on a browser that exists: a stopped browser has nothing
+     to put away, and the beat says so by switching itself off. */
+  sidecar.cdp = { closed: false }
+  sidecar.page = { frames: new Set() }
   let shut = 0
   sidecar.shutdown = async () => {
     shut += 1
@@ -47,6 +51,7 @@ test('a browser nobody watches is put away when its rest is over', async () => {
 
 test('a browser someone watches keeps its clock running instead of closing', async () => {
   const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-rest-watch-${process.pid}`) })
+  sidecar.cdp = { closed: false }
   sidecar.page = { frames: new Set(['viewer']) }
   let shut = 0
   sidecar.shutdown = async () => {
@@ -935,4 +940,29 @@ test('a heavy frame lowers the cast quality, a light one raises it, a normal one
   assert.equal(nextQuality(74, 30_000), 76)
   assert.equal(nextQuality(72, 0), 72)
   assert.equal(nextQuality(72, Number.NaN), 72)
+})
+
+test('two shutdowns at once put the browser away once', async () => {
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-put-away-${process.pid}`) })
+  let puts = 0
+  sidecar.putAway = async () => {
+    puts += 1
+    await new Promise((resolve) => setTimeout(resolve, 40))
+  }
+  const first = sidecar.shutdown()
+  const second = sidecar.shutdown()
+  await Promise.all([first, second])
+  assert.equal(puts, 1, 'the browser is closed once, not twice')
+  assert.equal(sidecar.closing, null, 'and the door is open again for the next rest')
+})
+
+test('a launch waits for the browser that is still going out', async () => {
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-launch-wait-${process.pid}`) })
+  let gone = false
+  sidecar.closing = new Promise((resolve) => setTimeout(() => { gone = true; resolve() }, 40))
+  /* No Chrome is started here: a port is pretended so the browser is never
+     spawned, and the socket asks whether the old one was already gone. */
+  sidecar.runningPort = async () => 1
+  sidecar.pageSocket = async () => { throw new Error(`socket asked for after the old browser was gone: ${String(gone)}`) }
+  await assert.rejects(() => sidecar.launch('about:blank'), /socket asked for after the old browser was gone: true/)
 })

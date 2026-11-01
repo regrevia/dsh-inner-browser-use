@@ -132,11 +132,31 @@ than the page's: a cut must not shrink the site for the next visit.
 npm run soak
 ```
 
-Twenty-four cycles of open, read, snapshot, re-read through one headless browser.
-Expected: `soak: ok · 24 cycles` with `pages 1` and memory lower at the end than
-at the start. Memory climbing with the cycle count, or a second page appearing,
-means something is kept per read rather than per page. The run is bounded on
-purpose — under a minute, no internet.
+Twenty-four cycles of open, read, snapshot, re-read through one headless browser,
+and every eighth cycle the browser is really put away and woken again.
+Expected: `soak: ok · 24 cycles` with `pages 1`, memory lower at the end than at
+the start, and a summary naming at least one rest (`3 rests` here, 1427 → 956 MB
+in 40.1 s). Memory climbing with the cycle count, a second page appearing, or a
+rest that leaves memory held means something is kept per read rather than per
+page, or the rest does not close the whole tree. The run is bounded on purpose —
+under a minute, no internet.
+
+## 10. It comes back where it was
+
+```bash
+npm run rest
+```
+
+A headless sidecar is told to rest 1.2 s after the last call. Expected chain:
+`browser_state` says `rests in`, then `stopped` with `memory 0 MB` once the rest
+lands; touching the browser again wakes it on its own, `pageFor(session).url` is
+still the page that was open, the text is either the same paragraph or
+`nothing changed since the last read`, and the wake takes under 4 s. `rest and
+wake hold.` is the bar.
+
+A rest that never happens while nobody is watching means the watched count is
+not reaching the clock; a wake that lands on a blank tab means the page-per-chat
+map was dropped by the close instead of being restored by the launch.
 
 ## Live
 

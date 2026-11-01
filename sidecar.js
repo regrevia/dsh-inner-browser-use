@@ -10,6 +10,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFil
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { GapClock, MAX_REST_MS, MIN_REST_MS, decide } from './rest.js'
 import { readyFlash } from './runtime/flash-setup.mjs'
 import { readSealed, tightenDir, writeSealed } from './vault.js'
 import { isMedia, kindOf } from './media.js?m=1'
@@ -110,6 +111,18 @@ const MAX_TABS = 6
 /* A tab nobody has watched or driven for this long is closed even under the cap:
    six chats can stay open for days, and each one is a renderer's worth of memory. */
 const TAB_IDLE_MS = 10 * 60_000
+/* Ceiling for the process tree, renderers included. macOS reports each
+   renderer's RSS as if it were private, so an ordinary one-page browser reads
+   as ~1.4 GB; the number is comparable across runs, which is what a limit
+   needs, rather than an accounting of what is really unique. Past the ceiling
+   tabs nobody watches go first, and the browser itself when nobody watches at
+   all. Raise it when a page really needs more. */
+const BUDGET_MB = Number(process.env.DSH_INNER_BROWSER_MEMORY_MB ?? 2400) || 2400
+/* How often the lifecycle is looked at, and how often memory is sampled. The
+   beat is what makes the clock survive a lost timer: a plugin reload, a laptop
+   asleep, a timer that fired into a stopped browser. */
+const BEAT_MS = 5000
+const SAMPLE_MS = 30_000
 
 /** @param {number} ms - how long to wait. @returns {Promise<void>} resolves after it. */
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -1484,6 +1497,35 @@ export class SidecarPage {
     }
   }
 
+  /**
+   * Parks a page nobody is driving: timers and fetch callbacks stop, while the
+   * DOM, the scroll position, the cookies and the CDP session stay. Freezing is
+   * reversible in place, so bringing it back costs a protocol call rather than
+   * a launch and a sign-in. Chrome's own docs define the two states.
+   * @returns {Promise<void>} done, even on a page that cannot be frozen.
+   */
+  async freeze() {
+    if (this.frozen === true) return
+    try {
+      await this.cdp.send('Page.setWebLifecycleState', { state: 'frozen' })
+      this.frozen = true
+      this.casting = false
+    } catch {
+      /* A page between navigations refuses; it is not a reason to fail a call. */
+    }
+  }
+
+  /** @returns {Promise<void>} done, with the page running again. */
+  async thaw() {
+    if (this.frozen !== true) return
+    this.frozen = false
+    try {
+      await this.cdp.send('Page.setWebLifecycleState', { state: 'active' })
+    } catch {
+      /* Already gone: the next call finds a dead page and replaces it. */
+    }
+  }
+
   async stopCast() {
     if (!this.casting) return
     this.casting = false
@@ -2149,6 +2191,36 @@ export class Sidecar {
        enough that a stray click does not stall a run, long enough that the agent
        does not type into a field the person is in the middle of filling. */
     this.holdMs = 6000
+    /* When the browser was last asked for anything, and the rhythm of those
+       asks: the two numbers that decide when a pause has become a departure. */
+    this.use = new GapClock()
+    this.useAt = 0
+    /* The moment this browser may be put down, or 0 while it has no clock. */
+    this.restAt = 0
+    /* The lifecycle beat, and what it last found. */
+    this.beat = null
+    this.resting = false
+    this.memMb = 0
+    this.memAt = 0
+    this.pressure = 'ok'
+    this.budgetMb = Math.max(200, Number(options.budgetMb ?? BUDGET_MB) || BUDGET_MB)
+    /* A window this browser is never given less than, or more than: a test can
+       shrink both, and a chat that works in fast steps still gets grace. */
+    this.restFloor = Math.max(1000, Number(options.restFloor ?? MIN_REST_MS) || MIN_REST_MS)
+    this.restCeiling = Math.max(this.restFloor, Number(options.restCeiling ?? MAX_REST_MS) || MAX_REST_MS)
+    /* How often it has been put down and brought back, and how long the last
+       wake took: a rest that costs more than it saves is a bug worth seeing. */
+    this.rests = 0
+    this.sleptAt = 0
+    this.wakeMs = 0
+    /* Restarts inside a window: three in ten minutes is a browser that is
+       broken, not a browser that was needed. */
+    this.crashes = []
+    this.restartWindow = Math.max(10_000, Number(options.restartWindow ?? 10 * 60_000) || 10 * 60_000)
+    /* The shutdown in flight, if any: a launch that starts while the last
+       browser is still being put away would have its fresh socket closed by
+       the one going out. */
+    this.closing = null
   }
 
   /**
@@ -2413,15 +2485,19 @@ export class Sidecar {
    * chats actually in use, which is what the memory number follows.
    * @returns {Promise<void>} done.
    */
-  async reapIdleTabs() {
+  /**
+   * Closes tabs nobody watches, keeping their address for the chat.
+   * @param {boolean} [all] - close them whatever their age, for memory pressure.
+   */
+  async reapIdleTabs(all = false) {
     const now = Date.now()
-    if (now - Number(this.reapedAt ?? 0) < 60_000) return
+    if (now - Number(this.reapedAt ?? 0) < 60_000 && all !== true) return
     this.reapedAt = now
     for (const [id, page] of this.pages) {
       const target = String(page.targetId ?? '')
       if ((page.frames?.size ?? 0) !== 0 || target === '' || page.port === 0) continue
       if (page === this.page) continue
-      if (now - Number(page.touched ?? 0) < TAB_IDLE_MS) continue
+      if (all !== true && now - Number(page.touched ?? 0) < TAB_IDLE_MS) continue
       this.pages.delete(id)
       /* The column is told the tab is gone, so a chat coming back to the front
          does not re-expand a pane for a page that already went away. */
@@ -2520,6 +2596,9 @@ export class Sidecar {
     if (id === '') return page
     const mine = this.pageFor(id)
     if (mine !== null) {
+      /* A page parked while nobody watched has to be running before it can be
+         driven; this is the whole point of freezing rather than closing it. */
+      if (mine.frozen === true) await mine.thaw()
       /* A chat's tab can die on its own: a crash, a browser another call
          restarted, a tab closed by hand. Handing that corpse back leaves the
          mirror on a blank picture forever, so it has to answer before it is
@@ -2547,6 +2626,26 @@ export class Sidecar {
     /* A new tab for a chat that had one before opens where that chat was: a
        blank mirror is not a place, and the first call should not land on one. */
     return this.tabFor(id, options.url === undefined || options.url === '' ? this.rememberedTab(id) : options.url)
+  }
+
+  /**
+   * Records a browser that stopped working, and reports whether it has stopped
+   * working so often that starting it again would only produce another crash
+   * on the person's screen. Three in ten minutes is a broken browser, not a
+   * browser the chat needed; saying so once is more useful than a loop.
+   * @returns {boolean} true when it is time to stop trying automatically.
+   */
+  died() {
+    const now = Date.now()
+    this.crashes = [...this.crashes.filter((at) => now - Number(at) < this.restartWindow), now]
+    return this.crashes.length > 3
+  }
+
+  /** @returns {Error} the error a chat sees instead of a fourth doomed launch. */
+  tooManyCrashes() {
+    const error = new Error('the browser has stopped 3 times in a few minutes; not starting it again — open it again when you need it')
+    this.note(error.message)
+    return error
   }
 
   async ensurePage(options = {}) {
@@ -2598,6 +2697,7 @@ export class Sidecar {
         try {
           return await this.recover(wasAt)
         } catch {
+          if (this.died()) throw this.tooManyCrashes()
           await this.shutdown()
           return this.ensure({ ...options, url: wasAt })
         }
@@ -2610,6 +2710,7 @@ export class Sidecar {
         try {
           return await this.recover(page.lastUrl || this.lastUrl)
         } catch {
+          if (this.died()) throw this.tooManyCrashes()
           await this.shutdown()
           return this.ensure({ ...options, url: page.lastUrl || this.lastUrl })
         }
@@ -2638,16 +2739,27 @@ export class Sidecar {
       this.note('renderer stopped answering; opening a fresh tab')
       this.starting = this.recover(wasAt).catch((error) => {
         this.note(String(error?.message ?? error))
+        if (this.died()) throw this.tooManyCrashes()
         return this.launch(wasAt)
       }).finally(() => {
         this.starting = null
       })
       return this.starting
     }
+    const asked = Date.now()
     this.starting = this.launch(options.url).finally(() => {
       this.starting = null
     })
-    return this.starting
+    /* How long a rest actually cost is the number that decides whether resting
+       was worth it; a silent multi-second wake is a regression, not a detail. */
+    return this.starting.then((page) => {
+      if (Number(this.sleptAt ?? 0) > 0) {
+        this.wakeMs = Date.now() - asked
+        this.note(`woke in ${String(this.wakeMs)} ms`)
+        this.sleptAt = 0
+      }
+      return page
+    })
   }
 
   /**
@@ -2675,6 +2787,9 @@ export class Sidecar {
 
   /** @param {string | undefined} url - first address. @returns {Promise<SidecarPage>} the page. */
   async launch(url) {
+    /* A rest and the next call can collide: wait for the browser that is going
+       out to be gone before starting the one that is coming in. */
+    if (this.closing !== null) await this.closing.catch(() => {})
     /* Chromium 87 opening the profile a current Chrome owns would downgrade it
        and lock it, so the Flash-era browser keeps a profile of its own. The two
        never share a directory; a game signed into one is signed in there only. */
@@ -3129,25 +3244,151 @@ export class Sidecar {
   }
 
   /**
-   * Starts the idle clock again.
-   * @param {number} [ms] - how long a browser nobody watches may stay up.
+   * Starts the idle clock again: the browser was just asked for something, and
+   * that ask is also the measurement that teaches it how long this chat pauses
+   * between steps while it is still working.
+   * @param {number} [ms] - an explicit window, when a pane the person closed is
+   *   a stronger signal than the learned rhythm.
    */
-  touch(ms = IDLE_MS) {
-    this.idleAt = Date.now() + ms
+  touch(ms) {
+    const now = Date.now()
+    this.use.record(now)
+    this.useAt = now
+    this.restAt = now + (Number.isFinite(ms) ? Math.max(0, Number(ms)) : this.restWindow())
+    this.armRest()
+    this.wakeClock()
+  }
+
+  /**
+   * Puts the precise edge on the clock: the beat would catch the deadline
+   * anyway, this only makes it exact.
+   */
+  armRest() {
     if (this.idle !== null) clearTimeout(this.idle)
+    if (this.restAt === 0) {
+      this.idle = null
+      return
+    }
+    /* The timer is the precise edge; the beat is what makes it survive a lost
+       timer, a plugin reload or a laptop that slept through the deadline. */
     this.idle = setTimeout(() => {
       this.idle = null
-      /* Someone is watching the mirror: the page stays up, and the clock starts
-         again so the browser is closed only once it is truly unused. */
-      let watched = this.page?.frames.size ?? 0
-      for (const page of this.pages.values()) watched += page.frames?.size ?? 0
-      if (watched > 0) {
-        this.touch()
-        return
-      }
-      void this.shutdown()
-    }, ms)
+      void this.beatNow().catch(() => {})
+    }, Math.max(0, Number(this.restAt) - Date.now()))
     this.idle.unref?.()
+  }
+
+  /** @returns {number} ms of silence from this chat that still means "working". */
+  restWindow() {
+    return Math.min(this.restCeiling, Math.max(this.restFloor, this.use.restAfter()))
+  }
+
+  /** Starts the lifecycle beat while a browser is up. */
+  wakeClock() {
+    if (this.beat !== null || this.stopping === true) return
+    this.beat = setInterval(() => {
+      void this.beatNow().catch(() => {})
+    }, BEAT_MS)
+    this.beat.unref?.()
+  }
+
+  /** Stops the beat and any pending rest: the browser is gone or handed over. */
+  sleepClock() {
+    if (this.beat !== null) clearInterval(this.beat)
+    this.beat = null
+    if (this.idle !== null) clearTimeout(this.idle)
+    this.idle = null
+    this.restAt = 0
+  }
+
+  /**
+   * One lifecycle beat: has the pause become a departure, and does the browser
+   * cost more than it is being used for.
+   * @returns {Promise<void>} done, possibly with the browser put away.
+   */
+  async beatNow() {
+    if (!this.alive || this.stopping === true) {
+      this.sleepClock()
+      return
+    }
+    const now = Date.now()
+    const watched = this.watched()
+    const verdict = decide({
+      now,
+      lastUse: this.useAt,
+      restAt: this.restAt,
+      watched,
+      quietAfter: this.use.quietAfter(),
+    })
+    if (verdict === 'rest') {
+      this.rests += 1
+      this.sleptAt = now
+      /* The reason outlives the browser: a chat asking later finds out why the
+         page it left is gone, instead of a silent blank column. */
+      this.note(`unused for ${String(Math.round((now - Number(this.useAt)) / 1000))} s with no pane watching; put away`)
+      await this.shutdown().catch(() => {})
+      return
+    }
+    if (verdict !== 'rest') {
+      /* Someone is still watching, or the chat is still working: the clock
+         starts again from now, and the next edge is scheduled. */
+      if (watched > 0) this.restAt = now + this.restWindow()
+      if (this.idle === null && this.restAt > 0) this.armRest()
+    }
+    if (verdict === 'quiet') {
+      if (this.resting !== true) {
+        this.resting = true
+        /* A picture nobody looks at still costs a screencast and an encoded
+           frame per beat. The page stays, the painting stops. */
+        for (const page of [this.page, ...this.pages.values()]) {
+          if (page === null || page === undefined) continue
+          if ((page.frames?.size ?? 0) !== 0) continue
+          if (typeof page.stopCast !== 'function') continue
+          await page.stopCast().catch(() => {})
+          /* Chrome's own Page Lifecycle park: timers and fetches stop, the DOM,
+             the scroll position and the CDP session stay. No competitor drives
+             this state at all, and it is the difference between a tab that has
+             to be reloaded and one that resumes where it was. */
+          await page.freeze().catch(() => {})
+        }
+        this.restNote = 'no pane is watching; the page is parked and the mirror paused'
+      }
+    } else if (this.resting === true) {
+      this.resting = false
+      this.restNote = ''
+    }
+    await this.weigh(now, watched)
+  }
+
+  /**
+   * What the browser costs, and what to do about it: tabs nobody watches go
+   * first, and the browser itself goes when nobody watches at all.
+   * @param {number} now - the moment of this look.
+   * @param {number} watched - panes watching a picture right now.
+   * @returns {Promise<void>} done.
+   */
+  async weigh(now, watched) {
+    if (now - Number(this.memAt ?? 0) < SAMPLE_MS) return
+    this.memAt = now
+    const pid = Number(this.child?.pid ?? 0)
+    this.memMb = pid > 0 ? Math.round(treeBytes(pid) / 1024 / 1024) : 0
+    if (this.memMb < this.budgetMb) {
+      this.pressure = 'ok'
+      return
+    }
+    if (this.pressure === 'ok') {
+      this.pressure = 'tight'
+      this.note(`holding ${String(this.memMb)} MB; closing tabs no pane is watching`)
+      await this.trimTabs().catch(() => {})
+      await this.reapIdleTabs(true).catch(() => {})
+      return
+    }
+    if (watched === 0) {
+      this.pressure = 'high'
+      this.rests += 1
+      this.sleptAt = Date.now()
+      await this.shutdown().catch(() => {})
+    }
   }
 
   /** @returns {Promise<void>} resolves once Chrome is gone. */
@@ -3161,6 +3402,7 @@ export class Sidecar {
    */
   async handoff() {
     this.stopping = true
+    this.sleepClock()
     if (this.page !== null) await this.saveSessionCookies()
     if (this.backup !== undefined) clearInterval(this.backup)
     this.backup = undefined
@@ -3225,7 +3467,25 @@ export class Sidecar {
   }
 
   async shutdown() {
+    /* One at a time: a rest that fires while a call already asked the browser
+       to close must not close the socket that call is about to use. */
+    if (this.closing !== null) return this.closing
+    const going = this.putAway()
+    this.closing = going
+    try {
+      await going
+    } finally {
+      if (this.closing === going) this.closing = null
+    }
+  }
+
+  /** Put the browser away once; `shutdown()` keeps two of these from overlapping.
+   * @returns {Promise<void>} done. */
+  async putAway() {
     this.idleAt = 0
+    /* Nothing to wait for once the browser is going: a beat that fired into a
+       stopped browser would try to put it away a second time. */
+    this.sleepClock()
     /* A browser this process did not start belongs to somebody else — another
        app on the same profile, or a script that connected to it — and closing
        it would close the person's window. Let go of it instead: drop the socket
@@ -3391,9 +3651,32 @@ export class Sidecar {
       /* What this browser costs right now: the whole process tree, renderers
          included. Reported so a chat can decide whether to let it rest. */
       memory: this.alive ? treeBytes(Number(this.child?.pid ?? 0)) : 0,
-      /* When it would close itself if nobody came back, and why: 0 means the
+      /* When it would be put away if nobody came back, and why: 0 means the
          browser is either watched or not on a clock. */
-      closesIn: this.idle === null || this.stopping === true ? 0 : Math.max(0, Number(this.idleAt ?? 0) - Date.now()),
+      closesIn: this.restAt === 0 || this.stopping === true ? 0 : Math.max(0, Number(this.restAt) - Date.now()),
+      /* The learned rhythm: the rest window this chat earned, and the quiet
+         window it is given before the mirror is paused. */
+      restIn: this.restAt === 0 ? 0 : Math.max(0, Number(this.restAt) - Date.now()),
+      restWindow: this.use.restAfter(),
+      quietAfter: this.use.quietAfter(),
+      typicalGap: this.use.typical(),
+      /* What the lifecycle beat last found. */
+      resting: this.resting === true,
+      restNote: this.restNote ?? '',
+      /* How many times it has been put down, how long the last wake took, and
+         how long it has been waiting for a wake right now. */
+      rests: this.rests,
+      sleptAt: this.sleptAt,
+      wakeMs: this.wakeMs,
+      /* Memory policy, so a chat can see the ladder before it is climbed. */
+      memoryMb: this.memMb,
+      budgetMb: this.budgetMb,
+      pressure: this.pressure,
+      /* Parked pages and the restarts that happened recently: a browser that
+         has to be restarted three times in ten minutes is broken, and saying so
+         is better than restarting it for ever. */
+      parked: [this.page, ...this.pages.values()].filter((page) => page?.frozen === true).length,
+      restarts: this.crashes.length,
       error: this.alive ? '' : this.lastError,
     }
   }

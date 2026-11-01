@@ -76,8 +76,16 @@ sign-in here is still there the next day.
 - **Harness restart.** The same directory is opened again, so cookies, `localStorage` and
   passwords that Chrome saved all survive.
 - **Shutdown.** The browser is asked to close rather than killed, which is when Chrome writes
-  the last of its cookies; an idle browser is closed after 15 minutes, and the clock stops
-  while a column is watching.
+  the last of its cookies.
+
+## When nobody is looking
+
+A browser used every two seconds rests after two minutes; one used every ninety seconds waits
+nine. The window is p95 of the person's own last 64 gaps, × 6 for rest and × 2 for a reversible
+pause, so it is learned rather than configured. Close the column and the rest is one minute
+away; leave it open and the page is frozen instead (DOM, scroll and sign-ins kept, screenshot
+stream stopped). A wake is 0.3–1.1 s and lands on the same address. `npm run rest` checks the
+whole chain headlessly; `docs/RESOURCES.md` has the memory ladder and how the neighbours do it.
 
 Screenshots are the only thing written outside the profile:
 `~/.dsh-inner-browser-use/screenshots/`.

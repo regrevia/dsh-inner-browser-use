@@ -41,12 +41,15 @@ const docUrl = `http://127.0.0.1:${port}/doc`
 const { Sidecar } = await import('../sidecar.js')
 const { sidecarTools, sessionScope, workScope } = await import('../tools.js')
 
-const sidecar = new Sidecar({ profile: 'soak', headless: true })
+/* A short rest window on purpose: the run has to cross the sleep/wake chain
+   often enough to see it leak, not just remember that it works once. */
+const sidecar = new Sidecar({ profile: 'soak', headless: true, restFloor: 1200, restCeiling: 1600 })
 const tools = sidecarTools(sidecar, { byChat: new Map() }, {})
 const tool = (name) => tools.find((one) => one.name === name)
 const cwd = mkdtempSync(join(tmpdir(), 'dsh-soak-cwd-'))
 /* Same binding the plugin does: the chat and the project a call belongs to. */
-const run = (name, args) => sessionScope.run('soak', () => workScope.run(cwd, () => tool(name).execute(args, { agent: { id: 'soak' } })))
+const chat = 'session-soak'
+const run = (name, args) => sessionScope.run(chat, () => workScope.run(cwd, () => tool(name).execute(args, { agent: { id: chat } })))
 const text = (said) => String(said?.text ?? '')
 
 /* macOS reports every renderer's RSS in full, shared pages included, so a
@@ -63,11 +66,13 @@ const check = (ok, what) => {
 const startedAt = Date.now()
 try {
   await sidecar.launch('about:blank')
-  await sidecar.watch(() => {})
-  await sidecar.ensure({ session: 'soak' })
+  /* No mirror sink here: a watcher is what keeps a browser awake, and this run
+     has to reach the rest the way a chat with its pane closed does. */
+  await sidecar.ensure({ session: chat })
 
   let reads = 0
   let snapshots = 0
+  let rests = 0
   for (let i = 0; i < cycles; i += 1) {
     const url = i % 2 === 0 ? appUrl : docUrl
     await run('browser_open', { url })
@@ -86,6 +91,19 @@ try {
       samples.push({ cycle: i + 1, mb, pages: Number(state?.pages ?? 0) })
       console.log(`     cycle ${String(i + 1).padStart(3)} · ${String(mb)} MB · pages ${String(state?.pages)}`)
     }
+    /* Every eighth cycle the browser is left alone until its rest runs out:
+       the whole tree has to go, memory included, and the next cycle has to
+       bring it back without a second page or a lost address. */
+    if (i % 8 === 7) {
+      sidecar.touch(1200)
+      for (let step = 0; step < 40 && sidecar.alive; step += 1) {
+        await new Promise((settle) => setTimeout(settle, 250))
+      }
+      const down = await sidecar.state()
+      if (down.alive === true) throw new Error('the browser did not rest inside 10 s')
+      if (Number(down.memory ?? 0) !== 0) throw new Error('memory was still held while resting')
+      rests += 1
+    }
     /* A quiet moment, so a leak in the close/reopen path is not hidden by the
        next navigation arriving before the old page is gone. */
     if (i % 6 === 5) await new Promise((settle) => setTimeout(settle, 250))
@@ -99,7 +117,9 @@ try {
   check(samples.every((one) => one.pages <= 1), `one page per chat is kept (max ${String(Math.max(...samples.map((one) => one.pages)))})`)
   check(last.mb < ceilingMb, `RSS stays inside this machine's ceiling (${String(last.mb)} < ${String(ceilingMb)} MB)`)
   check(growth < 250, `RSS growth over ${String(cycles)} cycles is bounded (${growth >= 0 ? '+' : ''}${String(growth)} MB)`)
-  console.log(`soak: ${failed === 0 ? 'ok' : `${String(failed)} failed`} · ${String(cycles)} cycles, ${String(seconds)} s, rss ${String(first.mb)} → ${String(last.mb)} MB, pages ${String(last.pages)}, ${String(snapshots)} shots, ${String(reads)} reads`)
+  check(rests > 0, `the browser rested ${String(rests)} times and each rest released its memory`)
+  check(Number(last.pages ?? 0) <= 1, 'the rest and wake chain never left a second page behind')
+  console.log(`soak: ${failed === 0 ? 'ok' : `${String(failed)} failed`} · ${String(cycles)} cycles, ${String(seconds)} s, rss ${String(first.mb)} → ${String(last.mb)} MB, pages ${String(last.pages)}, ${String(snapshots)} shots, ${String(reads)} reads, ${String(rests)} rests`)
 } catch (error) {
   failed += 1
   console.log('FAIL ' + String(error?.stack ?? error))

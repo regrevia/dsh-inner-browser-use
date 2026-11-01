@@ -3548,11 +3548,23 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           /* What it costs and when it would let go: the two facts that decide
              whether to keep using it or let it rest. */
           state.alive === true ? `memory ${Math.max(1, Math.round(Number(state.memory ?? 0) / 1048576))} MB` : 'memory 0 MB',
-          state.closesIn > 0 ? `closes in ${Math.max(1, Math.round(Number(state.closesIn) / 60_000))} min unless used` : 'no close scheduled',
+          /* The rest is what a chat needs to know about: whether the browser is
+             about to go away, is parked with nobody watching, or is gone and
+             will open again on the next call. */
+          state.alive !== true
+            ? Number(state.wakeMs ?? 0) > 0
+              ? `stopped — the next call opens it (${String(Math.round(Number(state.wakeMs)))} ms last time)`
+              : 'stopped — the next call opens it'
+            : state.resting === true
+              ? 'parked while no pane watches'
+              : state.restIn > 0
+                ? `rests in ${String(Math.max(1, Math.round(Number(state.restIn) / 60_000)))} min unless used`
+                : 'no rest scheduled',
+          (state.parked ?? 0) > 0 ? `parked pages ${String(state.parked)}` : '',
           holdText(sidecar) === '' ? 'person free' : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
         ]
         if (state.alive === true && viewerNote(state.viewers) !== '') rows.push(NO_VIEWER)
-        return { text: rows.join('\n') }
+        return { text: rows.filter((row) => row !== '').join('\n') }
       },
     },
 

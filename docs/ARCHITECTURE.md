@@ -61,9 +61,30 @@ One page per browser. `apply()` only constructs the `Sidecar`; no process exists
 first tool call, and `browser_state` reports a stopped browser without starting one.
 
 Shutdown asks Chrome to close (`Browser.close`), waits briefly, then sends `SIGTERM`, which is
-the point where Chrome flushes cookies. An idle timer closes the browser after 15 minutes; a
-tool call resets the clock, and a watching column defers the close when the timer fires, so a
-page someone is reading outlives the idle window.
+the point where Chrome flushes cookies.
+
+Lifetime is a ladder rather than one timer, because a browser that is being watched and one
+that was forgotten deserve different answers (`docs/RESOURCES.md` has the measurements and the
+comparison with other projects):
+
+| step | trigger | effect |
+| --- | --- | --- |
+| awake | a tool call, or a mirror watching | none |
+| quiet | no call for `quietAfter()` and a mirror is still open | screencast stopped, page frozen |
+| rest | no call for `restAfter()` and nothing watching | cookies saved, whole tree closed |
+
+`rest.js` derives both windows from the gap between the person's own calls: p95 of the last 64
+gaps × 6 for rest, × 2 for quiet, each clamped (`90 s – 15 min`, `20 s – 2 min`). A fresh
+process has no history and uses the floors. `decide()` is pure, so the clock is testable
+without a browser, and the watched count always beats the deadline: a page someone can see is
+frozen at most, never closed.
+
+Closing is single-flight (`shutdown()` returns the promise already in flight) and `launch()`
+waits for the outgoing browser before spawning the next one — without that, a rest that fires
+as a call arrives closes the socket the call is about to use. Every 30 s the tree is weighed
+against `DSH_INNER_BROWSER_MEMORY_MB` (default 2400): over budget, idle tabs are reclaimed by
+LRU and casts back off; over again with nobody watching, the browser rests on the spot. Three
+crashes inside ten minutes stop the restart loop and say why instead of trying forever.
 
 ## Routes
 
