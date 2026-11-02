@@ -1,3 +1,9 @@
+## 0.47.18 — 逃出进程组的 Flash 助手也要收掉，按这台会话的端口认人
+
+- **收尾多一层扫尾**：Flash 桥是一个 Electron 主进程加五个助手，正常走「自己的进程组一把 SIGKILL」；但 Electron 会把个别助手重挂到别的父进程下，那种助手既画画也**继续出声**，而主进程和端口都已经没了，普通检查看不见它。`putAway()` 在组杀之后读一次 `ps -E -Ao pid=,command=`（本机 39 ms / 372 KB），按环境里的 `DSH_FLASH_BRIDGE_PORT=<本会话的桥端口>` 认出残留并逐个 `SIGKILL`；端口只发过给这一台桥，所以不会碰另一个会话正在看的游戏。
+- **为什么不用「argv 里有 runtime/flash-app」认人**：那个指纹是全机共享的，多个会话各开一个游戏就分不清了；端口和 `DSH_FLASH_UDD` 是每台桥独有。扫尾只在 macOS 做（`ps -E` 才带环境），且只在真开了 Flash 桥的会话、仅在关浏览器这一步跑一次，失败不阻断收尾。
+- 回归 +1：`pidsWithMark()` 的解析单测——同一端口的助手全中、`94391` 不被 `9439` 前缀误伤、端口排在环境最后（行尾无空格）也认、空标记与空输入返回空。`scripts/check-flash-idle.mjs` 复跑：`pid 62480 is gone` / `the whole process group is gone` / 端口不再应答，`exit 0`。292 测试全绿。
+
 ## 0.47.17 — 动作这一维和竞品同跑道了，桥的输入不再「看着像成功」
 
 - **同机同夹具三方对照**（`docs/BENCH.md`「动作面三方对照 — 0.47.17」）：本项目 0.47.17 / Playwright MCP 0.0.84 / Chrome DevTools MCP 1.12.0，各起自己的 headless Chrome，同一份页面、`--reps 8`、热身 2 次取中位，计时都在工具调用外面。同一页再读：本项目 0 ms / 193 字符（≈49 token），Playwright 7 ms / 8000 字符（≈2000 token，服务端硬截断），DevTools 5 ms / 5522 字符（≈1381 token）——两家都不去重。按文字点按钮：17 ms vs 537 ms vs 240 ms；打开一页：578 vs 556 vs 133 ms（DevTools 只回 `pageId`，不等真实地址与标题）；打字 101 vs 4 vs 208 ms，是三种不同契约，表里分开写清，不并成一根胜负曲线。

@@ -340,6 +340,33 @@ function watcherFile(dir) {
  * @param {{pid?: number, code?: number|null, signal?: string|null, profile?: string}} gone - what the child reported.
  * @returns {string} a line without a newline.
  */
+/** Pids that carry `mark` in their environment, read from one `ps -E` dump.
+ *
+ * The Flash bridge each session starts is one Electron app with five helpers.
+ * They sit in their own process group, so one group kill covers them; a helper
+ * that escaped the group (Electron re-parents some of its children) still
+ * paints and still plays sound. Its environment names the number this session
+ * gave it and no other session has it, so this finds exactly those
+ * helpers and never a bridge another session is still showing.
+ * @param {string} psOutput lines of `pid=,command=` with environments appended.
+ * @param {string} mark an environment entry such as `DSH_FLASH_BRIDGE_PORT=9411`.
+ * @returns {number[]} pids, oldest first, this process excluded by the caller.
+ */
+export function pidsWithMark(psOutput, mark) {
+  const wanted = String(mark ?? '')
+  if (wanted === '') return []
+  const found = []
+  for (const line of String(psOutput ?? '').split('\n')) {
+    const pid = /^\s*(\d+)\s/.exec(line)
+    if (pid === null) continue
+    /* The environment ends the line: the last entry has no space after it. */
+    if (line.includes(`${wanted} `) !== true && line.trimEnd().endsWith(wanted) !== true) continue
+    const number = Number(pid[1])
+    if (Number.isInteger(number) && number > 0) found.push(number)
+  }
+  return found
+}
+
 export function deathNote(gone) {
   const at = new Date().toISOString()
   const code = gone.code === null || gone.code === undefined ? 'none' : String(gone.code)
@@ -3686,6 +3713,9 @@ export class Sidecar {
        it would close the person's window. Let go of it instead: drop the socket
        and leave the browser running. */
     const mine = this.owns === true
+    /* The bridge's number outlives `flashBridge` below: the sweep at the end needs
+       to know which bridge was this session's. */
+    const bridge = this.flashBridge
     if (mine && this.page !== null) {
       /* Ask Chrome to close first: a browser that is killed outright may lose
          the last minute of cookies, and keeping the person signed in is the
@@ -3763,6 +3793,25 @@ export class Sidecar {
         /* already gone */
       }
       this.child = null
+    }
+    /* A Flash helper that outlived both the group kill and its launcher keeps
+       painting and keeps playing; nothing else in the app can see it. Match by
+       the number only this session's bridge was given. `ps -E` is macOS; on other
+       platforms the group kill above is what there is. */
+    if (bridge !== null && process.platform === 'darwin') {
+      try {
+        const dump = spawnSync('ps', ['-E', '-Ao', 'pid=,command='], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+        for (const pid of pidsWithMark(dump.stdout, `DSH_FLASH_BRIDGE_PORT=${bridge}`)) {
+          if (pid === process.pid) continue
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            /* already gone */
+          }
+        }
+      } catch {
+        /* a sweep that cannot run must not fail the put-away */
+      }
     }
     /* The child's pipes are the last thing holding this process open: after the
        browser is gone there is nobody to read them, and a referenced pipe keeps

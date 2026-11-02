@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, nextQuality, noteDeath, ownsBrowser, rootDir } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, nextQuality, noteDeath, ownsBrowser, pidsWithMark, rootDir } from '../sidecar.js'
 import { findWords, nearestByWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
@@ -225,6 +225,23 @@ test('input into a parked game wakes it first, and only a real yes counts', asyn
   page.casting = false
   page.stopped = true
   page.flashBridge = null
+})
+
+test('a sweep finds the helpers of this bridge and no other', () => {
+  const dump = [
+    '  14769 /path/Electron.app/Contents/MacOS/Electron --app-path=/p DSH_FLASH_BRIDGE_PORT=9439 DSH_FLASH_UDD=/a',
+    '  14772 /path/Electron.app/Contents/Frameworks/helper DSH_FLASH_BRIDGE_PORT=9439 DSH_FLASH_UDD=/a',
+    /* Another session's bridge, one port away: a prefix match would eat it. */
+    '  15100 /path/Electron.app/Contents/MacOS/Electron DSH_FLASH_BRIDGE_PORT=94391 DSH_FLASH_UDD=/b',
+    /* Last entry in the environment: no space behind it. */
+    '  16100 /path/Electron.app/Contents/Frameworks/helper DSH_FLASH_UDD=/a DSH_FLASH_BRIDGE_PORT=9439',
+    '  17000 /usr/bin/ps -E -Ao pid=,command=',
+    '',
+  ].join('\n')
+  assert.deepEqual(pidsWithMark(dump, 'DSH_FLASH_BRIDGE_PORT=9439'), [14769, 14772, 16100])
+  assert.deepEqual(pidsWithMark(dump, 'DSH_FLASH_BRIDGE_PORT=94391'), [15100])
+  assert.deepEqual(pidsWithMark(dump, ''), [])
+  assert.deepEqual(pidsWithMark(null, 'DSH_FLASH_BRIDGE_PORT=1'), [])
 })
 
 /** A browser that answers and records how it was asked for, without Chrome. */

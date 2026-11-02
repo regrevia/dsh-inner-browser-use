@@ -1,4 +1,4 @@
-# 成熟度（0.47.17，2026-11）
+# 成熟度（0.47.18，2026-11）
 
 结论：**可日常用，边界清楚**。能力面已经越过「能开网页」的层次，长跑与资源回收这条链路是本版
 重点并且有实测；短板集中在跨平台验证（只有 macOS 真机跑过）和少数只有真机才能验的交互（Flash、
@@ -8,9 +8,9 @@
 
 | | |
 | --- | --- |
-| 版本 / 许可 | 0.47.17 / MIT |
+| 版本 / 许可 | 0.47.18 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
-| npm | `dsh-inner-browser-use@0.47.17` |
+| npm | `dsh-inner-browser-use@0.47.18` |
 | 代码 | 约 12.2k 行（index 986 · sidecar 3912 · tools 4114 · read 2039 · rest 124 · client 1004） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
@@ -20,12 +20,12 @@
 
 | 项 | 结果 |
 | --- | --- |
-| 单元测试 | `node --test test/*.test.mjs` → **291 项，0 失败**（普通 shell；应用内还会多跑宿主进程专属的几项） |
+| 单元测试 | `node --test test/*.test.mjs` → **292 项，0 失败**（普通 shell；应用内还会多跑宿主进程专属的几项） |
 | 资源对照 | 同机同法：冷启动中位 **465–544 ms**（多次采样 434–1079，0.47.3 两次 448 / 471）、空闲 RSS 542–663 MB、空闲 CPU 0.15–1.0%、从静止的休息醒来 **389 ms**；读同一页 2302 字（view）/ 2174 字（read）。竞品 Playwright MCP 冷启动 2755 ms / 1414 MB / 38.1% / 快照 7804 字、Chrome DevTools MCP 2185 ms / 1280 MB / 36.3% / 快照 5381 字（`docs/BENCH.md`、`docs/measure-competitors-2026-11.json`、`docs/measure-tokens-2026-11.json`） |
 | 五家对照 | 同机同法、都只量「不用模型」的那一层（开页/截图/读页/空闲/收尾），竞品为 Playwright MCP 0.0.84、Chrome DevTools MCP 1.12.0、Stagehand 4.3.0、browser-use 0.13.14：空闲 CPU **0.33% 对 36–51%**、空闲 RSS **459–552 MB 对 1265–1672 MB**、读同一页 **2302 字符对 5662–21396**、热页签内部 `start` **20 ms** 对 24–33 ms、截图 48–71 ms 四家打平（`docs/BENCH.md`「五家对照」段、`docs/measure-competitors-2026-11.json`）。没赢的照实写：热页签工具层 42–54 ms 对 browser-use 裸 `new_page` 27 ms；冷启动这一项 0.47.6 时落后（840 ms 对 760/713 ms），0.47.13 五次重测中位 **453 ms** 已反超，幅度有限、随负载浮动（`docs/BENCH.md`「冷启动」段） |
 | 六个页签 | `npm run tabs`：864 → 921 MB（跑与跑之间机器负载不同，每页约 +2 MB）、8 进程 / 4 渲染进程不变、空闲 0.9%（稳态 0.24%）一个核；第 7 个会话页数停在 6 |
 | 每页成本 | 1→6 页签、每步 3 次采样取中位：总 RSS **883–1058 MB 来回**、无单调增长，单步差值（−102…+152 MB）大于采样极差（1–94 MB）也大于「每页」本身——页签数不是内存驱动因素，只有渲染进程数（≤4）随页签涨（`docs/BENCH.md`「每页成本」段） |
-| Flash 收尾 | `scripts/check-flash-idle.mjs`：`putAway()` 后 pid、整个进程组、桥端口全消失（`exit 0`）；父进程不辞而别时桥自己 2 s 内 `app.exit(0)`（之前抓到过无父、存活 3 h 以上、仍在画的旧桥），首帧前即静音 |
+| Flash 收尾 | `scripts/check-flash-idle.mjs`：`putAway()` 后 pid、整个进程组、桥端口全消失（`exit 0`）；组杀之后再读一次 `ps -E`，按 `DSH_FLASH_BRIDGE_PORT=<本会话端口>` 收掉逃出进程组的助手（这类助手会继续出声，而主进程已没），扫描 39 ms 且只碰自己的桥；父进程不辞而别时桥自己 2 s 内 `app.exit(0)`（之前抓到过无父、存活 3 h 以上、仍在画的旧桥），首帧前即静音 |
 | 长跑 | soak 24 轮 + 3 次真实休息：40.3 s，内存 **1183 → 912 MB**，页数始终 1，24 次读全部有答案 |
 | 热页签 | 热浏览器里再开一页（新建页签 + 导航，同一本地 fixture）：**中位 41–45 ms**（41–72）；Playwright MCP 中位 45 ms（40–87）、Chrome DevTools MCP 中位 130 ms（127–136）。与 Playwright 打平、比 DevTools MCP 快 3.2 倍，`npm run tabs` 断言中位 ≤ 150 ms（`docs/BENCH.md` 的「热页签」段） |
 | 截图 | `npm run bench` 连拍四次取中位：**51 ms**（43–52）/ PNG 106 648 字节，回答只 223 字符 + 路径；同机同法 Playwright MCP 51 ms（回答带 base64 100 644 字符）、Chrome DevTools MCP 48 ms（383 200 字符）。速度打平（成本在 Chrome 的 `captureScreenshot`），差别在文本通道与是否落文件；给 `captureScreenshot` 加 `optimizeForSpeed` 实测 41 对 41 ms、字节 +32%，已证伪回退（`docs/BENCH.md` 的「一张截图五十毫秒」段） |
@@ -55,7 +55,7 @@
 2. **真机交互**：Flash 分支需要本机 Electron 运行时可验证；镜像上的拖拽手感受帧率影响，只有 `adb`/人眼类检查，没有自动化回归。
 3. **多 agent 隔离**：一个进程一台 Chrome、按 chat 分页；没有「每个 agent 独立浏览器」的强隔离档位（竞品同样没有做得更好的）。
 4. **内存预算**：是策略而非硬限制；极端站点仍可能超过预算后再回收，不是提前拒绝。
-5. **市场收录**：条目来自每日构建的 catalog，发版后自动跟上，无需 PR；本条目不代表示例/评分。当前核对（2026-11-03）：catalog 构建收录 **0.47.5**，npm 已发 **0.47.17**，按设计滞后一个 nightly。
+5. **市场收录**：条目来自每日构建的 catalog，发版后自动跟上，无需 PR；本条目不代表示例/评分。当前核对（2026-11-03）：catalog 构建收录 **0.47.5**，npm 已发 **0.47.18**，按设计滞后一个 nightly。
 
 ## 结论
 
