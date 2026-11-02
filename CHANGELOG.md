@@ -1,3 +1,10 @@
+## 0.47.7
+
+- 把「借用本机 Chrome 的登录」写清并做对：起的是同一个 Google Chrome 二进制，只是 `--user-data-dir` 指到插件自己的目录，所以 cookie 格式与加密和你日常用的 Chrome 一致——打开站、一次 `browser_login {action:"import", name:"…"}` 就把它搬过来，`use` 注回并重开页面（`README.md` / `README.zh.md` 新增「借用本机 Chrome 的登录」一节）
+- 明确不共享 profile 目录的理由：Chrome 对 profile 是单例锁（你开着就打不开），直接打开还会按扩展与版本差异改写你的数据；只搬该站 cookie（`save` 时含该站 localStorage），不复制整个 profile，不上传
+- macOS 挡这一步时把话说全：实测 `cp` Chrome 的 `Cookies` 直接 `Operation not permitted`（Keychain 里的 Chrome Safe Storage 密钥本身可读），所以报错从「give it Full Disk Access」改成具体路径——系统设置 → 隐私与安全性 → 完全磁盘访问权限 → 打开 DSH，两个出口（profile 根目录、cookie 库）都改
+- 未验证项照实留：本机 DSH 尚未获授权，`import` 端到端（解密 → 封库 → `use` 注回）在这台机器上还没有一次成功的实测；授权后需补一次
+
 ## 0.47.6
 
 - 五家同机同法对照（本地 fixture、同一档无头 Chrome、先导航热机）：Playwright MCP 0.0.84、Chrome DevTools MCP 1.12.0、Stagehand 4.3.0、browser-use 0.13.14。四家都只测「不用模型」的那一层——开页、截图、读页、空闲、收尾，凡是要 LLM 猜坐标的路径一概不算，避免拿自己的确定性实现去赢别人的推理延迟

@@ -70,6 +70,21 @@ profile 是独立目录：`~/.dsh/inner-browser-use/chrome/default`。它在产�
 - **Harness 重启。** 重新打开同一个目录，cookie、`localStorage` 和 Chrome 存下的密码都留着。
 - **退出。** 关浏览器是请它自己关（`Browser.close`），Chrome 在这一步才把 cookie 落盘。
 
+## 借用本机 Chrome 的登录
+
+起的是这台机器上同一个 Google Chrome，只是 `--user-data-dir` 指到上面那个目录，所以 cookie
+格式和加密方式和你日常用的 Chrome 完全一致——登录能直接搬过来：打开要进的那个站，一次
+`browser_login {action:"import", name:"work"}`，插件去读 Chrome 的 cookie 库（读副本，不动
+原文件，也不要求你关掉 Chrome），用钥匙串里的 Chrome Safe Storage 解开该站的 cookie，封进
+自己的保险库；之后 `use` 把它注回去并重开页面，跨会话都在。
+
+不共享 profile 目录：Chrome 对 profile 是单例锁，你开着它就打不开；打开还会因为扩展和版本
+差异改动你的数据。所以只搬该站的 cookie（和 localStorage，`save` 时一并存），不复制整个
+profile，也不上传。
+
+macOS 会挡这一步：Chrome 的 profile 在系统保护范围内，直接读是 `Operation not permitted`。
+需要给 DSH 开 **系统设置 → 隐私与安全性 → 完全磁盘访问权限**。没开时工具会原样说出来。
+
 ## 常驻成本
 
 同机、同量法（同一台本地 fixture、同一档无头 Chrome，一次只跑一家），对照四家：

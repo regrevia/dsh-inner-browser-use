@@ -78,6 +78,25 @@ sign-in here is still there the next day.
 - **Shutdown.** The browser is asked to close rather than killed, which is when Chrome writes
   the last of its cookies.
 
+## Borrowing the sign-ins of the Chrome already on this Mac
+
+What starts here is the same Google Chrome binary, only with `--user-data-dir` pointed at the
+directory above, so cookies are stored and encrypted exactly the way the Chrome you use every
+day stores them — a sign-in can simply be carried over: open the site, then one
+`browser_login {action:"import", name:"work"}`. The plugin reads Chrome's cookie store from a
+copy (the live file is left alone and Chrome does not have to be closed), opens that site's
+cookies with the Chrome Safe Storage key from the keychain, and seals them into its own vault;
+`use` puts them back and reopens the page, and they survive restarts.
+
+The profile directory is never shared: Chrome holds a single-instance lock on it, so it cannot be
+opened while yours is running, and opening it would rewrite your data across extension and
+version differences. Only that site's cookies are carried (localStorage too, when `save` takes
+the sign-in) — never the whole profile, and never off this machine.
+
+macOS blocks the read: Chrome's profile is protected, so a direct read is `Operation not
+permitted`. Turn on **System Settings → Privacy & Security → Full Disk Access** for DSH. Without
+it the tool says so instead of failing quietly.
+
 ## What it costs
 
 Measured on the same machine, same fixture, same headless Chrome, against four

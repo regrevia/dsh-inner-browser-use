@@ -63,7 +63,7 @@ export function cookieStores(id = 'chrome') {
   try {
     names = readdirSync(root)
   } catch (error) {
-    if (denied(error)) throw new Error('macOS will not let this app read the browser’s cookies: give it Full Disk Access, then try again')
+    if (denied(error)) throw new Error('macOS will not let this app read the browser’s cookies: System Settings → Privacy & Security → Full Disk Access → turn on DSH, then try again')
     return []
   }
   const rows = []
@@ -299,7 +299,7 @@ export function readBrowserCookies(options = {}) {
     try {
       read = cookiesFor(store.db, key, host, Number(options.cap ?? 80)) // ui-copy-ignore
     } catch (error) {
-      if (denied(error)) throw new Error('macOS will not let this app read the browser’s cookies: give it Full Disk Access, then try again')
+      if (denied(error)) throw new Error('macOS will not let this app read the browser’s cookies: System Settings → Privacy & Security → Full Disk Access → turn on DSH, then try again')
       throw error
     }
     if (read.cookies.length === 0) continue
