@@ -1381,9 +1381,16 @@ export class SidecarPage {
     this.view = { width: w, height: h }
     this.touched = Date.now()
     if (this.flashBridge !== null) {
-      /* The Flash window is the picture: resize it so the game fills the pane
-         instead of sitting letterboxed in a landscape window. */
-      await fetch(`http://127.0.0.1:${this.flashBridge}/resize?w=${w}&h=${h}`).catch(() => {})
+      /* The picture is the game, not the window: the Flash runtime frames its
+         window on the box the game occupies and replies with that shape, so the
+         frame - and everything that maps onto it - follows the reply. */
+      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/resize?w=${w}&h=${h}`)
+        .then((answer) => (answer.ok === true ? answer.json() : null))
+        .catch(() => null)
+      const bounds = reply === null || reply === undefined ? null : reply.bounds
+      if (bounds !== null && bounds !== undefined && Number(bounds.width) >= 200 && Number(bounds.height) >= 200) {
+        this.view = { width: Math.round(Number(bounds.width)), height: Math.round(Number(bounds.height)) }
+      }
       return this.view
     }
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {

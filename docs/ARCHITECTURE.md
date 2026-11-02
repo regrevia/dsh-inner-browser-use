@@ -117,6 +117,20 @@ The layout viewport follows the column: the pane measures itself, posts the size
 is the whole page as laid out at the shape it is shown in — no letterbox bands, no crop. Sizes
 below 320 px or above 1920×1600 are ignored rather than applied as a sliver.
 
+A page that paints itself has no screencast to take: a plugin draws on its own surface, so the
+picture comes from an offscreen window instead — and a window is not a layout. Making that
+window the column's size changes what is captured, not how far the page spreads its game, so a
+game with a fixed box (measured: one 960×560 box on a page that leaves the rest of its 1440×900
+white) used to arrive stretched to the column's proportions, with the page's white margin beside
+it and, whenever the column was taller than the page, a black band below it where nothing had
+been painted. The runtime now tells that page the column's size through
+`Emulation.setDeviceMetricsOverride`, measures the box the plugin actually occupies, frames the
+window on that box and answers `/resize` with `{bounds, viewport, content}`; the column adopts
+the returned box as the frame's size, so the picture has the game's proportions and the space
+around it is the panel's own background. Bands therefore belong to this path only: the
+screencast path above cannot show them, because its frame is a layout made at the pane's exact
+shape.
+
 If `Browser.getVersion` reports `HeadlessChrome`, the user agent is overridden with an ordinary
 Chrome string, `acceptLanguage: 'zh-CN,zh;q=0.9,en;q=0.8'` and `platform: 'MacIntel'`, so a site
 that gates on headless gets the normal rendering.

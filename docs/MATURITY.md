@@ -14,7 +14,7 @@
 | 代码 | 约 12.0k 行（index 956 · sidecar 3695 · tools 4111 · read 2039 · rest 124 · client 954） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
-| 验证脚本 | 28 个 `scripts/`，含 live / live-safety / breadth / soak / rest / tabs / doctor |
+| 验证脚本 | 29 个 `scripts/`，含 live / live-safety / breadth / soak / rest / tabs / doctor / flash-fit |
 
 ## 证据链
 
@@ -49,7 +49,7 @@
 2. **真机交互**：Flash 分支需要本机 Electron 运行时可验证；镜像上的拖拽手感受帧率影响，只有 `adb`/人眼类检查，没有自动化回归。
 3. **多 agent 隔离**：一个进程一台 Chrome、按 chat 分页；没有「每个 agent 独立浏览器」的强隔离档位（竞品同样没有做得更好的）。
 4. **内存预算**：是策略而非硬限制；极端站点仍可能超过预算后再回收，不是提前拒绝。
-5. **市场收录**：条目来自每日构建的 catalog，发版后自动跟上，无需 PR；本条目不代表示例/评分。当前核对（2026-11-02）：catalog 构建 `2026.1102.13952`（04:22Z）收录 **0.47.5**，npm 已发 **0.47.6**（07:50Z，晚于该构建），次日 nightly 跟上。
+5. **市场收录**：条目来自每日构建的 catalog，发版后自动跟上，无需 PR；本条目不代表示例/评分。当前核对（2026-11-02）：catalog 构建 `2026.1102.13952`（04:22Z）收录 **0.47.5**，npm 已发 **0.47.8**（11:57Z，晚于该构建），次日 nightly 跟上。
 
 ## 结论
 

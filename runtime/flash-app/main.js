@@ -50,6 +50,58 @@ let pumping = false
 let pumpTimer = 0
 let painted = 0
 
+/* A game is rarely the size of the page: it is one fixed box on a page that
+   leaves the rest white. Framing the window to the column therefore puts the
+   game in a corner of an empty canvas, and whatever lies below the page's own
+   height comes back as black padding. The picture to hand out is the box the
+   game actually occupies, so measure it and frame that. */
+const BOX_SCRIPT = `(() => {
+  let best = { width: 0, height: 0 }
+  for (const node of document.querySelectorAll('embed,object,iframe,canvas,video')) {
+    const box = node.getBoundingClientRect()
+    if (box.width * box.height > best.width * best.height) best = { width: box.width, height: box.height }
+  }
+  if (!(best.width >= 120) || !(best.height >= 120)) return null
+  return { width: Math.round(best.width), height: Math.round(best.height) }
+})()`
+
+let debugAttached = false
+
+/* Resizing an offscreen window does not relayout the page inside it: the page
+   keeps the size it was created with. Emulating the viewport is the one way to
+   tell it how big the column is, and a page that cannot be told keeps its own
+   layout, which the box measurement still frames correctly. */
+async function emulate(width, height) {
+  if (alive(capture) !== true) return false
+  try {
+    if (debugAttached !== true) {
+      capture.webContents.debugger.attach('1.3')
+      debugAttached = true
+    }
+    await capture.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false, // ui-copy-ignore
+    })
+    return true
+  } catch {
+    debugAttached = false
+    return false
+  }
+}
+
+async function contentBox() {
+  if (alive(capture) !== true) return null
+  try {
+    const box = await capture.webContents.executeJavaScript(BOX_SCRIPT, true)
+    if (box === null || box === undefined) return null
+    return { width: Number(box.width), height: Number(box.height) }
+  } catch {
+    return null
+  }
+}
+
 function alive(win) {
   try {
     return win !== null && win !== undefined && win.isDestroyed() !== true
@@ -163,20 +215,25 @@ app.whenReady().then(() => {
         return
       }
       if (request.url.startsWith('/resize')) {
-        /* The column is a tall, narrow pane: a 16:10 window letterboxes the
-           game into a strip. Resizing the window to the pane makes the picture
-           fill it and the JPEG smaller, since capture is window-sized. */
+        /* The column asked for a shape; the game has one of its own. Lay the
+           page out at the column, then hand back a window framed on the game,
+           so the picture has the game's proportions and no empty canvas. */
         try {
           const size = new URL(request.url, 'http://x').searchParams
-          const width = Math.max(200, Math.min(2560, Number(size.get('w') || 0)))
-          const height = Math.max(200, Math.min(2560, Number(size.get('h') || 0)))
-          if (Number.isFinite(width) && Number.isFinite(height)) {
-            if (alive(capture) !== true) { response.writeHead(503); response.end(); return }
-            capture.setBounds({ x: -3000, y: -3000, width: Math.round(width), height: Math.round(height) })
+          const want = {
+            width: Math.max(200, Math.min(2560, Number(size.get('w') || 0))),
+            height: Math.max(200, Math.min(2560, Number(size.get('h') || 0))),
           }
-          const bounds = capture.getBounds()
+          if (!Number.isFinite(want.width) || !Number.isFinite(want.height)) { response.writeHead(400).end(); return }
+          if (alive(capture) !== true) { response.writeHead(503).end(); return }
+          await emulate(want.width, want.height)
+          const box = await contentBox()
+          const frame = box === null ? want : box
+          const width = Math.max(200, Math.min(2560, Math.round(frame.width)))
+          const height = Math.max(200, Math.min(2560, Math.round(frame.height)))
+          capture.setBounds({ x: -3000, y: -3000, width, height })
           response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify({ bounds }))
+          response.end(JSON.stringify({ bounds: capture.getBounds(), viewport: want, content: box }))
         } catch {
           response.writeHead(500).end()
         }

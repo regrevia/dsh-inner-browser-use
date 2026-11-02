@@ -600,19 +600,27 @@ test('the page lays out at the size of its column, so the mirror fills the frame
   /* A narrow, tall column is the shape a right-hand column has, and the page is
      laid out at it so the picture fills the pane instead of sitting in bars. */
   assert.deepEqual(await page.setViewport(260, 1900), { width: 260, height: 1900 })
-  /* The Flash window is the picture: it is resized rather than laid out with
-     device metrics, because a plugin surface ignores them. */
+  /* The picture is the game, not the window: the Flash runtime is asked to
+     frame the box the game occupies and the answer is what the frame becomes,
+     so a fixed-size game is not stretched into a column it does not fill. */
   page.flashBridge = 9211
   const resized = []
   const realFetch = globalThis.fetch
-  globalThis.fetch = async (url) => { resized.push(String(url)); return { ok: true } }
+  globalThis.fetch = async (url) => {
+    resized.push(String(url))
+    return { ok: true, json: async () => ({ bounds: { x: -3000, y: -3000, width: 747, height: 436 }, content: { width: 747, height: 436 } }) }
+  }
   const flashSent = sent.length
   await page.setViewport(747, 1196)
-  globalThis.fetch = realFetch
-  page.flashBridge = null
   assert.deepEqual(resized, ['http://127.0.0.1:9211/resize?w=747&h=1196'])
   assert.equal(sent.length, flashSent)
-  assert.deepEqual(page.view, { width: 747, height: 1196 })
+  assert.deepEqual(page.view, { width: 747, height: 436 })
+  /* A runtime that cannot answer leaves the pane's own shape in place rather
+     than shrinking the picture to nothing. */
+  globalThis.fetch = async () => ({ ok: false })
+  assert.deepEqual(await page.setViewport(760, 1200), { width: 760, height: 1200 })
+  globalThis.fetch = realFetch
+  page.flashBridge = null
   /* The window is the page: a click is already in page pixels. */
   const clicks = []
   page.cdp.send = async (method, params) => {
