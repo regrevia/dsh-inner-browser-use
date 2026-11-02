@@ -148,11 +148,30 @@ test('the sound switch reaches the bridge and reports what it did', async () => 
   try {
     assert.equal(await page.sound(true), true)
     assert.deepEqual(asked, { url: 'http://127.0.0.1:9411/sound', body: { on: true } })
+    /* The pane's switch draws the state the bridge accepted, so the page keeps
+       it: a switch that reports "on" while the window stayed muted lies. */
+    assert.equal(page.soundOn, true)
     assert.equal(await page.sound(false), true)
     assert.deepEqual(asked.body, { on: false })
+    assert.equal(page.soundOn, false)
+    globalThis.fetch = async () => ({ ok: false, json: async () => ({ ok: false }) })
+    assert.equal(await page.sound(true), false)
+    assert.equal(page.soundOn, false)
+    page.flashBridge = null
+    assert.equal(await page.sound(true), false)
   } finally {
     globalThis.fetch = realFetch
   }
+})
+
+test('the state a pane polls says whether the page can make noise', async () => {
+  /* The pane shows its sound switch only for a Flash page, so the state it
+     polls already carries both halves of that answer. */
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-sound-state-${process.pid}`) })
+  assert.equal((await sidecar.state()).sound, false)
+  assert.equal((await sidecar.state()).flash, false)
+  sidecar.soundOn = true
+  assert.equal((await sidecar.state()).sound, true)
 })
 
 /** A browser that answers and records how it was asked for, without Chrome. */

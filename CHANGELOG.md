@@ -1,3 +1,10 @@
+## 0.47.15 — 游戏声音有了开关，右栏自己就能按
+
+- Flash 页默认静音（0.47.14 起连首帧都不出声），但静音之后没有「我要听」的入口：现在右栏地址栏旁多一个音符键，只在 Flash 页出现，按一下 `POST /sidecar/sound` → 桥 `/sound` → `webContents.setAudioMuted()`，再按一下关回去。键面按桥回报的状态画（`data-on="0"` 时压低透明度），不猜。
+- `GET /sidecar/state` 新增 `sound` 字段：`flash` 是否在开、声音是否在放都由浏览器自己说，右栏据此决定显不显示这个键——普通 Chrome 页永远不出现。
+- 回归 +2：`test/sidecar.test.mjs` 断言 `state()` 带 `sound`，`sound()` 只在桥真的接住时才改状态；`test/host.test.mjs` 断言路由先说清是哪个会话，浏览器没起时回 `{ok:false}` 而不是去启动一个。
+- `DSH_FLASH_SOUND=1` 仍是启动默认；运行中改声音不需要重开游戏。
+
 ## 0.47.14 — 宿主要是猝死，桥自己走；页签不摊内存
 
 - Flash 桥加了「父进程看门」：桥每 2 s 看一次 `process.ppid`，被 launchd 收养（父进程 `SIGKILL`/崩掉、没走到 `putAway()`）就 `app.exit(0)`。现场抓到过这种旧桥：无父进程、存活 3 h 以上、仍在画，0.47.11 之前还会出声；探针实测父进程退出后第 1 s 还在、第 2 s 整组消失、端口不应答。

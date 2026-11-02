@@ -361,6 +361,17 @@ test('a malformed frame is refused before the browser is touched', async () => {
   }
 })
 
+test('the sound switch answers, and says which chat it was for', async () => {
+  const unnamed = await call('/sidecar/sound', { method: 'POST', body: JSON.stringify({ on: true }) })
+  assert.equal(unnamed.status, 400)
+  assert.equal((await unnamed.json()).text, 'which chat asked for it')
+  /* A browser that is not up has no audio to set: the answer is a state, not
+     a refusal, and it must not start one. */
+  const stopped = await call('/sidecar/sound', { method: 'POST', body: JSON.stringify({ on: true, session: 'chat-sound' }) })
+  assert.equal(stopped.status, 200)
+  assert.deepEqual(await stopped.json(), { ok: false, on: false })
+})
+
 test('a state read on a stopped sidecar says so without starting one', async () => {
   const state = await call('/sidecar/state').then((response) => response.json())
   assert.equal(state.alive, false)

@@ -1,4 +1,4 @@
-# 成熟度（0.47.14，2026-11）
+# 成熟度（0.47.15，2026-11）
 
 结论：**可日常用，边界清楚**。能力面已经越过「能开网页」的层次，长跑与资源回收这条链路是本版
 重点并且有实测；短板集中在跨平台验证（只有 macOS 真机跑过）和少数只有真机才能验的交互（Flash、
@@ -8,9 +8,9 @@
 
 | | |
 | --- | --- |
-| 版本 / 许可 | 0.47.14 / MIT |
+| 版本 / 许可 | 0.47.15 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
-| npm | `dsh-inner-browser-use@0.47.14` |
+| npm | `dsh-inner-browser-use@0.47.15` |
 | 代码 | 约 12.1k 行（index 956 · sidecar 3902 · tools 4114 · read 2039 · rest 124 · client 980） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
@@ -20,7 +20,7 @@
 
 | 项 | 结果 |
 | --- | --- |
-| 单元测试 | `node --test test/*.test.mjs` → **287 项，0 失败**（普通 shell；应用内还会多跑宿主进程专属的几项） |
+| 单元测试 | `node --test test/*.test.mjs` → **289 项，0 失败**（普通 shell；应用内还会多跑宿主进程专属的几项） |
 | 资源对照 | 同机同法：冷启动中位 **465–544 ms**（多次采样 434–1079，0.47.3 两次 448 / 471）、空闲 RSS 542–663 MB、空闲 CPU 0.15–1.0%、从静止的休息醒来 **389 ms**；读同一页 2302 字（view）/ 2174 字（read）。竞品 Playwright MCP 冷启动 2755 ms / 1414 MB / 38.1% / 快照 7804 字、Chrome DevTools MCP 2185 ms / 1280 MB / 36.3% / 快照 5381 字（`docs/BENCH.md`、`docs/measure-competitors-2026-11.json`、`docs/measure-tokens-2026-11.json`） |
 | 五家对照 | 同机同法、都只量「不用模型」的那一层（开页/截图/读页/空闲/收尾），竞品为 Playwright MCP 0.0.84、Chrome DevTools MCP 1.12.0、Stagehand 4.3.0、browser-use 0.13.14：空闲 CPU **0.33% 对 36–51%**、空闲 RSS **459–552 MB 对 1265–1672 MB**、读同一页 **2302 字符对 5662–21396**、热页签内部 `start` **20 ms** 对 24–33 ms、截图 48–71 ms 四家打平（`docs/BENCH.md`「五家对照」段、`docs/measure-competitors-2026-11.json`）。没赢的照实写：热页签工具层 42–54 ms 对 browser-use 裸 `new_page` 27 ms；冷启动这一项 0.47.6 时落后（840 ms 对 760/713 ms），0.47.13 五次重测中位 **453 ms** 已反超，幅度有限、随负载浮动（`docs/BENCH.md`「冷启动」段） |
 | 六个页签 | `npm run tabs`：864 → 921 MB（跑与跑之间机器负载不同，每页约 +2 MB）、8 进程 / 4 渲染进程不变、空闲 0.9%（稳态 0.24%）一个核；第 7 个会话页数停在 6 |
@@ -42,6 +42,7 @@
 - **内存当策略**：超预算先收 LRU 页签、降码率，再决定休息
 - **唤醒回原页**：**0.39–0.44 s**（竞品恢复是整棵重启 4.6–5.1 s），接着原地址，不是冷启动白页；计时从休息彻底结束开始，人回来不会遇到「关到一半」
 - **冷启动**：五次独立新进程中位 **453 ms**（433–603），同机竞品 713 / 760 / 2185 / 2755 ms；阶段拆解见 `docs/BENCH.md` 的「冷启动拆解」，`DSH_INNER_BROWSER_TRACE=1` 可自查
+- **声音可控**：Flash 默认静音（首帧前即静音），右栏音符键实时开关，状态由桥回报、`/sidecar/state` 广播；运行中改声音不用重开游戏
 - **常驻成本**：6 个页签共用 4 个渲染进程（`npm run tabs` 实测 864–921 MB、空闲 0.9%、稳态 0.24%），单页空闲 RSS 551 MB、空闲 CPU 0.03–0.32%；按同机同法测，竞品是 1280–1414 MB 和 36–38%
 - 竞品对照与出处见 `docs/RESOURCES.md` 与 `docs/BENCH.md`（Playwright MCP 有 `--idle-timeout` 但只按时辰、Chrome DevTools MCP 没有、browser-use 只有 `keep_alive`、Stagehand 反而关掉 Chrome 节流）
 
@@ -51,7 +52,7 @@
 2. **真机交互**：Flash 分支需要本机 Electron 运行时可验证；镜像上的拖拽手感受帧率影响，只有 `adb`/人眼类检查，没有自动化回归。
 3. **多 agent 隔离**：一个进程一台 Chrome、按 chat 分页；没有「每个 agent 独立浏览器」的强隔离档位（竞品同样没有做得更好的）。
 4. **内存预算**：是策略而非硬限制；极端站点仍可能超过预算后再回收，不是提前拒绝。
-5. **市场收录**：条目来自每日构建的 catalog，发版后自动跟上，无需 PR；本条目不代表示例/评分。当前核对（2026-11-03）：catalog 构建收录 **0.47.5**，npm 已发 **0.47.14**，按设计滞后一个 nightly。
+5. **市场收录**：条目来自每日构建的 catalog，发版后自动跟上，无需 PR；本条目不代表示例/评分。当前核对（2026-11-03）：catalog 构建收录 **0.47.5**，npm 已发 **0.47.15**，按设计滞后一个 nightly。
 
 ## 结论
 

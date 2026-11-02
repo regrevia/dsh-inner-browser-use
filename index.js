@@ -14,6 +14,7 @@
  * - `POST /sidecar/open` — start or reuse it, and ask for the tab; // ui-copy-ignore
  * - `POST /sidecar/input` — mouse, wheel, text and keys; // ui-copy-ignore
  * - `POST /sidecar/nav` — address, back, forward, reload; // ui-copy-ignore
+ * - `POST /sidecar/sound` — mute or unmute the Flash page's audio; // ui-copy-ignore
  * - `POST /sidecar/stop` — close the browser and keep the profile. // ui-copy-ignore
  *
  * Every route is same-origin through the product document, so the Client
@@ -663,6 +664,35 @@ export function apply(ctx) {
           return
         }
         json(200, { ok: true, view: await page.setViewport(body.w, body.h) })
+      } catch (error) {
+        json(500, { ok: false, text: String(error?.message ?? error) })
+      }
+      return
+    }
+
+    if (path === '/sidecar/sound' && req.method === 'POST') {
+      let body
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        body = {}
+      }
+      /* Sound belongs to the page this chat is looking at, so it follows the
+         same rule as input: only the chat holding the mirror may toggle it. */
+      const actor = acting(body)
+      /* `acting` has already answered a request that cannot name its chat. */
+      if (actor === '') return
+      try {
+        /* A browser that is not up has no audio to set: say so instead of
+           reporting a state nobody took. */
+        if (sidecar.alive !== true) {
+          json(200, { ok: false, on: sidecar.soundOn === true })
+          return
+        }
+        const page = sidecar.pageFor(actor) ?? sidecar.page
+        const on = body.on === true
+        const took = page === null || page === undefined ? false : await page.sound(on)
+        json(200, { ok: took, on: took === true ? on : !on })
       } catch (error) {
         json(500, { ok: false, text: String(error?.message ?? error) })
       }

@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
         'side.reload': '刷新',
         'side.address': '输入地址',
         'side.type': '输入文字',
+        'side.soundOn': '关闭游戏声音',
+        'side.soundOff': '开启游戏声音',
       },
       en: {
         'side.label': 'Background browser',
@@ -57,6 +59,8 @@ window.__ModuleLoader__.load({
         'side.reload': 'Reload',
         'side.address': 'Enter an address',
         'side.type': 'Type here',
+        'side.soundOn': 'Mute the game',
+        'side.soundOff': 'Unmute the game',
       },
     }
     const LANG = /^zh/i.test(typeof navigator === 'undefined' ? '' : navigator.language ?? '') ? 'zh' : 'en'
@@ -83,7 +87,7 @@ window.__ModuleLoader__.load({
       '.dshib-side-note{font-size:12px;color:var(--dsw-alias-label-tertiary);padding:0 16px;text-align:center}',
       '.dshib-side-back{border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}',
       '.dshib-side-back:hover{background:var(--dsw-alias-bg-subtle)}',
-      '.dshib-side-gone{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:0;border-radius:8px;background:var(--dsw-alias-bg-elevated,rgba(0,0,0,.72));color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:8px 14px;cursor:pointer}',
+      '.dshib-side-sound[data-on="0"]{opacity:.45}.dshib-side-gone{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:0;border-radius:8px;background:var(--dsw-alias-bg-elevated,rgba(0,0,0,.72));color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:8px 14px;cursor:pointer}',
     ].join('')
 
     return {
@@ -503,6 +507,9 @@ window.__ModuleLoader__.load({
               setOwner((prev) => (prev === next ? prev : next))
               /* A browser that is gone still remembers where this chat was:
                  keep the address so the pane can offer to reopen it. */
+              const flash = info?.flash !== null && info?.flash !== undefined && info?.flash !== false
+              const audible = info?.sound === true
+              setSound((prev) => (prev.flash === flash && prev.on === audible ? prev : { flash, on: audible }))
               const was = String(info?.chat?.remembered ?? '')
               if (was !== '') setBack((prev) => (prev === was ? prev : was))
               /* Another chat holds the browser now: this tab goes away instead
@@ -540,6 +547,9 @@ window.__ModuleLoader__.load({
          frame stays on screen, which looked exactly like a page that stopped
          taking clicks. Say so over the frame instead of leaving it mute. */
       const [gone, setGone] = React.useState(false)
+      /* A Flash page can make noise; whether it does is the bridge's answer,
+         so the switch shows what the window reports instead of guessing. */
+      const [sound, setSound] = React.useState({ flash: false, on: false })
       const drawnAt = React.useRef(0)
 
       React.useEffect(() => {
@@ -863,6 +873,20 @@ window.__ModuleLoader__.load({
           h('button', { className: 'dshib-side-key', type: 'button', title: L('side.back'), 'aria-label': L('side.back'), onClick: () => post('/sidecar/nav', { op: 'back' }) }, '\u2190'), // ui-copy-ignore
           h('button', { className: 'dshib-side-key', type: 'button', title: L('side.forward'), 'aria-label': L('side.forward'), onClick: () => post('/sidecar/nav', { op: 'forward' }) }, '\u2192'), // ui-copy-ignore
           h('button', { className: 'dshib-side-key', type: 'button', title: L('side.reload'), 'aria-label': L('side.reload'), onClick: () => post('/sidecar/nav', { op: 'reload' }) }, '\u27f3'), // ui-copy-ignore
+          ...(sound.flash === true
+            ? [h('button', {
+              className: 'dshib-side-key dshib-side-sound',
+              type: 'button', // ui-copy-ignore
+              'data-on': sound.on === true ? '1' : '0',
+              title: sound.on === true ? L('side.soundOn') : L('side.soundOff'),
+              'aria-label': sound.on === true ? L('side.soundOn') : L('side.soundOff'),
+              onClick: () => {
+                const next = sound.on !== true
+                setSound({ flash: true, on: next })
+                post('/sidecar/sound', { on: next })
+              },
+            }, '\u266a')]
+            : []),
           h('input', {
             className: 'dshib-side-url',
             value: draft,

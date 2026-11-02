@@ -1597,7 +1597,9 @@ export class SidecarPage {
         body: JSON.stringify({ on: on === true }),
         signal: AbortSignal.timeout(1200),
       })
-      return reply.ok === true
+      if (reply.ok !== true) return false
+      this.soundOn = on === true
+      return true
     } catch {
       return false
     }
@@ -2260,6 +2262,9 @@ export class Sidecar {
     /* A movie page needs a runtime Chrome no longer has; the switch is the
        person's, and it swaps the browser rather than the protocol. */
     this.flash = options.flash === undefined ? process.env.DSH_INNER_BROWSER_FLASH === '1' || readFlashChoice() : options.flash === true
+    /* Whether the game window is audible: the launch flag decides the start,
+       the sound button changes it while the page runs. */
+    this.soundOn = /^(1|true|yes|on)$/i.test(String(process.env.DSH_FLASH_SOUND ?? '').trim())
     /* Whether the launched runtime really carries the plugin, asked once at
        launch: null means it has not been asked. */
     this.flashCheck = null
@@ -3068,6 +3073,7 @@ export class Sidecar {
          button toggles it live. */
       const soundAsked = /^(1|true|yes|on)$/i.test(String(process.env.DSH_FLASH_SOUND ?? '').trim())
       if (soundAsked !== true) args.push('--mute-audio')
+      this.soundOn = soundAsked
       args.push(FLASH_APP)
     } else if (this.headless) args.unshift('--headless=new')
     /* A browser started again after a stop is a new one: its death is news
@@ -3849,6 +3855,7 @@ export class Sidecar {
       profile: this.profile, // ui-copy-ignore
       headless: this.headless, // ui-copy-ignore
       flash: this.flash, // ui-copy-ignore
+      sound: this.soundOn === true, // ui-copy-ignore
       flashCheck: this.flashCheck, // ui-copy-ignore
       url: this.page?.url ?? '', // ui-copy-ignore
       pages: this.pages.size,
