@@ -76,8 +76,10 @@ profile 是独立目录：`~/.dsh/inner-browser-use/chrome/default`。它在产�
 **551 MB**（对方 1414 / 1280）、空闲 CPU **0.03–0.32%**（38.1% / 36.3%）；休息后唤醒
 **0.39–0.44 s** 回到原页，对方要整棵重启 4.6–5.1 s。开到 6 个页签时 **864–921 MB**、每页约
 +2 MB、始终 4 个渲染进程、空闲 0.9%（稳态 0.24%）一个核。热浏览器里再开一页中位 **41–45 ms**，
-与 Playwright MCP（45 ms）打平、比 Chrome DevTools MCP（130 ms）快 3.2 倍。`npm run bench` 与
-`npm run tabs` 可复现，对照明细在 `docs/BENCH.md`。
+与 Playwright MCP（45 ms）打平、比 Chrome DevTools MCP（130 ms）快 3.2 倍。一张截图 **51 ms**，
+与对方的 48–51 ms 一样（成本在 Chrome 自己的抓帧与编码），但回来的是一条路径加 223 字符，
+不是对方塞进回答的 100–383 KB base64。`npm run bench` 与 `npm run tabs` 可复现，
+对照明细在 `docs/BENCH.md`。
 
 ## 没人看的时候
 

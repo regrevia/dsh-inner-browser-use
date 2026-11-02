@@ -11,7 +11,7 @@
  */
 import { createServer } from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -108,6 +108,23 @@ try {
   report.read_ms = Date.now() - readAt
   report.read_chars = read.length
   check(report.read_ms < 4000 && read.length > 200, `a read is ${String(report.read_ms)} ms and ${String(report.read_chars)} chars`)
+
+  /* A picture costs what Chrome charges to paint and encode it. Four shots
+     after the page has settled: the first can include a paint the page still
+     owed, so the median is the number. The payload stays small on purpose:
+     the answer carries a path, and base64 only when the model can look. */
+  report.shot_ms = []
+  for (let i = 0; i < 4; i += 1) {
+    const shotAt = Date.now()
+    const shot = text(await run('browser_shot', { name: `bench-shot-${String(i)}` }))
+    report.shot_ms.push(Date.now() - shotAt)
+    const file = (shot.match(/(\/\S+\.png)/) ?? [])[1]
+    report.shot_text_chars = shot.length
+    if (file !== undefined) report.shot_bytes = statSync(file).size
+  }
+  const shots = [...report.shot_ms].sort((a, b) => a - b)
+  report.shot_median_ms = shots[Math.floor(shots.length / 2)]
+  check(report.shot_median_ms < 1000, `a screenshot is ${String(report.shot_median_ms)} ms (median of four), ${String(report.shot_bytes ?? 0)} bytes, the answer ${String(report.shot_text_chars)} chars`)
 
   const evalAt = Date.now()
   for (let i = 0; i < 5; i += 1) await run('browser_eval', { code: 'document.title' })

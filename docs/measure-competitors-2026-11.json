@@ -519,5 +519,58 @@
       "wikipedia.org load time varied between runs (3.4 s and 2.9 s in the reported run, 10 s in an earlier run on the same machine and network), which is why tab_switch_ms is reported together with its example.com control and not as tool overhead.",
       "No measurement required a system-level change; nothing outside /tmp/compbench was written and no project repository was touched."
     ]
+  },
+  "screenshot": {
+    "measured_at": "2026-11-02T01:15:00.000Z",
+    "definition": "Wall clock from the tool call leaving the client to the tool result coming back, four screenshots in a row after one navigation has already warmed the browser, median of the four. Same local fixture on 127.0.0.1 with a random port: an <h1> and 120 <p> filler rows, not about:blank. Each tool ran headless against its own browser (Playwright MCP and Chrome DevTools MCP were launched with --use-mock-keychain).",
+    "scripts": {
+      "this_plugin": "/tmp/shot-ours.mjs (Sidecar + sidecarTools, DSH_INNER_BROWSER_STATE_DIR isolated)",
+      "competitors": "/tmp/compbench/shot.mjs (MCP stdio; chrome-devtools-mcp take_screenshot needs pageId, obtained from list_pages)"
+    },
+    "results": {
+      "this_plugin_0.47.5": {
+        "runs_ms": [
+          43,
+          51,
+          52,
+          50
+        ],
+        "median_ms": 51,
+        "png_bytes": 106648,
+        "answer_text_chars": 223,
+        "answer_shape": "a file path in the text, the PNG lives on disk; an image attachment only when the route can carry one"
+      },
+      "playwright_mcp_0.0.84": {
+        "runs_ms": [
+          54,
+          50,
+          51,
+          50
+        ],
+        "median_ms": 51,
+        "png_bytes": 75483,
+        "answer_text_chars": 329,
+        "base64_chars_in_answer": 100644,
+        "answer_shape": "base64 of the PNG inline in the tool result"
+      },
+      "chrome_devtools_mcp_1.12.0": {
+        "runs_ms": [
+          50,
+          46,
+          53,
+          47
+        ],
+        "median_ms": 48,
+        "png_bytes": 287400,
+        "answer_text_chars": 49,
+        "base64_chars_in_answer": 383200,
+        "answer_shape": "base64 of the PNG inline in the tool result"
+      }
+    },
+    "notes": [
+      "The speed is a tie inside one sample of jitter: the cost is Chrome's Page.captureScreenshot (compose, grab, encode PNG), so no tool can move it much.",
+      "PNG byte counts are not comparable across the three: each used its own default viewport (this plugin 1425x900 visible area, chrome-devtools-mcp 287400 bytes, Playwright MCP 75483 bytes). Bytes here describe the picture size, not encoding efficiency.",
+      "Falsified and reverted: adding optimizeForSpeed to Page.captureScreenshot. Eight alternating samples gave a median of 41 ms with it against 41 ms without it, and the PNG grew from 98352 to 129696 bytes (+32%). sidecar.js was left untouched."
+    ]
   }
 }

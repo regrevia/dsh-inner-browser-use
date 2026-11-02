@@ -86,8 +86,10 @@ DevTools MCP: idle RSS **551 MB** (1414 / 1280), idle CPU **0.03–0.32%**
 With six tabs open it is **864–922 MB**, about +2 MB per tab, still four renderer
 processes and 0.9 % of a core idle (0.24 % once the pages settle). A tab on a
 browser that is already up costs a median of **41–45 ms** — level with Playwright
-MCP (45 ms) and 3.2× faster than Chrome DevTools MCP (130 ms). `npm run bench` and
-`npm run tabs` reproduce all of it.
+MCP (45 ms) and 3.2× faster than Chrome DevTools MCP (130 ms). A screenshot takes
+**51 ms**, the same 48–51 ms both rivals pay — the cost is Chrome's own capture —
+and what comes back is a path plus 223 characters instead of the 100–383 KB of
+base64 they inline. `npm run bench` and `npm run tabs` reproduce all of it.
 
 ## When nobody is looking
 
