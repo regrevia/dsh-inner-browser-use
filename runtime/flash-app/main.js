@@ -298,6 +298,23 @@ app.whenReady().then(() => {
         }
         return
       }
+      if (request.url.startsWith('/sound')) {
+        /* The column's sound button: a game's music belongs to whoever asked
+           for it, and it starts off. */
+        try {
+          let body = ''
+          for await (const chunk of request) body += chunk
+          const on = JSON.parse(body === '' ? '{}' : body).on === true
+          for (const win of [capture, window]) {
+            if (win !== null && win !== undefined) win.webContents.setAudioMuted(on !== true)
+          }
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ ok: true, muted: on !== true }))
+        } catch {
+          response.writeHead(500).end()
+        }
+        return
+      }
       if (!request.url.startsWith('/frame')) {
         response.writeHead(404).end()
         return

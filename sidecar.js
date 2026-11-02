@@ -1543,6 +1543,10 @@ export class SidecarPage {
 
   async freeze() {
     if (this.frozen === true) return
+    /* The page the right column is showing is not idle: freezing it is what
+       made the first click after a pause disappear. Parking is for the tabs
+       behind it, not for the one on screen. */
+    if ((this.frames?.size ?? 0) > 0) return
     try {
       await this.shed()
       await this.cdp.send('Page.setWebLifecycleState', { state: 'frozen' })
@@ -1561,6 +1565,41 @@ export class SidecarPage {
       await this.cdp.send('Page.setWebLifecycleState', { state: 'active' })
     } catch {
       /* Already gone: the next call finds a dead page and replaces it. */
+    }
+  }
+
+  /**
+   * A person's first click after a nap. A frozen page drops every input event
+   * the protocol sends it, and a Flash page's mirror loop stopped with it, so
+   * both have to be brought back before the click can land anywhere.
+   * @returns {Promise<void>} done, with the page listening again.
+   */
+  async revive() {
+    if (this.frozen !== true) return
+    await this.thaw()
+    if (this.flashBridge !== null && this.casting !== true) {
+      this.casting = true
+      void this.pollBridge()
+    }
+  }
+
+  /**
+   * Turn the game's sound on or off without restarting it.
+   * @param {boolean} on - true for audible.
+   * @returns {Promise<boolean>} true when the window took the setting.
+   */
+  async sound(on) {
+    if (this.flashBridge === null) return false
+    try {
+      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/sound`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ on: on === true }),
+        signal: AbortSignal.timeout(1200),
+      })
+      return reply.ok === true
+    } catch {
+      return false
     }
   }
 
@@ -1800,6 +1839,7 @@ export class SidecarPage {
   }
 
   async mouse(type, point) {
+    await this.revive()
     this.movePointer(point)
     if (this.flashBridge !== null && (await this.flashInput(type === 'mousePressed' ? 'mouseDown' : type === 'mouseReleased' ? 'mouseUp' : 'mouseMove', point)) === true) return
     await this.input('Input.dispatchMouseEvent', {
@@ -1818,6 +1858,7 @@ export class SidecarPage {
    * @returns {Promise<void>} resolves when Chrome took it.
    */
   async wheel(args) {
+    await this.revive()
     this.movePointer(args)
     if (this.flashBridge !== null) {
       try {
@@ -1883,6 +1924,7 @@ export class SidecarPage {
    * @returns {Promise<void>} resolves when Chrome took it.
    */
   async key(type, key) {
+    await this.revive()
     this.touched = Date.now()
     if (this.flashBridge !== null && (await this.flashKey(type, key)) === true) return
     const virtual = key.keyCode ?? key.windowsVirtualKeyCode ?? 0
@@ -3021,10 +3063,11 @@ export class Sidecar {
       flash.port = Number(process.env.DSH_INNER_BROWSER_FLASH_PORT ?? 9200 + Math.floor(Math.random() * 400))
       flash.bridgePort = flash.port + 1
       args.length = 0
-      /* A switch, not a default: DSH_FLASH_MUTE=1 starts the runtime silent for
-         games whose BGM the column mirror cannot turn down. Unset keeps the
-         previous behaviour. */
-      if (/^(1|true|yes|on)$/i.test(String(process.env.DSH_FLASH_MUTE ?? '').trim())) args.push('--mute-audio')
+      /* Silent by default: a game in the column must not put its music on
+         somebody's desktop. `DSH_FLASH_SOUND=1` turns it on, the pane's sound
+         button toggles it live. */
+      const soundAsked = /^(1|true|yes|on)$/i.test(String(process.env.DSH_FLASH_SOUND ?? '').trim())
+      if (soundAsked !== true) args.push('--mute-audio')
       args.push(FLASH_APP)
     } else if (this.headless) args.unshift('--headless=new')
     /* A browser started again after a stop is a new one: its death is news
@@ -3043,7 +3086,11 @@ export class Sidecar {
       /* The harness runs Node with this set; Electron would start as Node. */
       delete flashEnv.ELECTRON_RUN_AS_NODE
     }
-    const child = spawn(binary, args, { detached: false, stdio: 'ignore', env: flashEnv })
+    /* The Flash runtime is Electron: its GPU and renderer helpers are children
+       that survive a signal sent to the launcher alone, and a leftover renderer
+       keeps drawing (and playing) in the background. Its own group makes one
+       kill cover the whole tree. */
+    const child = spawn(binary, args, { detached: process.platform !== 'win32', stdio: 'ignore', env: flashEnv })
     const born = Date.now()
     child.on('exit', (code, signal) => {
       /* A browser that ends without being asked is the one case nobody can see:
@@ -3684,6 +3731,13 @@ export class Sidecar {
           await new Promise((resolve) => {
             const timer = setTimeout(() => {
               try {
+                if (process.platform !== 'win32' && Number.isInteger(child.pid)) {
+                  try {
+                    process.kill(-child.pid, 'SIGKILL')
+                  } catch {
+                    /* no group of its own: the launcher is still worth a shot */
+                  }
+                }
                 child.kill('SIGKILL')
               } catch {
                 /* already gone */

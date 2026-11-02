@@ -1,3 +1,11 @@
+## 0.47.11 — 空闲后点击落空、静音与 Flash 进程回收
+
+- 点一下就醒：被 quiet 阶梯冻结过的页面会丢掉调试协议送来的每一个输入事件，画面停在最后一帧，点击全落空。现在鼠标、滚轮、键盘在派发前先把页面唤醒，Flas​h 页面同时把镜像循环接回去（`revive()`）；探针：冻结后点击 ⇒ `frozen:false`、`casting:true`。
+- 有人看的页面不冻结：`freeze()` 跳过 `frames` 非空的页面——那正是右栏正在显示的那一页，停下来的代价是「画面看着好好的，点不动」。
+- 声音默认关：Flash 游戏 BGM 不再自动放到桌面上，`DSH_FLASH_SOUND=1` 才开；新增 `POST /sound` 可运行时切换（探针：开/关都 `ok:true`）。
+- 进程组回收：Flash 运行时以独立进程组启动，SIGTERM 无效时用 `kill(-pid, SIGKILL)` 一次收掉 Electron 的 GPU/渲染子进程——之前它们能在后台继续出声几小时。
+- 探针：`/tmp/probe-revive.mjs`、`/tmp/probe-watch.mjs` 均 exit 0；`node --check` 通过。
+
 ## 0.47.10
 
 - 文档跟到实测：`docs/BENCH.md` 新增 0.47.9 Flash 镜像前后对照（1920×1120 / 113 KB / 27.8 fps / 首帧 189 ms / 拆除 `exit 0`）。
