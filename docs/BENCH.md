@@ -1176,6 +1176,11 @@ target，于是被 `adoptOpened()` 当成弹窗 `Target.closeTarget` 关掉—�
 真实弹窗路径不变：点击打开、`adoptOpened` 接管、导航到弹窗地址都照旧，`test/tabs.test.mjs`
 两条新用例分别锁住「忙时不记弹窗」和「闲时仍记弹窗」。
 
+0.47.3 复核了这两道闸没有把真弹窗一起关掉：`npm run bench` 26 项全过，其中
+`popup-wait` 中位 **10 ms**（上限 40），`crash-recovery` 1403 ms，`mirror-fps` 29.7；
+`npm run tabs` 六页签 864–921 MB、4 渲染进程、稳态 0.24%，第七个会话 `pages 6`。
+
+
 ## 冷启动拆解 — 那 1.2 秒在等谁，0.47.1
 
 0.47.0 的冷启动中位 1703 ms，比同机 Chrome DevTools MCP 的 2185 ms 快，但没有解释：这
