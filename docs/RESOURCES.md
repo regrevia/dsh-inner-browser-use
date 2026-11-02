@@ -104,9 +104,9 @@ on the same machine; the raw record is
 | --- | --- | --- | --- | --- |
 | Playwright MCP 0.0.84 | `--idle-timeout`, default one hour for headless, whole browser closed | 38.1% / 1414 MB | cold start, 5.1 s | does release, but never looks at whether anyone is watching and never parks a page first; each client gets its own Chrome |
 | Chrome DevTools MCP 1.12.0 | none — the browser lives until the process exits | 36.3% / 1280 MB | n/a | one dispose chain, no idle clock, screencast never pauses for a detached viewer |
-| browser-use | `keep_alive` flag, no timeout value | not measured | n/a | teardown skipped while `keep_alive`; no idle timer, no memory policy |
-| Stagehand | none | not measured | n/a | deliberately disables Chrome's background throttling, then tears down and removes the profile |
-| this plugin 0.47.5 | viewer-aware ladder, timings learned from use, memory pressure, single-flight close | 0.9% idle (0.24% settled) with six tabs / 864–922 MB; 0.03–0.32% / 551–552 MB with one | 0.39–0.44 s, same page and address; 41–45 ms to open a tab on a warm browser; 51 ms for a screenshot that answers with a path, not base64 | freeze keeps the DOM; rest keeps the cookies; six tabs share four renderers and add ~2 MB each; nothing cold-starts unless the process is new |
+| browser-use 0.13.14 | `keep_alive` flag, no timeout value | 51.3% / 1672 MB (16 procs) | n/a | teardown skipped while `keep_alive`; no idle timer, no memory policy |
+| Stagehand 4.3.0 | none | 41.8% / 1265 MB (10 procs) | n/a | deliberately disables Chrome's background throttling, then tears down and removes the profile |
+| this plugin 0.47.6 | viewer-aware ladder, timings learned from use, memory pressure, single-flight close | 0.9% idle (0.24% settled) with six tabs / 864–922 MB; 0.03–0.47% / 459–515 MB with one | 0.39–0.59 s, same page and address; 42–54 ms to open a tab on a warm browser (inside `openTab` the tab start itself is 20 ms); 51 ms for a screenshot that answers with a path, not base64 | freeze keeps the DOM; rest keeps the cookies; six tabs share four renderers and add ~2 MB each; nothing cold-starts unless the process is new. Idle CPU is 100× lower than the four measured rivals and idle RSS 2.3–3.6× smaller (`docs/BENCH.md` 五家对照) |
 
 Playwright MCP's idle timeout was measured working (`--idle-timeout=6000` left no
 Chrome after 14 s idle while the MCP process stayed up), so "we are the only one

@@ -1,4 +1,4 @@
-# 成熟度（0.47.4，2026-11）
+# 成熟度（0.47.6，2026-11）
 
 结论：**可日常用，边界清楚**。能力面已经越过「能开网页」的层次，长跑与资源回收这条链路是本版
 重点并且有实测；短板集中在跨平台验证（只有 macOS 真机跑过）和少数只有真机才能验的交互（Flash、
@@ -8,9 +8,9 @@
 
 | | |
 | --- | --- |
-| 版本 / 许可 | 0.47.5 / MIT |
+| 版本 / 许可 | 0.47.6 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
-| npm | `dsh-inner-browser-use@0.47.5` |
+| npm | `dsh-inner-browser-use@0.47.6` |
 | 代码 | 约 12.0k 行（index 956 · sidecar 3695 · tools 4111 · read 2039 · rest 124 · client 954） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
@@ -22,6 +22,7 @@
 | --- | --- |
 | 单元测试 | `node --test test/*.test.mjs` → **307 项，0 失败**；在应用内跑 307 通过，在普通 shell 里跑 305 通过、2 项跳过（`a plugin reload hands the browser on` 这类只在宿主进程内成立） |
 | 资源对照 | 同机同法：冷启动中位 **465–544 ms**（多次采样 434–1079，0.47.3 两次 448 / 471）、空闲 RSS 542–663 MB、空闲 CPU 0.15–1.0%、从静止的休息醒来 **389 ms**；读同一页 2302 字（view）/ 2174 字（read）。竞品 Playwright MCP 冷启动 2755 ms / 1414 MB / 38.1% / 快照 7804 字、Chrome DevTools MCP 2185 ms / 1280 MB / 36.3% / 快照 5381 字（`docs/BENCH.md`、`docs/measure-competitors-2026-11.json`、`docs/measure-tokens-2026-11.json`） |
+| 五家对照 | 同机同法、都只量「不用模型」的那一层（开页/截图/读页/空闲/收尾），竞品为 Playwright MCP 0.0.84、Chrome DevTools MCP 1.12.0、Stagehand 4.3.0、browser-use 0.13.14：空闲 CPU **0.33% 对 36–51%**、空闲 RSS **459–552 MB 对 1265–1672 MB**、读同一页 **2302 字符对 5662–21396**、热页签内部 `start` **20 ms** 对 24–33 ms、截图 48–71 ms 四家打平（`docs/BENCH.md`「五家对照」段、`docs/measure-competitors-2026-11.json`）。没赢的照实写：冷启动 840 ms 对 760/713 ms，热页签工具层 42–54 ms 对 browser-use 裸 `new_page` 27 ms |
 | 六个页签 | `npm run tabs`：864 → 921 MB（跑与跑之间机器负载不同，每页约 +2 MB）、8 进程 / 4 渲染进程不变、空闲 0.9%（稳态 0.24%）一个核；第 7 个会话页数停在 6 |
 | 长跑 | soak 24 轮 + 3 次真实休息：40.3 s，内存 **1183 → 912 MB**，页数始终 1，24 次读全部有答案 |
 | 热页签 | 热浏览器里再开一页（新建页签 + 导航，同一本地 fixture）：**中位 41–45 ms**（41–72）；Playwright MCP 中位 45 ms（40–87）、Chrome DevTools MCP 中位 130 ms（127–136）。与 Playwright 打平、比 DevTools MCP 快 3.2 倍，`npm run tabs` 断言中位 ≤ 150 ms（`docs/BENCH.md` 的「热页签」段） |

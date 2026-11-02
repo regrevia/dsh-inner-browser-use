@@ -497,6 +497,88 @@
         "cold_start run3 2337ms"
       ],
       "error": null
+    },
+    "stagehand": {
+      "package": "@browserbasehq/stagehand",
+      "package_version": "4.3.0",
+      "launch_command": "node /tmp/compbench/sh2/sh.mjs (localBrowser.launch -> Stagehand.create, headless, --use-mock-keychain)",
+      "mode": "local-only, model-free paths only: new_page/navigate/screenshot/snapshot/close. act/extract (LLM) excluded on purpose.",
+      "cold_start_ms": {
+        "runs_ms": [
+          820,
+          760,
+          744
+        ],
+        "median": 760
+      },
+      "warm_tab_ms": {
+        "runs_ms": [
+          48,
+          52,
+          64,
+          60,
+          256
+        ],
+        "median": 60,
+        "note": "median, not mean: one 256 ms outlier from a cold renderer"
+      },
+      "screenshot": {
+        "median_ms": 67,
+        "bytes": 76153,
+        "shape": "Uint8Array returned to caller (no file path)"
+      },
+      "read_chars": 21396,
+      "read_definition": "full accessibility snapshot of the same fixture",
+      "processes": 10,
+      "idle_cpu_pct": 41.8,
+      "idle_rss_mb": 1265,
+      "teardown": {
+        "close_ms": 52,
+        "rss_after_mb": 2,
+        "procs_after": 1,
+        "note": "close() plus browser.close(), 2 s settle; the temp profile is deleted, so no page or login survives"
+      }
+    },
+    "browser_use": {
+      "package": "browser-use",
+      "package_version": "0.13.14",
+      "launch_command": "/tmp/bu2/.venv/bin/python /tmp/compbench/bu2/bu.py (BrowserSession(keep_alive=False, --use-mock-keychain), headless)",
+      "mode": "model-free: session.start -> get_current_page -> goto -> take_screenshot -> new_page -> stop. The agent loop is excluded.",
+      "cold_start_ms": {
+        "runs_ms": [
+          730,
+          713,
+          701
+        ],
+        "median": 713
+      },
+      "warm_tab_ms": {
+        "runs_ms": [
+          24,
+          24,
+          27,
+          30,
+          33
+        ],
+        "median": 27,
+        "note": "raw new_page; no page text is produced for the caller"
+      },
+      "screenshot": {
+        "median_ms": 71,
+        "bytes": 175021,
+        "shape": "bytes returned to caller"
+      },
+      "read_chars": 5662,
+      "read_definition": "raw innerText via page.evaluate, 1 ms - not a structured view, labelled as such",
+      "processes": 16,
+      "idle_cpu_pct": 51.25,
+      "idle_rss_mb": 1672,
+      "teardown": {
+        "close_ms": 110,
+        "rss_after_mb": 2,
+        "procs_after": 1,
+        "note": "stop(); nothing is kept when keep_alive=False"
+      }
     }
   },
   "method": {
@@ -572,5 +654,87 @@
       "PNG byte counts are not comparable across the three: each used its own default viewport (this plugin 1425x900 visible area, chrome-devtools-mcp 287400 bytes, Playwright MCP 75483 bytes). Bytes here describe the picture size, not encoding efficiency.",
       "Falsified and reverted: adding optimizeForSpeed to Page.captureScreenshot. Eight alternating samples gave a median of 41 ms with it against 41 ms without it, and the PNG grew from 98352 to 129696 bytes (+32%). sidecar.js was left untouched."
     ]
+  },
+  "five_way_2026_11_02": {
+    "measured_at": "2026-11-02T07:30:00.000Z",
+    "same_machine": "same macOS host, same local fixture on 127.0.0.1, same headless Chrome build, one benchmark at a time",
+    "note": "All five measured on model-free paths only. Model calls (Stagehand act/extract, browser-use agent loop) are excluded: comparing a deterministic implementation with an LLM loop would measure inference latency, not browser control.",
+    "this_plugin_0.47.6": {
+      "cold_start_ms": {
+        "median": 840,
+        "runs_ms": [
+          840,
+          749,
+          903,
+          824,
+          898
+        ]
+      },
+      "warm_tab_tool_ms": {
+        "median": 48,
+        "runs_ms": [
+          42,
+          44,
+          47,
+          48,
+          54
+        ]
+      },
+      "warm_tab_internal_start_ms": {
+        "median": 20,
+        "runs_ms": [
+          14,
+          18,
+          19,
+          20,
+          21,
+          25,
+          28,
+          33
+        ]
+      },
+      "screenshot": {
+        "median_ms": 51,
+        "bytes": 106648,
+        "answer_text_chars": 223
+      },
+      "read_chars": 2302,
+      "read_ms": 2,
+      "idle_cpu_pct": 0.33,
+      "idle_rss_mb": {
+        "one_page": [
+          459,
+          491,
+          515,
+          500
+        ],
+        "six_tabs": [
+          864,
+          922
+        ]
+      },
+      "wake_ms": {
+        "range": [
+          394,
+          587
+        ],
+        "note": "varies with host load; 0.47.3 dedicated run measured 389 with the closing settled first"
+      }
+    },
+    "verdict": {
+      "lead": [
+        "idle CPU (0.33% vs 36-51%)",
+        "idle RSS (2.3-3.6x smaller)",
+        "read cost in characters (2302 vs 5662-21396)",
+        "wake after rest (0.39-0.59 s vs a full cold restart of 4.6-5.1 s)"
+      ],
+      "tie": [
+        "screenshot latency (48-71 ms, all bound by Page.captureScreenshot)"
+      ],
+      "trail": [
+        "absolute cold start (840 ms vs Stagehand 760 / browser-use 713)",
+        "tool-level warm tab (42-54 ms vs browser-use raw new_page 27 ms), though the internal tab start is 20 ms"
+      ]
+    }
   }
 }

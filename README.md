@@ -80,16 +80,22 @@ sign-in here is still there the next day.
 
 ## What it costs
 
-Measured on the same machine with the same harness as Playwright MCP and Chrome
-DevTools MCP: idle RSS **551 MB** (1414 / 1280), idle CPU **0.03–0.32%**
-(38.1% / 36.3%), and a wake in **0.39–0.44 s** instead of a 4.6–5.1 s restart.
-With six tabs open it is **864–922 MB**, about +2 MB per tab, still four renderer
-processes and 0.9 % of a core idle (0.24 % once the pages settle). A tab on a
-browser that is already up costs a median of **41–45 ms** — level with Playwright
-MCP (45 ms) and 3.2× faster than Chrome DevTools MCP (130 ms). A screenshot takes
-**51 ms**, the same 48–51 ms both rivals pay — the cost is Chrome's own capture —
-and what comes back is a path plus 223 characters instead of the 100–383 KB of
-base64 they inline. `npm run bench` and `npm run tabs` reproduce all of it.
+Measured on the same machine, same fixture, same headless Chrome, against four
+others: Playwright MCP, Chrome DevTools MCP, Stagehand and browser-use — all on
+their model-free paths, since a model call would only measure inference. Idle RSS
+**459–552 MB** (1265–1672), idle CPU **0.03–0.47 %** (36–51 %), a wake in
+**0.39–0.59 s** instead of a 4.6–5.1 s restart, and the same page read as **2302
+characters** instead of 5662–21396. With six tabs open it is **864–922 MB**, about
++2 MB per tab, still four renderer processes and 0.9 % of a core idle (0.24 % once
+the pages settle). A tab on a browser that is already up costs a median of
+**42–54 ms** end to end; inside `openTab` the tab start itself is **20 ms**
+(24–33 ms for browser-use's raw `new_page`). A screenshot takes **51 ms**, the
+same 48–71 ms all four pay — the cost is Chrome's own capture — and what comes
+back is a path plus 223 characters instead of the 100–383 KB of base64 they
+inline. Cold start is the one place we do not lead: **840 ms** (701–936) against
+Stagehand 760 and browser-use 713, because both own Chrome in-process.
+`npm run bench` and `npm run tabs` reproduce all of it; the four-way tables are in
+`docs/BENCH.md` (五家对照).
 
 ## When nobody is looking
 

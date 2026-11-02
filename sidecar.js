@@ -1172,9 +1172,6 @@ export class SidecarPage {
 
   /** Keep one listener that fans frames out to every viewer. */
   async start() {
-    this.targetId = String(
-      await this.cdp.send('Target.getTargetInfo').then((info) => info?.targetInfo?.targetId ?? '').catch(() => ''),
-    )
     /* A click that downloads should leave a file, not nothing: point downloads
        at the profile so the driver can report where they went. */
     const folder = downloadsDir(profileDir(this.profile))
@@ -1269,7 +1266,16 @@ export class SidecarPage {
     ])
     /* The metrics and the version string are independent too: the UA override
        only needs the version, not a turn of its own. */
+    /* The id is asked for now, once the target is listening, and collected in
+       the same turn as the metrics: one round trip instead of two. */
+    const identified = this.cdp
+      .send('Target.getTargetInfo')
+      .then((info) => {
+        this.targetId = String(info?.targetInfo?.targetId ?? '')
+      })
+      .catch(() => {})
     const [, version] = await Promise.all([
+      identified,
       this.cdp.send('Runtime.enable').then(() =>
         this.cdp.send('Emulation.setDeviceMetricsOverride', {
           width: this.view.width, // ui-copy-ignore
@@ -2608,6 +2614,15 @@ export class Sidecar {
        last snapshot would otherwise adopt this tab and close it while the
        first CDP call was still on its way. */
     this.page?.disarmFollow?.()
+    /* A warm tab is a third of the price of a cold start, so where it goes is
+       worth a line of its own under the same switch as the start trace. */
+    const trace = process.env.DSH_INNER_BROWSER_TRACE === '1'
+    const t0 = Date.now()
+    const marks = []
+    const mark = (name) => {
+      if (trace) marks.push(`${name} ${Date.now() - t0}`)
+    }
+    mark('pre')
     this.making += 1
     let created
     let target
@@ -2618,10 +2633,14 @@ export class Sidecar {
     } finally {
       this.making -= 1
     }
+    mark('http')
     if (typeof target.webSocketDebuggerUrl !== 'string') throw new Error('sidecar: new tab has no socket')
     const cdp = new Cdp(target.webSocketDebuggerUrl)
     await cdp.ready
+    mark('ws')
     const page = await this.bind(await new SidecarPage(cdp, this.profile, port, () => this.holding()).start()) // ui-copy-ignore
+    mark('start')
+    if (trace) console.error(`trace:tab ${marks.join(' ')}`)
     this.pages.set(id, page)
     this.claim(id, page.targetId)
     this.touch()
