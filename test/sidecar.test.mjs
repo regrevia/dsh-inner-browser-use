@@ -114,6 +114,47 @@ test('a viewer that goes away stops receiving pointer messages', async () => {
   assert.equal(seen.length, 1)
 })
 
+test('a click on a frozen page wakes it before it is sent', async () => {
+  /* A frozen renderer drops input: the picture keeps coming from a bridge
+     page while the click lands nowhere. Every input path has to revive first. */
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+  page.frozen = true
+  page.client = cdp
+
+  await page.mouse('mousePressed', { x: 4, y: 6 })
+  await page.mouse('mouseReleased', { x: 4, y: 6 })
+
+  const thawed = cdp.sent.filter(([method]) => method === 'Page.setWebLifecycleState')
+  assert.ok(thawed.length >= 1, 'the page is asked to run again')
+  assert.equal(thawed[0][1].state, 'active')
+  assert.equal(page.frozen, false, 'the page knows it is awake')
+  assert.ok(
+    cdp.sent.some(([method, params]) => method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed'),
+    'the click still reaches the page',
+  )
+})
+
+test('the sound switch reaches the bridge and reports what it did', async () => {
+  const page = Object.create(SidecarPage.prototype)
+  page.flashBridge = 9411
+  /** @type {any} */
+  let asked = null
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    asked = { url: String(url), body: JSON.parse(String(options?.body ?? '{}')) }
+    return { ok: true, json: async () => ({ ok: true }) }
+  }
+  try {
+    assert.equal(await page.sound(true), true)
+    assert.deepEqual(asked, { url: 'http://127.0.0.1:9411/sound', body: { on: true } })
+    assert.equal(await page.sound(false), true)
+    assert.deepEqual(asked.body, { on: false })
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
 /** A browser that answers and records how it was asked for, without Chrome. */
 function fakeBrowser(record) {
   const sidecar = new Sidecar({ profile: 'pretend' })

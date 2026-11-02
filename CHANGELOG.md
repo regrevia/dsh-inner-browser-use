@@ -1,3 +1,9 @@
+## 0.47.13 — 冷启动不再是短板，复活与静音有了回归防线
+
+- 冷启动五连测（`/tmp` 探针同量法，每次全新 `Sidecar` + 全新 profile）：433 / 445 / 453 / 459 / 603 ms，中位 **453 ms**。同机同夹具竞品：browser-use 713 ms、Stagehand 760 ms、CDT MCP 2185 ms、Playwright MCP 2755 ms —— 0.47.6 时唯一落后的一项已反超，幅度诚实记在 `docs/BENCH.md`。
+- `test/sidecar.test.mjs` 新增两条行为回归：冻结页上的一次点击会先 `Page.setWebLifecycleState {state:'active'}` 再派发输入（`page.frozen` 归 false）；`sound(on)` 打 `POST /sound` 并回 `{on:true|false}`。286 测试全绿，防的是这一轮修掉的两个问题被下次重构悄悄改回去。
+- `docs/BENCH.md` 新增冷启动五测表，并把「领先 36%，随负载浮动，别当固定值」写进原文。
+
 ## 0.47.12 — 回收后的页签会说一声
 
 - 页签被回收时不再留下一张「看着还在、点着没反应」的旧帧：镜像上覆盖「页面已被回收，点一下恢复」，点一下按记住的地址重开（Flash 与普通页同一入口）。
