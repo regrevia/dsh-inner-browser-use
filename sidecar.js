@@ -1794,6 +1794,7 @@ export class SidecarPage {
   }
 
   async hover(point) {
+    await this.revive()
     if (this.flashBridge !== null && (await this.flashInput('mouseMove', point)) === true) return this.cursorAt(point)
     await this.input('Input.dispatchMouseEvent', {
       type: 'mouseMoved', // ui-copy-ignore
@@ -1824,18 +1825,25 @@ export class SidecarPage {
     if (kind === 'mouseDown' && (last === null || Math.abs(last.x - point.x) > 1 || Math.abs(last.y - point.y) > 1)) {
       await this.flashInput('mouseMove', point)
     }
+    const wheel = kind === 'mouseWheel'
     const started = Date.now()
     try {
       const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }),
+        body: JSON.stringify(wheel
+          ? { type: kind, x: Math.round(point.x), y: Math.round(point.y), deltaX: Math.round(point.dx ?? 0), deltaY: Math.round(point.dy ?? 0) }
+          : { type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }),
         signal: AbortSignal.timeout(1200),
       })
       this.inputMs = Date.now() - started
-      if (reply.ok === true) this.lastFlashPoint = { x: Math.round(point.x), y: Math.round(point.y) }
-      return reply.ok
+      // The window answers 200 with `{ok}`: a 200 alone only says the bridge is up.
+      const said = await reply.json().catch(() => null)
+      if (said?.ok !== true) return false
+      if (!wheel) this.lastFlashPoint = { x: Math.round(point.x), y: Math.round(point.y) }
+      return true
     } catch {
+      this.inputMs = Date.now() - started
       return false
     }
   }
@@ -1862,19 +1870,7 @@ export class SidecarPage {
   async wheel(args) {
     await this.revive()
     this.movePointer(args)
-    if (this.flashBridge !== null) {
-      try {
-        const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ type: 'mouseWheel', x: Math.round(args.x), y: Math.round(args.y), deltaX: Math.round(args.dx ?? 0), deltaY: Math.round(args.dy ?? 0) }),
-          signal: AbortSignal.timeout(1200),
-        })
-        if (reply.ok === true) return
-      } catch {
-        /* the debugging protocol below is the fallback */
-      }
-    }
+    if (this.flashBridge !== null && (await this.flashInput('mouseWheel', args)) === true) return
     await this.input('Input.dispatchMouseEvent', {
       type: 'mouseWheel', // ui-copy-ignore
       x: args.x, // ui-copy-ignore
@@ -1893,6 +1889,7 @@ export class SidecarPage {
    * @returns {Promise<boolean>} true when the window took it.
    */
   async flashKey(type, key) {
+    await this.revive()
     const bits = Number(key.modifiers ?? 0)
     const modifiers = []
     if ((bits & 1) !== 0) modifiers.push('alt')
@@ -1912,7 +1909,8 @@ export class SidecarPage {
           body: JSON.stringify(event),
           signal: AbortSignal.timeout(1200),
         })
-        if (reply.ok !== true) return false
+        const said = await reply.json().catch(() => null)
+        if (said?.ok !== true) return false
       }
       return true
     } catch {

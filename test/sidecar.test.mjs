@@ -174,6 +174,59 @@ test('the state a pane polls says whether the page can make noise', async () => 
   assert.equal((await sidecar.state()).sound, true)
 })
 
+test('input into a parked game wakes it first, and only a real yes counts', async () => {
+  /* A frozen renderer drops input while the Flash window keeps painting, so the
+     page looks alive and eats the click: every way in has to wake it first. The
+     bridge answers 200 with `{ok}`; a 200 alone only says the bridge is up. */
+  const sent = []
+  const page = new SidecarPage({ on: () => {}, send: async (method, params) => { sent.push({ method, params }); return {} } }, 'default')
+  page.flashBridge = 9311
+  /* Awake already: a revived page would otherwise start the mirror loop and
+     hold this test's event loop open for good. */
+  page.casting = true
+  page.frozen = true
+  const asked = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    asked.push({ url: String(url), body: JSON.parse(String(options?.body ?? '{}')) })
+    return { ok: true, json: async () => ({ ok: true }) }
+  }
+  await page.hover({ x: 12, y: 34 })
+  assert.deepEqual(sent[0], { method: 'Page.setWebLifecycleState', params: { state: 'active' } })
+  assert.equal(page.frozen, false)
+  assert.equal(asked.at(-1).body.type, 'mouseMove')
+  /* The same for a keystroke, whether it arrives through key() or straight at
+     the window the way humanType does. */
+  page.frozen = true
+  sent.length = 0
+  await page.key('keyDown', { key: 'a', text: 'a', keyCode: 65 })
+  assert.deepEqual(sent[0], { method: 'Page.setWebLifecycleState', params: { state: 'active' } })
+  page.frozen = true
+  sent.length = 0
+  assert.equal(await page.flashKey('keyDown', { key: 'b', text: 'b' }), true)
+  assert.deepEqual(sent[0], { method: 'Page.setWebLifecycleState', params: { state: 'active' } })
+  /* A wheel is the same road as a press: one POST carrying both deltas, no
+     debugging protocol behind it when the window took the event. */
+  asked.length = 0
+  sent.length = 0
+  await page.wheel({ x: 40, y: 50, dx: 0, dy: -120 })
+  assert.deepEqual(asked.map((one) => one.body.type), ['mouseWheel'])
+  assert.deepEqual({ dx: asked[0].body.deltaX, dy: asked[0].body.deltaY }, { dx: 0, dy: -120 })
+  assert.equal(sent.length, 0)
+  /* A bridge that says no is not a bridge that took it: the caller falls back
+     instead of believing its own HTTP status. */
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: false }) })
+  page.lastFlashPoint = null
+  assert.equal(await page.flashInput('mouseMove', { x: 1, y: 2 }), false)
+  assert.equal(page.lastFlashPoint, null)
+  globalThis.fetch = async () => ({ ok: false, json: async () => { throw new Error('no body') } })
+  assert.equal(await page.flashInput('mouseMove', { x: 1, y: 2 }), false)
+  globalThis.fetch = realFetch
+  page.casting = false
+  page.stopped = true
+  page.flashBridge = null
+})
+
 /** A browser that answers and records how it was asked for, without Chrome. */
 function fakeBrowser(record) {
   const sidecar = new Sidecar({ profile: 'pretend' })

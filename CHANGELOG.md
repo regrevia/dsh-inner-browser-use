@@ -1,3 +1,10 @@
+## 0.47.17 — 动作这一维和竞品同跑道了，桥的输入不再「看着像成功」
+
+- **同机同夹具三方对照**（`docs/BENCH.md`「动作面三方对照 — 0.47.17」）：本项目 0.47.17 / Playwright MCP 0.0.84 / Chrome DevTools MCP 1.12.0，各起自己的 headless Chrome，同一份页面、`--reps 8`、热身 2 次取中位，计时都在工具调用外面。同一页再读：本项目 0 ms / 193 字符（≈49 token），Playwright 7 ms / 8000 字符（≈2000 token，服务端硬截断），DevTools 5 ms / 5522 字符（≈1381 token）——两家都不去重。按文字点按钮：17 ms vs 537 ms vs 240 ms；打开一页：578 vs 556 vs 133 ms（DevTools 只回 `pageId`，不等真实地址与标题）；打字 101 vs 4 vs 208 ms，是三种不同契约，表里分开写清，不并成一根胜负曲线。
+- **桥的输入回执改成读桥自己的 `{ok}`**：`flashInput()` 之前用 `reply.ok`（HTTP 状态）判断成没成，而桥 `/input` 的失败分支是 4xx/5xx 空 body、成功是 `200 {"ok":true}`——HTTP 200 只说明桥活着。现在解析回执体，`flashInput` 与 `flashKey` 都只在 `{ok:true}` 时算接住，`inputMs` 照记，失败退回调试协议。
+- **悬停、打键、滚轮都不会再喂给一个冻结的渲染进程**：`hover()` 与 `flashKey()` 补了 `await this.revive()`（`mouse()`/`key()` 本来有）；`humanType()` 逐字走 `flashKey()`，所以真人节奏打字在冻结页上也能自己醒。`wheel()` 不再自己拼一份 `/input` 请求，复用 `flashInput('mouseWheel', …)`，两条路一起修。
+- 回归 +1：`test/sidecar.test.mjs` 的 `input into a parked game wakes it first, and only a real yes counts` 钉住四件事——冻结页上先 `Page.setWebLifecycleState {state:'active'}` 再送输入、`key`/`flashKey`/`hover` 三条入口都如此、滚轮是一次带两个 delta 的 POST 且不回退到 CDP、桥回 `{ok:false}` 或 4xx 空 body 时返回 false 且不记 `lastFlashPoint`。291 测试全绿。
+
 ## 0.47.16 — 动作这一维第一次有自己的表，超上限关掉的页签会告诉聊天
 
 - **`scripts/bench-actions.mjs`**：在 `tool.execute` 外面掐表，量模型真正付的那一圈——`browser_read` / `browser_view` / `browser_click` / `browser_type` / `browser_shot` / `browser_eval` / `browser_open`，页面动过和同一页再读分开记，连返回字符和 ≈token 一起给。目标里的「动作往返」这一维之前只有协议往返的 `action_rtt_ms`，没有工具面的数；现在有了，并进了 `docs/BENCH.md` 的「工具面动作耗时 — 0.47.16」。
