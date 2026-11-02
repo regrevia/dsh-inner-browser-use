@@ -90,13 +90,22 @@ try {
     const chat = `session-tabs-${String(i)}`
     const started = Date.now()
     const said = text(await run(chat, 'browser_open', { url: `${base}/p${String(i)}` }))
-    check(said.includes(`tab /p${String(i)}`), `tab ${String(i)} shows its page (open ${String(Date.now() - started)} ms)`)
+    const openMs = Date.now() - started
+    check(said.includes(`tab /p${String(i)}`), `tab ${String(i)} shows its page (open ${String(openMs)} ms)`)
     const w = weigh()
-    report.tabs.push({ tab: i, ...w })
+    report.tabs.push({ tab: i, open_ms: openMs, ...w })
     console.log(`     tab ${String(i)}: ${String(w.mb)} MB · ${String(w.procs)} procs · ${String(w.renderers)} renderer processes`)
   }
   const six = weigh()
   report.six = six
+  /* A tab after the first costs only a new target on a socket that is already
+     up, so the price should be tens of milliseconds, not a second. Playwright
+     MCP measured 40–87 ms for the same thing here and Chrome DevTools MCP
+     127–136 ms; 150 ms is the loose edge of that. */
+  const extra = report.tabs.slice(1).map((one) => one.open_ms).sort((a, b) => a - b)
+  const median = extra[Math.floor(extra.length / 2)]
+  report.warm_tab = { all_ms: report.tabs.map((one) => one.open_ms), extra_ms: extra, median_ms: median }
+  check(median <= 150, `a tab on a warm browser opens in ${String(median)} ms (median of five)`)
   /* Six tabs, four renderer processes: the limit is doing its job if the count
      stays under seven and the tree under 1.4 GB. */
   check(six.renderers <= 6, `six tabs ran on ${String(six.renderers)} renderer processes`)

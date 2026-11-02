@@ -106,7 +106,7 @@ on the same machine; the raw record is
 | Chrome DevTools MCP 1.12.0 | none — the browser lives until the process exits | 36.3% / 1280 MB | n/a | one dispose chain, no idle clock, screencast never pauses for a detached viewer |
 | browser-use | `keep_alive` flag, no timeout value | not measured | n/a | teardown skipped while `keep_alive`; no idle timer, no memory policy |
 | Stagehand | none | not measured | n/a | deliberately disables Chrome's background throttling, then tears down and removes the profile |
-| this plugin 0.47.3 | viewer-aware ladder, timings learned from use, memory pressure, single-flight close | 0.9% idle (0.24% settled) with six tabs / 864–921 MB; 0.03–0.32% / 551 MB with one | 0.39–0.44 s, same page and address | freeze keeps the DOM; rest keeps the cookies; six tabs share four renderers and add ~2 MB each; nothing cold-starts unless the process is new |
+| this plugin 0.47.4 | viewer-aware ladder, timings learned from use, memory pressure, single-flight close | 0.9% idle (0.24% settled) with six tabs / 864–922 MB; 0.03–0.32% / 551 MB with one | 0.39–0.44 s, same page and address; 41–45 ms to open a tab on a warm browser | freeze keeps the DOM; rest keeps the cookies; six tabs share four renderers and add ~2 MB each; nothing cold-starts unless the process is new |
 
 Playwright MCP's idle timeout was measured working (`--idle-timeout=6000` left no
 Chrome after 14 s idle while the MCP process stayed up), so "we are the only one
