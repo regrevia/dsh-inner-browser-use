@@ -51,6 +51,15 @@ app.on('window-all-closed', () => {
   /* A closed window is the person closing the mirror, not the app's business. */
 })
 
+/* The plugin asks this app to close; a host that dies without asking leaves it
+   orphaned — reparented to launchd, still painting, still holding the profile.
+   Nobody is left to ask it to stop, so it stops itself once its parent is gone. */
+const parentPid = process.ppid
+setInterval(() => {
+  if (process.ppid === parentPid && process.ppid !== 1) return
+  app.exit(0)
+}, 2000).unref?.()
+
 /* A plugin paints on a surface the debugging protocol's screencast does not
    see, so the app hands out its own frames over a loopback port. */
 let capture = null
@@ -186,6 +195,10 @@ app.whenReady().then(() => {
     },
   })
   capture = window
+  /* `--mute-audio` reaches the command line only after the app is running, so a
+     page that starts making noise during its first paint can be heard before
+     the switch applies. Mute the window up front instead: sound is opt-in. */
+  window.webContents.setAudioMuted(process.env.DSH_FLASH_SOUND !== '1')
   /* The Dock wanted to show this as a running app; the only thing it runs is
      the picture in someone's column. */
   if (app.dock !== undefined && app.dock !== null) app.dock.hide()

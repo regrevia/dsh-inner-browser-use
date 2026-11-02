@@ -1,3 +1,11 @@
+## 0.47.14 — 宿主要是猝死，桥自己走；页签不摊内存
+
+- Flash 桥加了「父进程看门」：桥每 2 s 看一次 `process.ppid`，被 launchd 收养（父进程 `SIGKILL`/崩掉、没走到 `putAway()`）就 `app.exit(0)`。现场抓到过这种旧桥：无父进程、存活 3 h 以上、仍在画，0.47.11 之前还会出声；探针实测父进程退出后第 1 s 还在、第 2 s 整组消失、端口不应答。
+- 首帧之前就静音：`--mute-audio` 是命令行开关，页面第一次绘制可能早于它生效；现在 `BrowserWindow` 建好即 `setAudioMuted(DSH_FLASH_SOUND !== '1')`，声音仍是 opt-in。
+- 新增常备自检 `scripts/check-flash-idle.mjs`（隔离状态目录、`about:blank`）：起桥 → 拿一帧 → `putAway()` → 断言 pid、整个进程组、桥端口全部消失，`the bridge leaves nothing behind.`（`exit 0`）。
+- 每页内存实测（1→6 页签、每步三次采样取中位，`docs/BENCH.md`）：总 RSS 883–1058 MB 来回，没有单调增长——页签数不是内存驱动，单步差值比「每页成本」还大，只有渲染进程数（≤4）随页签涨。
+- 回归测试 +1：`test/package.test.mjs` 断言桥有父进程看守、首帧前静音、`/sound` 路由还在。
+
 ## 0.47.13 — 冷启动不再是短板，复活与静音有了回归防线
 
 - 冷启动五连测（`/tmp` 探针同量法，每次全新 `Sidecar` + 全新 profile）：433 / 445 / 453 / 459 / 603 ms，中位 **453 ms**。同机同夹具竞品：browser-use 713 ms、Stagehand 760 ms、CDT MCP 2185 ms、Playwright MCP 2755 ms —— 0.47.6 时唯一落后的一项已反超，幅度诚实记在 `docs/BENCH.md`。

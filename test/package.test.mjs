@@ -116,6 +116,18 @@ test('a Flash page opens without claiming a window appeared', () => {
   assert.match(tools, /sidecar\.headless === false && sidecar\.flash !== true/)
 })
 
+test('the Flash runtime outlives nobody and starts silent', () => {
+  /* A host that dies without asking leaves the bridge reparented to launchd,
+     painting into a profile nobody will ask for again. It watches its parent
+     and exits by itself; and it is silent before the sound switch arrives. */
+  const app = readFileSync(new URL('../runtime/flash-app/main.js', import.meta.url), 'utf8')
+  assert.match(app, /const parentPid = process\.ppid/)
+  assert.match(app, /process\.ppid !== 1/)
+  assert.match(app, /app\.exit\(0\)/)
+  assert.match(app, /setAudioMuted\(process\.env\.DSH_FLASH_SOUND !== '1'\)/)
+  assert.match(app, /request\.url\.startsWith\('\/sound'\)/)
+})
+
 test('a run that finds something wrong says so through its exit code, not a hard exit', () => {
   /* process.exit() inside a script skips whatever cleanup is queued and shows up
      in reviews as a crash risk; the scripts here only own their own process, so
