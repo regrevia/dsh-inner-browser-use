@@ -7,6 +7,20 @@ const { app, BrowserWindow, Menu } = require('electron')
 const http = require('http')
 const env = process.env
 
+/* How many device pixels one CSS pixel of the game becomes. The pane is drawn
+   on a high-density screen, so one-to-one arrives already enlarged and soft. */
+function flashQuality() {
+  const asked = Number(env.DSH_FLASH_JPEG_QUALITY ?? 84)
+  if (!Number.isFinite(asked) || asked < 40 || asked > 100) return 84
+  return Math.round(asked)
+}
+
+function flashScale() {
+  const asked = Number(env.DSH_FLASH_SCALE ?? 2)
+  if (!Number.isFinite(asked) || asked < 1 || asked > 3) return 2
+  return asked
+}
+
 app.commandLine.appendSwitch('use-mock-keychain')
 app.commandLine.appendSwitch('lang', 'zh-CN')
 app.commandLine.appendSwitch('password-store', 'basic')
@@ -81,7 +95,7 @@ async function emulate(width, height) {
     await capture.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
       width,
       height,
-      deviceScaleFactor: 1,
+      deviceScaleFactor: flashScale(),
       mobile: false, // ui-copy-ignore
     })
     return true
@@ -132,7 +146,7 @@ function pump() {
       .then((image) => {
         if (alive(capture) !== true) return
         latest = image
-        latestJpeg = image.toJPEG(Number(env.DSH_FLASH_JPEG_QUALITY || 72))
+        latestJpeg = image.toJPEG(flashQuality())
         latestAt = Date.now()
       })
       .catch(() => {})
@@ -187,7 +201,7 @@ app.whenReady().then(() => {
     window.webContents.on('paint', (event, dirty, image) => {
       try {
         latest = image
-        latestJpeg = image.toJPEG(Number(env.DSH_FLASH_JPEG_QUALITY || 72))
+        latestJpeg = image.toJPEG(flashQuality())
         latestAt = Date.now()
         painted += 1
       } catch {
@@ -201,6 +215,7 @@ app.whenReady().then(() => {
   /* Faster than the sidecar asks: it then always finds a fresh picture. */
   pumpTimer = setInterval(pump, Number(env.DSH_FLASH_PUMP_MS || 40))
 
+  let windowScale = flashScale()
   const port = Number(env.DSH_FLASH_BRIDGE_PORT || 0)
   if (port > 0) {
     http.createServer(async (request, response) => {
@@ -231,12 +246,23 @@ app.whenReady().then(() => {
           const frame = box === null ? want : box
           const width = Math.max(200, Math.min(2560, Math.round(frame.width)))
           const height = Math.max(200, Math.min(2560, Math.round(frame.height)))
-          capture.setBounds({ x: -3000, y: -3000, width, height })
+          /* The window owns the pixels, the page owns the layout: give the
+             window `scale` times the game's shape so the picture the pane gets
+             is crisp, and keep the game laid out at its own size. */
+          windowScale = flashScale()
+          capture.setBounds({ x: -3000, y: -3000, width: Math.round(width * windowScale), height: Math.round(height * windowScale) })
           response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify({ bounds: capture.getBounds(), viewport: want, content: box }))
+          response.end(JSON.stringify({ bounds: { x: -3000, y: -3000, width, height }, window: capture.getBounds(), scale: windowScale, viewport: want, content: box }))
         } catch {
           response.writeHead(500).end()
         }
+        return
+      }
+      if (request.url.startsWith('/shutdown')) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ closing: true }))
+        /* Let the reply leave before the app goes down. */
+        setTimeout(() => app.quit(), 60).unref?.()
         return
       }
       if (request.url.startsWith('/input')) {
@@ -259,6 +285,11 @@ app.whenReady().then(() => {
             if (body[field] !== undefined && body[field] !== null) event[field] = body[field]
           }
           if (typeof event.type !== 'string' || event.type === '') { response.writeHead(400).end(); return }
+          /* Points arrive in the game's own pixels; the window holds `scale`
+             times as many. */
+          for (const axis of ['x', 'y']) {
+            if (typeof event[axis] === 'number') event[axis] = Math.round(event[axis] * windowScale)
+          }
           capture.webContents.sendInputEvent(event)
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end('{"ok":true}')
@@ -274,10 +305,10 @@ app.whenReady().then(() => {
       try {
         const asked = Number(new URL(request.url, 'http://x').searchParams.get('q') || 0) // ui-copy-ignore
         let jpeg = latestJpeg
-        if (jpeg === null || (asked > 0 && asked !== Number(env.DSH_FLASH_JPEG_QUALITY || 72))) {
+        if (jpeg === null || (asked > 0 && asked !== flashQuality())) {
           const image = latest !== null ? latest : alive(capture) === true ? await capture.webContents.capturePage() : null
           if (image === null) { response.writeHead(503); response.end(); return }
-          jpeg = image.toJPEG(asked > 0 ? asked : Number(env.DSH_FLASH_JPEG_QUALITY || 72))
+          jpeg = image.toJPEG(asked > 0 ? asked : flashQuality())
         }
         response.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': jpeg.length }) // ui-copy-ignore
         response.end(jpeg)

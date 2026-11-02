@@ -615,6 +615,10 @@ export class SidecarPage {
     this.lastPointerAt = 0
     /* Set when this page is drawn by the Flash runtime instead of a screencast. */
     this.flashBridge = null
+    /* The point the plugin last saw the mouse reach: a press somewhere else
+       moves there first, because a Flash button ignores a press it never saw
+       the hand arrive for. */
+    this.lastFlashPoint = null
     this.url = ''
     this.lastUrl = ''
     this.crashed = false
@@ -1496,7 +1500,7 @@ export class SidecarPage {
 
   /** Keeps a Flash page's mirror moving at a browser-like rate without a screencast. */
   async pollBridge() {
-    while (this.casting) {
+    while (this.casting === true && this.stopped !== true) {
       const started = Date.now()
       if (Date.now() - this.lastFrameAt > 1500) this.publish(await this.picture())
       else {
@@ -1775,6 +1779,10 @@ export class SidecarPage {
    * @returns {Promise<boolean>} true when the window took it.
    */
   async flashInput(kind, point) {
+    const last = this.lastFlashPoint
+    if (kind === 'mouseDown' && (last === null || Math.abs(last.x - point.x) > 1 || Math.abs(last.y - point.y) > 1)) {
+      await this.flashInput('mouseMove', point)
+    }
     const started = Date.now()
     try {
       const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
@@ -1784,6 +1792,7 @@ export class SidecarPage {
         signal: AbortSignal.timeout(1200),
       })
       this.inputMs = Date.now() - started
+      if (reply.ok === true) this.lastFlashPoint = { x: Math.round(point.x), y: Math.round(point.y) }
       return reply.ok
     } catch {
       return false
@@ -2906,6 +2915,8 @@ export class Sidecar {
     snapshotLogin(dir)
     this.backup?.()
     this.backup = setInterval(() => snapshotLogin(dir), 10 * 60_000)
+    /* A ten-minute clock is not a reason to keep this process alive. */
+    this.backup.unref?.()
     this.backup.unref?.()
     this.logger?.info?.('dsh-inner-browser-use: sidecar up on port %s (%s)', port, this.headless ? 'headless' : 'windowed') // ui-copy-ignore
     if (trace) console.error(`sidecar-start: ${Date.now() - t0} ms · ${marks.join(' · ')}`) // ui-copy-ignore
@@ -3010,6 +3021,10 @@ export class Sidecar {
       flash.port = Number(process.env.DSH_INNER_BROWSER_FLASH_PORT ?? 9200 + Math.floor(Math.random() * 400))
       flash.bridgePort = flash.port + 1
       args.length = 0
+      /* A switch, not a default: DSH_FLASH_MUTE=1 starts the runtime silent for
+         games whose BGM the column mirror cannot turn down. Unset keeps the
+         previous behaviour. */
+      if (/^(1|true|yes|on)$/i.test(String(process.env.DSH_FLASH_MUTE ?? '').trim())) args.push('--mute-audio')
       args.push(FLASH_APP)
     } else if (this.headless) args.unshift('--headless=new')
     /* A browser started again after a stop is a new one: its death is news
@@ -3619,11 +3634,32 @@ export class Sidecar {
       /* Ask Chrome to close first: a browser that is killed outright may lose
          the last minute of cookies, and keeping the person signed in is the
          point. */
-      await this.saveSessionCookies()
-      snapshotLogin(profileDir(this.profile))
+      /* Neither of these may throw on the way out: a rejected save would skip
+         the cleanup below and leave a dead browser's clocks running. */
+      await this.saveSessionCookies().catch(() => {})
+      try {
+        snapshotLogin(profileDir(this.profile))
+      } catch {
+        /* a profile that cannot be read is not a reason to hang */
+      }
     }
     if (this.backup !== undefined) clearInterval(this.backup)
     this.backup = undefined
+    /* A page somebody is watching polls its own bridge; that loop has to end
+       before the bridge goes away, or it keeps waking up on a page that no
+       longer exists and this process never gets to exit. */
+    for (const page of [this.page, ...(this.pages?.values() ?? [])]) {
+      if (page === null || page === undefined) continue
+      page.casting = false
+      page.stopped = true
+      page.frames?.clear()
+    }
+    /* The bridge is an Electron app in its own process: a SIGTERM it can ignore
+       leaves that process (and this one) alive. Ask it to close, then fall back
+       to signals below. */
+    if (this.flashBridge !== null && mine) {
+      await fetch(`http://127.0.0.1:${this.flashBridge}/shutdown`, { method: 'POST' }).catch(() => {})
+    }
     if (this.cdp !== null && mine) {
       await this.cdp.send('Browser.close').catch(() => {})
       await new Promise((resolve) => setTimeout(resolve, 400))
@@ -3665,6 +3701,11 @@ export class Sidecar {
       }
       this.child = null
     }
+    /* The child's pipes are the last thing holding this process open: after the
+       browser is gone there is nobody to read them, and a referenced pipe keeps
+       the event loop alive forever instead of letting the call return. */
+    for (const stream of [this.child?.stdin, this.child?.stdout, this.child?.stderr]) stream?.destroy?.()
+    this.child?.unref?.()
   }
 
   /**

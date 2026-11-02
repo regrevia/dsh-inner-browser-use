@@ -60,13 +60,17 @@ try {
   const framed = content === null
     ? bounds.width === asked.width && bounds.height === asked.height
     : bounds.width === content.width && bounds.height === content.height
-  const matches = frame.width === bounds.width && frame.height === bounds.height
-  ok = reply?.viewport?.width === asked.width && reply?.viewport?.height === asked.height && framed && matches
+  /* The pane is drawn on a high-density screen, so the bridge hands over more
+     pixels than the game's own size. `scale` says how many. */
+  const scale = Number(reply?.scale ?? 1)
+  const matches = frame.width === Math.round(bounds.width * scale) && frame.height === Math.round(bounds.height * scale)
+  ok = reply?.viewport?.width === asked.width && reply?.viewport?.height === asked.height && framed && matches && scale >= 1
   console.log(JSON.stringify({
     url: String(reply?.url ?? url).slice(0, 80),
     asked,
     bounds,
     content,
+    scale,
     frame,
     frameKB: Math.round(body.length / 1024),
     ms: Date.now() - started,
