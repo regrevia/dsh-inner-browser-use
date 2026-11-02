@@ -34,6 +34,7 @@ window.__ModuleLoader__.load({
         'side.label': '后台浏览器',
         'side.empty': '后台的独立 Chrome 还没有页面，在上方地址栏输入网址',
         'side.restore': '恢复上次的页面',
+        'side.gone': '页面已被回收，点一下恢复',
         'side.connecting': '正在连接…',
         'side.failed': '画面没有连上',
         'side.foreign': '这个浏览器属于发起它的会话，回到那个会话继续。',
@@ -47,6 +48,7 @@ window.__ModuleLoader__.load({
         'side.label': 'Background browser',
         'side.empty': 'The background Chrome has no page yet; type an address above',
         'side.restore': 'Reopen the last page',
+        'side.gone': 'The browser reclaimed this page — click to bring it back',
         'side.connecting': 'Connecting…',
         'side.failed': 'The picture did not connect',
         'side.foreign': 'This browser belongs to the chat that opened it.',
@@ -81,6 +83,7 @@ window.__ModuleLoader__.load({
       '.dshib-side-note{font-size:12px;color:var(--dsw-alias-label-tertiary);padding:0 16px;text-align:center}',
       '.dshib-side-back{border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}',
       '.dshib-side-back:hover{background:var(--dsw-alias-bg-subtle)}',
+      '.dshib-side-gone{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:0;border-radius:8px;background:var(--dsw-alias-bg-elevated,rgba(0,0,0,.72));color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:8px 14px;cursor:pointer}',
     ].join('')
 
     return {
@@ -365,7 +368,7 @@ window.__ModuleLoader__.load({
               .then((state) => {
                 if (state?.chat?.expired !== true) return
                 if (mountedOf() !== who) return
-                closeHere(who, false)
+                setGone(true)
               })
               .catch(() => {})
           }
@@ -533,6 +536,10 @@ window.__ModuleLoader__.load({
          re-opens its stream instead of sitting on an empty stage until the
          person reloads the page. */
       const [attempt, setAttempt] = React.useState(0)
+      /* The browser reclaims idle tabs; the picture then stops while the last
+         frame stays on screen, which looked exactly like a page that stopped
+         taking clicks. Say so over the frame instead of leaving it mute. */
+      const [gone, setGone] = React.useState(false)
       const drawnAt = React.useRef(0)
 
       React.useEffect(() => {
@@ -552,6 +559,7 @@ window.__ModuleLoader__.load({
           const message = pending
           pending = null
           setFrame(message)
+          setGone(false)
           setPtr(message.pointer ?? null)
           if (Number.isFinite(Number(message.w)) && Number.isFinite(Number(message.h))) {
             setView({ w: Number(message.w), h: Number(message.h) })
@@ -891,7 +899,25 @@ window.__ModuleLoader__.load({
           onKeyDown,
           onKeyUp,
         },
-          frame === null && back !== ''
+          gone === true
+            ? h('button', {
+              className: 'dshib-side-gone',
+              type: 'button', // ui-copy-ignore
+              onClick: () => { // ui-copy-ignore
+                setGone(false)
+                void fetch(`${ROUTE}/sidecar/open`, { // ui-copy-ignore
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ session: who, url: back !== '' ? back : url }), // ui-copy-ignore
+                })
+                  .then((reply) => (reply.ok === true ? reply.json() : null))
+                  .then((info) => {
+                    if (info?.ok === true) setAttempt((n) => n + 1)
+                  })
+                  .catch(() => {})
+              },
+            }, L('side.gone'))
+            : frame === null && back !== ''
             ? h('button', {
               className: 'dshib-side-back',
               type: 'button', // ui-copy-ignore

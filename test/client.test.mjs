@@ -384,14 +384,19 @@ test('the picture fills the column even when the last measure was stale', () => 
   assert.ok(source.includes("if (at === null || at === undefined || areaEl === null || areaEl === undefined) return null"))
 })
 
-test('a column whose page was reclaimed is closed once, not re-expanded', () => {
+test('a column whose page was reclaimed says so instead of going mute', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* The browser keeps the page a while after the tab is put away; when even
-     that page is gone the column goes with it, so a chat coming back to the
-     front does not draw an empty pane nobody asked for. */
+     that page is gone, leaving the last frame on screen looked like a page
+     that had stopped taking clicks. The pane stays, says what happened, and
+     reopens the remembered address on one click. */
   assert.ok(source.includes('const dropExpired = () =>'))
   assert.ok(source.includes('state?.chat?.expired !== true'))
-  assert.ok(source.includes('closeHere(who, false)'))
+  assert.ok(source.includes('setGone(true)'))
+  assert.ok(source.includes("'side.gone'"))
+  assert.ok(source.includes('className: \'dshib-side-gone\''))
+  /* A fresh frame means the page is back: the notice must not outlive it. */
+  assert.ok(source.includes('setGone(false)'))
   /* One check every few beats, not a retry ladder. */
   assert.ok(source.includes('if (beats % 5 === 1) dropExpired()'))
 })
