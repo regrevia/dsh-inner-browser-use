@@ -2571,9 +2571,14 @@ export class Sidecar {
     idle.sort((a, b) => a.at - b.at)
     for (const row of idle.slice(0, over)) {
       this.pages.delete(row.id)
+      /* The chat that owns this tab is told it went away, the same way a reaped
+         idle tab tells it: without the note the pane keeps showing its last
+         frame and looks like a page that stopped taking clicks. */
+      ;(this.expired ??= new Map()).set(String(row.id), Date.now())
       await row.page.stopCast().catch(() => {})
       await fetch(`http://127.0.0.1:${String(row.port)}/json/close/${row.target}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
     }
+    if (over > 0) this.note('closed tabs over the cap — their addresses are kept')
   }
 
   /**

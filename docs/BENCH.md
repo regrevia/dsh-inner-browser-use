@@ -1413,3 +1413,28 @@ fixture、同一台机器跑出来，取一次快照的返回文本长度。
 | 内存预算 | 2400 MB / 30 s 一次称重；超预算先收 LRU 页签、降码率，无人看才休息 |
 | 崩溃循环 | 10 分钟内 3 次 → 拒绝启动并说明原因 |
 | suite | 42 pass（sidecar）· rest 9 pass · soak/rest 端到端全过 |
+
+## 工具面动作耗时 — 0.47.16
+
+前面几节量的是协议往返；模型付的钱是工具调用外面那一圈——认控件、等页面、把结果整成它能读的字。`scripts/bench-actions.mjs` 因此在 `tool.execute` 外面掐表，跟 `browser_*` 走同一条路。夹具是一个本地进程里现起的页（一个 h1、一个只有输入框和按钮的表单、40 句 × 44 字的段落、60 条列表项），headless Chrome，`--reps 12`，先各跑 2 次热身再记；`read` / `view` 每次计时前先把页面上一个 tick 节点改掉（改的那一下不算在计时里），所以量到的是「页面真的动了之后要付多少」，另两行是「同一页再读」的去重路径。
+
+| 动作 | 中位 | p95 | 最大 | 返回字符 | ≈token |
+| --- | --- | --- | --- | --- | --- |
+| `browser_read`（页面动过） | 1 ms | 1 ms | 2 ms | 1545 | 387 |
+| `browser_read`（同一页再读） | 0 ms | 1 ms | 4 ms | 193 | 49 |
+| `browser_view`（页面动过） | 3 ms | 3 ms | 6 ms | 1373 | 344 |
+| `browser_view`（同一页再看） | 2 ms | 5 ms | 6 ms | 194 | 49 |
+| `browser_click`（按文字点） | 17 ms | 18 ms | 18 ms | 43 | 11 |
+| `browser_type`（5 个字符） | 108 ms | 114 ms | 122 ms | 48 | 12 |
+| `browser_shot`（当前屏） | 50 ms | 51 ms | 52 ms | 224 | 56 |
+| `browser_eval` | 0 ms | 1 ms | 1 ms | 7 | 2 |
+| `browser_open`（冷，一个页） | 633–687 ms | — | — | — | — |
+
+怎么读这张表：
+
+- **重复读是白拿的**：同一页、同一形状再读一次，387 → 49 token、344 → 49 token，时间是 0–2 ms。这是本项目和竞品拉开差距的地方——Playwright MCP / Chrome DevTools MCP 每读一次都是整页重新渲染一次给模型。
+- **`browser_type` 的 108 ms 不是卡**：5 个字符按 10–28 ms/字的真人节奏落键（0.34.x 起就这么做，页面上看到的是逐键 keydown + input，不是一次性 setValue）。要更快就走 `mode: "dom"`。
+- **`browser_click` 的 17 ms** 是已经知道点哪个之后的三次 CDP 发送；0.34.42 那张表里的 97 ms 含一次读页找控件，夹具不同，不能相减。
+- 这些数没有和竞品同夹具横比：五家对照那节的数字是 0.47.6 用 `docs/RESOURCES.md` 的协议量的，动作这一维要在同一台机、同一个页、同一个「先读再点」流程下重跑才能并表，本轮没做，表里不写。
+
+`node scripts/bench-actions.mjs --reps 12 --json out.json` 复现；末行是 JSON，`actions.<名字>.{median,p95,min,max,chars}` 与 `tokens`，任何一项中位 ≥ 500 ms 或最大 ≥ 2000 ms 会进退出码。

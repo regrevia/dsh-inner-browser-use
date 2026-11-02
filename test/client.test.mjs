@@ -384,6 +384,21 @@ test('the picture fills the column even when the last measure was stale', () => 
   assert.ok(source.includes("if (at === null || at === undefined || areaEl === null || areaEl === undefined) return null"))
 })
 
+test('the sound switch is there only for a page that can make noise, and says what it did', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* A Flash page starts muted: the note is on the pane, the switch is off, and
+     it only appears on the kind of page that has audio of its own. */
+  assert.ok(source.includes("const audible = info?.sound === true"))
+  assert.ok(source.includes("...(sound.flash === true"))
+  assert.ok(source.includes("'data-on': sound.on === true ? '1' : '0'"))
+  /* The face of the key follows the browser, not the click: the state poll puts
+     back whatever the bridge said, so a switch that failed does not lie. */
+  assert.ok(source.includes("setSound((prev) => (prev.flash === flash && prev.on === audible ? prev : { flash, on: audible }))"))
+  /* One request, naming the chat that asked. */
+  assert.ok(source.includes("post('/sidecar/sound', { on: next })"))
+  assert.ok(source.includes('.dshib-side-sound[data-on="0"]{opacity:.45}'))
+})
+
 test('a column whose page was reclaimed says so instead of going mute', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* The browser keeps the page a while after the tab is put away; when even

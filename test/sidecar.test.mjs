@@ -880,6 +880,10 @@ test('one browser does not keep a renderer per chat', async () => {
     globalThis.fetch = close
   }
   assert.equal(sidecar.pages.size, 5)
+  /* A tab closed for the cap is as gone as one closed for idleness: the chat's
+     column is told, so it offers the address back instead of a dead picture. */
+  assert.equal(sidecar.expired.has('chat-2'), true, 'the trimmed chat is told its tab went away')
+  assert.equal(sidecar.expired.has('chat-8'), false)
   assert.ok(sidecar.pages.has('watching'), 'the page on screen stays')
   assert.ok(sidecar.pages.has('chat-8'), 'the newest chat stays')
   assert.ok(!sidecar.pages.has('chat-2'), 'the oldest unwatched tab goes')

@@ -1,3 +1,9 @@
+## 0.47.16 — 动作这一维第一次有自己的表，超上限关掉的页签会告诉聊天
+
+- **`scripts/bench-actions.mjs`**：在 `tool.execute` 外面掐表，量模型真正付的那一圈——`browser_read` / `browser_view` / `browser_click` / `browser_type` / `browser_shot` / `browser_eval` / `browser_open`，页面动过和同一页再读分开记，连返回字符和 ≈token 一起给。目标里的「动作往返」这一维之前只有协议往返的 `action_rtt_ms`，没有工具面的数；现在有了，并进了 `docs/BENCH.md` 的「工具面动作耗时 — 0.47.16」。
+- **超过 `MAX_TABS` 被关掉的页签，现在也会告诉聊天**：`trimTabs()` 关一个页签时把 id 记进 `expired` 并 `note()`，右栏和 `chatState()` 于是给的是「地址还在、点一下就回来」，不是一张停住的旧画面。之前只有空闲回收会记，超上限这条路径会漏。
+- 回归 +2：`test/sidecar.test.mjs` 的 `one browser does not keep a renderer per chat` 现在同时断言被超上限关掉的那个聊天在 `expired` 里、没被关的不在；`test/client.test.mjs` 新增 `the sound switch is there only for a page that can make noise, and says what it did`，把 0.47.15 的开关钉住：只在 `sound.flash` 为真时出现、面子跟 `/sidecar/state` 回报的 `sound` 而不是跟点击、点一下只发一次 `POST /sidecar/sound`。
+
 ## 0.47.15 — 游戏声音有了开关，右栏自己就能按
 
 - Flash 页默认静音（0.47.14 起连首帧都不出声），但静音之后没有「我要听」的入口：现在右栏地址栏旁多一个音符键，只在 Flash 页出现，按一下 `POST /sidecar/sound` → 桥 `/sound` → `webContents.setAudioMuted()`，再按一下关回去。键面按桥回报的状态画（`data-on="0"` 时压低透明度），不猜。
