@@ -661,13 +661,20 @@ test('a read says when the answer is a picture', async () => {
 test('typing asks the box for one paste, and the keys in order only where they are needed', async () => {
   const { typeInto } = await import('../tools.js?v=1')
   const log = []
-  const box = { quickType: async (text) => { log.push(`paste:${text}`); return true }, humanType: async (text) => { log.push(`keys:${text}`) }, insertText: async () => undefined }
+  const box = { quickType: async (text) => { log.push(`paste:${text}`); return true }, humanType: async (text) => { log.push(`keys:${text}`) }, insertText: async (text) => { log.push(`paste:${text}`) } }
   await typeInto(box, 'hello', 'Note')
   assert.deepEqual(log, ['paste:hello'])
   /* A box that reacts as you type gets the keys, so its list really appears. */
   log.length = 0
   await typeInto(box, 'shoes', 'Site search')
   assert.deepEqual(log, ['keys:shoes'])
+  /* A paragraph in a box that filters as you type: the opening keys drive the
+     list, the rest is committed in one go instead of five hundred presses. */
+  log.length = 0
+  const paragraph = `${'title:'.repeat(1)}${'a long query that filters a list as it is typed '.repeat(4)}`
+  assert.ok(paragraph.length > 160)
+  await typeInto(box, paragraph, 'Filter')
+  assert.deepEqual(log, [`keys:${paragraph.slice(0, 8)}`, `paste:${paragraph.slice(8)}`])
   /* When the paste does not take, the keys are the fallback. */
   log.length = 0
   box.quickType = async (text) => { log.push(`paste:${text}`); return false }

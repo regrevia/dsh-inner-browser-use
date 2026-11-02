@@ -30,7 +30,7 @@ const server = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
   response.end('<!doctype html><meta charset="utf-8"><title>actions</title>' +
     '<h1>actions</h1>' +
-    '<form><label>Search <input id="q" name="q"></label> <button id="go" type="button">Go</button></form>' +
+    '<form><label>Search <input id="q" name="q"></label> <label>Name <input id="n" name="n"></label> <button id="go" type="button">Go</button></form>' +
     '<p id="tick">0</p>' +
     `<p>${'the page has to cost what a page costs. '.repeat(40)}</p>` +
     `<ul>${rows}</ul>`)
@@ -81,13 +81,22 @@ try {
      did move pays for the words, so those reps poke the page first, outside the
      timed span. */
   const poke = 'document.getElementById("tick").textContent = String(Date.now()) + Math.random()'
-  const acts = [
+  /* 480 characters: a paragraph someone would paste into a form. */
+const LONG = 'The sidecar keeps one page per chat and gives it back when the column closes. '.repeat(6).slice(0, 480)
+
+const acts = [
     ['read', 'browser_read', {}, poke],
     ['read_repeat', 'browser_read', {}, ''],
     ['view', 'browser_view', {}, poke],
     ['view_repeat', 'browser_view', {}, ''],
     ['click', 'browser_click', { text: 'Go' }, ''],
     ['type', 'browser_type', { text: 'bench' }, ''],
+    /* The same contract every competitor's type tool has: a field is given, so
+       the page's own box is the target. The bare `type` row above has no target
+       and therefore pays the human keystroke path. */
+    ['type_field', 'browser_type', { text: 'bench', field: 'Name', clear: true }, ''],
+    ['type_long', 'browser_type', { text: LONG, field: 'Name', clear: true }, ''],
+    ['type_search_long', 'browser_type', { text: LONG, field: 'Search', clear: true }, ''],
     ['shot', 'browser_shot', { name: 'bench' }, ''],
     ['eval', 'browser_eval', { code: 'document.title' }, ''],
   ]
@@ -108,7 +117,7 @@ try {
       if (label === 'type') {
         /* Each rep types into whatever is focused; empty it so the field never
            grows to a size that makes layout the thing being measured. */
-        await run('browser_eval', { code: 'document.getElementById("q").value = ""' })
+        await run('browser_eval', { code: 'document.getElementById("q").value = ""; document.getElementById("n").value = ""' })
       }
     }
     const row = { ...spread(samples), chars: round(chars.reduce((sum, one) => sum + one, 0) / chars.length) }

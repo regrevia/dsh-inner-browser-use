@@ -1464,3 +1464,37 @@ fixture、同一台机器跑出来，取一次快照的返回文本长度。
 - 截图三家都 40–50 ms，差别在回执形状：本项目给的是绝对路径 + 224 字符，另两家是 base64/内联图或 `Uint8Array`（同屏 PNG 106 648 B vs 75 483 B，见 0.47.6 那节）。
 
 复现：本项目 `node scripts/bench-actions.mjs --reps 8 --json out.json`；两家 MCP 用 `/tmp/compbench2/bench.mjs`（`--only playwright|chrome-devtools --reps 8`，各起自己的 headless Chrome，`--use-mock-keychain`）。两家的数都来自实测，不是估算；MCP 语义（Playwright 的 `target` 是字符串 ref、ref 会被下一次快照作废；DevTools 每个页面工具都要数字 `pageId`、`type_text` 不收 `uid`）是在这份脚本里踩出来的，写在 `docs/RESOURCES.md` 的读数笔记里。
+
+## 打字契约 — 0.47.19（同机、同夹具、`--reps 6`）
+
+夹具是一张本地页面：一个 `<label>Search <input id="q">`、一个 `<label>Name <input id="n">`、一个 Go 按钮。
+`browser_type` 五种用法各跑 8 次、前 2 次热身丢弃，取中位；每轮跑完用 `browser_eval` 把两个输入框清空，
+所以每轮都从空框开始。计时在 `tool.execute` 外面。
+
+| 用法 | 中位 | p95 | max | 回执字符 |
+| --- | --- | --- | --- | --- |
+| `type`（不给目标，页面上没焦点） | 107 ms | 110 ms | 124 ms | 48 |
+| `type_field`（`field: "Name"`，普通输入框，5 字符） | 122 ms | 141 ms | 149 ms | 58 |
+| `type_long`（`field: "Name"`，480 字符） | 131 ms | 143 ms | 147 ms | 113 |
+| `type_search_long`（`field: "Search"`，480 字符） | **274 ms** | 279 ms | 326 ms | 117 |
+| 0.47.18 同一条：搜索框 480 字符 | 997 ms | — | 1037 ms | 117 |
+
+怎么读：
+
+- **字数和耗时脱钩的才是快路**：`type_long` 480 字符 131 ms 与 `type_field` 5 字符 122 ms 只差 9 ms，因为两行都走
+  `quickType`——两次 `Runtime.evaluate` 读值 + 一次 `Input.insertText`，写完再读一次确认。耗时的大头是调用前的
+  「移动三小步 + 按下抬起 + 清空旧值 + 30 ms 等页面反应」，约 70 ms，按键本身不到 10 ms。
+- **搜索框的 997 → 274 ms 是这一轮修掉的那条**：页面靠 keydown 过滤，所以开头 8 个字仍是真键（8 × 10–28 ms），
+  其余一次提交。剩下的 274 ms 里约 150 ms 是那 8 个真键的节奏，约 70 ms 是移动/点击/清空，真正可再压的只有
+  「要不要连 8 个键都省掉」——省掉就不再是搜索框该有的行为了。
+- **`type`（107 ms）和 `type_field`（122 ms）不是同一件事**：裸打时页面上没有焦点，`quickType` 读到的
+  `document.activeElement` 是 body，两头一致（都是空）于是判定「没落值」，退回逐键真人节奏；给了字段才会先点击
+  那个框。这一行留在表里是为了说明「101–108 ms 不是打字慢，是没目标」。
+- **和竞品对照请看上一节的注意事项**：Playwright MCP 的 4 ms 是 fill，DevTools MCP 的 208 ms 不含它必须先做的
+  聚焦点击，两家都没有真人节奏这条契约。本项目要一次落值用 `mode: "dom"`，回执会说 `typed into`。
+
+第二次 `--reps 8` 复跑：`type` 101 / `type_field` 133 / `type_long` 132 / `type_search_long` **267 ms**，
+与上表同量级（搜索框那条 997 → 274 → 267）。
+
+复现：`node scripts/bench-actions.mjs --reps 6 --json out.json`（`actions.type_field` / `actions.type_long` /
+`actions.type_search_long` 三行）。

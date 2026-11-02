@@ -1667,6 +1667,16 @@ export async function typeInto(page, text, hint = '') {
     await wait(30)
     return
   }
+  /* A search box filters on what it is given, so its opening keys stay real;
+     a paragraph pasted after them changes nothing about the filtering, and
+     pressing five hundred more keys only makes the caller wait. */
+  const letters = Array.from(words)
+  if (live && letters.length > 160) {
+    await page.humanType(letters.slice(0, 8).join(''))
+    await page.insertText(letters.slice(8).join(''))
+    await wait(30)
+    return
+  }
   await page.humanType(words)
 }
 

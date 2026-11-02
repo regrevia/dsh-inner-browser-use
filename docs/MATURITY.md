@@ -1,4 +1,4 @@
-# 成熟度（0.47.18，2026-11）
+# 成熟度（0.47.19，2026-11）
 
 结论：**可日常用，边界清楚**。能力面已经越过「能开网页」的层次，长跑与资源回收这条链路是本版
 重点并且有实测；短板集中在跨平台验证（只有 macOS 真机跑过）和少数只有真机才能验的交互（Flash、
@@ -8,10 +8,10 @@
 
 | | |
 | --- | --- |
-| 版本 / 许可 | 0.47.18 / MIT |
+| 版本 / 许可 | 0.47.19 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
-| npm | `dsh-inner-browser-use@0.47.18` |
-| 代码 | 约 12.2k 行（index 986 · sidecar 3961 · tools 4114 · read 2039 · rest 124 · client 1004） |
+| npm | `dsh-inner-browser-use@0.47.19` |
+| 代码 | 约 12.2k 行（index 986 · sidecar 3961 · tools 4122 · read 2039 · rest 124 · client 1004） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
 | 验证脚本 | 31 个 `scripts/`，含 live / live-safety / breadth / soak / rest / tabs / doctor / flash-fit / flash-idle / bench-actions |
@@ -28,6 +28,7 @@
 | Flash 收尾 | `scripts/check-flash-idle.mjs`：`putAway()` 后 pid、整个进程组、桥端口全消失（`exit 0`）；组杀之后再读一次 `ps -E`，按 `DSH_FLASH_BRIDGE_PORT=<本会话端口>` 收掉逃出进程组的助手（这类助手会继续出声，而主进程已没），扫描 39 ms 且只碰自己的桥；父进程不辞而别时桥自己 2 s 内 `app.exit(0)`（之前抓到过无父、存活 3 h 以上、仍在画的旧桥），首帧前即静音 |
 | 长跑 | soak 24 轮 + 3 次真实休息：40.3 s，内存 **1183 → 912 MB**，页数始终 1，24 次读全部有答案 |
 | 热页签 | 热浏览器里再开一页（新建页签 + 导航，同一本地 fixture）：**中位 41–45 ms**（41–72）；Playwright MCP 中位 45 ms（40–87）、Chrome DevTools MCP 中位 130 ms（127–136）。与 Playwright 打平、比 DevTools MCP 快 3.2 倍，`npm run tabs` 断言中位 ≤ 150 ms（`docs/BENCH.md` 的「热页签」段） |
+| 打字 | 同夹具同 `--reps 6`：普通输入框 480 字符 **131 ms**、5 字符 122 ms（字数与耗时脱钩，走一次 `insertText` + 回读确认）；搜索框 480 字符 **274 ms**（0.47.18 时 997 ms，开头 8 个键仍是真敲）；不给目标的裸打 107 ms 是「页面上没焦点」，不是慢（`docs/BENCH.md`「打字契约 — 0.47.19」） |
 | 截图 | `npm run bench` 连拍四次取中位：**51 ms**（43–52）/ PNG 106 648 字节，回答只 223 字符 + 路径；同机同法 Playwright MCP 51 ms（回答带 base64 100 644 字符）、Chrome DevTools MCP 48 ms（383 200 字符）。速度打平（成本在 Chrome 的 `captureScreenshot`），差别在文本通道与是否落文件；给 `captureScreenshot` 加 `optimizeForSpeed` 实测 41 对 41 ms、字节 +32%，已证伪回退（`docs/BENCH.md` 的「一张截图五十毫秒」段） |
 | 工具面动作 | `scripts/bench-actions.mjs`：在 `tool.execute` 外面掐表（页面动过之后 / 同一页再读分开量）。读 **0–1 ms / 1713 字 / ≈429 token**，同一页再读 **0 ms / 193 字 / ≈49 token**；view **3 ms / 1698 字 / ≈425 token**，再看 **2 ms / 194 字 / ≈49 token**；点 **17 ms**、打 5 个字 **101–108 ms**（真人 10–28 ms/字的按键节奏）、截图 **49–50 ms**、eval **0 ms**、冷开一页 **578–687 ms**（`docs/BENCH.md`「工具面动作耗时」段） |
 | 动作面三方对照 | 同机、同夹具、同流程（各自 headless Chrome，`--reps 8`，热身 2 次取中位，计时在工具调用外面）：同一页再读 **0 ms / 193 字（≈49 token）** 对 Playwright MCP 0.0.84 **7 ms / 8000 字（≈2000）** 对 Chrome DevTools MCP 1.12.0 **5 ms / 5522 字（≈1381）**，两家都不去重、8000 是服务端硬截断；点按钮 **17 ms** 对 **537 / 240 ms**；打 5 个字 **101 ms** 对 **4 / 208 ms**（三种不同契约：本项是真人节奏、Playwright 是一次 fill、DevTools 是逐键真事件且要先点一下才聚焦）；截图 49 对 43 / 40 ms（回执形状不同）；打开一页 **578** 对 **556 / 133 ms**（DevTools 只回 `pageId`，不等真实地址与标题）（`docs/BENCH.md`「动作面三方对照」段） |
