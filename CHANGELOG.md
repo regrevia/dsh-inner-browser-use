@@ -1,3 +1,8 @@
+## 0.47.10
+
+- 文档跟到实测：`docs/BENCH.md` 新增 0.47.9 Flash 镜像前后对照（1920×1120 / 113 KB / 27.8 fps / 首帧 189 ms / 拆除 `exit 0`）。
+- `docs/MATURITY.md` 标题、`README.md` 与 `README.zh.md` 的对照口径统一成五家。
+
 ## 0.47.9
 
 - 右栏画面 **分辨率翻倍**：离屏窗口按游戏尺寸的 2 倍（`DSH_FLASH_SCALE`，1–3，默认 2）开、`Emulation.setDeviceMetricsOverride` 的 `deviceScaleFactor` 同步取这个倍数，于是捕获面是 1920×1120 而页面/指针几何仍是 960×560 的 CSS 尺寸（`this.view` 不变、黑边与反算数学不变）。实测 `/frame.jpg` 从 960×560 变成 **1920×1120**（113 KB），镜像 **27.8 fps**（76 帧）、首帧 189 ms、按下 5 ms、松开 1 ms、按键 4 ms

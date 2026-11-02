@@ -113,7 +113,7 @@ same 48–71 ms all four pay — the cost is Chrome's own capture — and what c
 back is a path plus 223 characters instead of the 100–383 KB of base64 they
 inline. Cold start is the one place we do not lead: **840 ms** (701–936) against
 Stagehand 760 and browser-use 713, because both own Chrome in-process.
-`npm run bench` and `npm run tabs` reproduce all of it; the four-way tables are in
+`npm run bench` and `npm run tabs` reproduce all of it; the five-way tables are in
 `docs/BENCH.md` (五家对照).
 
 ## When nobody is looking
