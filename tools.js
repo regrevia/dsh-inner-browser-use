@@ -1681,6 +1681,37 @@ export async function typeInto(page, text, hint = '') {
 }
 
 /**
+ * Wait for a click to land, not for a fixed number of milliseconds.
+ * A page usually puts the caret in the field within a frame or two, and then
+ * the wait was the longest part of typing into it. Polling says "done" as soon
+ * as the element under the pointer is the one holding the caret, and still
+ * gives a slow page its full budget.
+ * @param {any} page - sidecar page.
+ * @param {{x: number, y: number}} point - where the click landed.
+ * @param {number} [capMs] - how long a page may take before typing anyway.
+ * @returns {Promise<boolean>} whether the caret is in the clicked control.
+ */
+export async function focusedAt(page, point, capMs = 80) {
+  const started = Date.now()
+  for (;;) {
+    const said = await page.cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const el = document.elementFromPoint(${Number(point.x)}, ${Number(point.y)})
+        const a = document.activeElement
+        if (el === null || a === null) return false
+        if (!(a === el || el.contains(a) || a.contains(el))) return false
+        const tag = String(a.tagName ?? '')
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || a.isContentEditable === true
+      })()`,
+      returnByValue: true,
+    }).catch(() => null)
+    if (said?.result?.value === true) return true
+    if (Date.now() - started >= capMs) return false
+    await wait(4)
+  }
+}
+
+/**
  * Click a spot, type into it, and optionally clear it first.
  * @param {any} page - sidecar page.
  * @param {{x: number, y: number}} point - where to click.
@@ -1702,7 +1733,9 @@ async function writeAt(page, point, text, options = {}) {
   await page.mouse('mousePressed', { ...point, clickCount: 1 })
   await wait(5 + Math.round(Math.random() * 9))
   await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-  await wait(14 + Math.round(Math.random() * 18))
+  /* Arc, hover, press, release: the page saw a hand. What it needs next is only
+     "is the caret in there yet", so ask instead of waiting out the slowest page. */
+  await focusedAt(page, point, 32)
   if (options.clear === true) await clearFocus(page)
   /* A date or time input never takes keystrokes: noticing that before typing
      spends one round trip instead of fourteen keys and a failed readback. */
@@ -2931,7 +2964,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           await page.mouse('mouseMoved', point)
           await page.mouse('mousePressed', { ...point, clickCount: 1 })
           await page.mouse('mouseReleased', { ...point, clickCount: 1 })
-          await wait(80)
+          await focusedAt(page, point, 80)
         }
         if (args?.clear === true) await clearFocus(page)
         if (await dateLikeFocus(page) !== '') return (await fillDateLike(page, String(args?.text ?? ''))) + cover

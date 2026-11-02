@@ -683,6 +683,21 @@ test('typing asks the box for one paste, and the keys in order only where they a
   assert.deepEqual(log.filter((line) => line.startsWith('keys')), ['keys:hello'])
 })
 
+test('a click stops waiting once the caret is in the field it landed on', async () => {
+  const { focusedAt } = await import('../tools.js?v=1')
+  const asked = []
+  const page = { cdp: { send: async (_method, params) => { asked.push(params.expression); return { result: { value: asked.length > 2 } } } } }
+  assert.equal(await focusedAt(page, { x: 40, y: 96 }, 400), true)
+  assert.equal(asked.length, 3)
+  assert.match(asked[0], /elementFromPoint\(40, 96\)/)
+  /* A page that never puts the caret there still gets its budget, then typing
+     goes ahead exactly as it did before the poll existed. */
+  const blind = { cdp: { send: async () => ({ result: { value: false } }) } }
+  const started = Date.now()
+  assert.equal(await focusedAt(blind, { x: 1, y: 2 }, 20), false)
+  assert.ok(Date.now() - started >= 15)
+})
+
 test('a page that repeats a word down a list costs one line, not thirty', async () => {
   const { renderPage } = await import('../read.js?v=1')
   const controls = Array.from({ length: 30 }, (_, i) => ({ ref: i + 1, kind: 'button', name: 'Add to cart', value: '', view: true }))

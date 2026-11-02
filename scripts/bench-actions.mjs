@@ -97,18 +97,28 @@ const acts = [
     ['type_field', 'browser_type', { text: 'bench', field: 'Name', clear: true }, ''],
     ['type_long', 'browser_type', { text: LONG, field: 'Name', clear: true }, ''],
     ['type_search_long', 'browser_type', { text: LONG, field: 'Search', clear: true }, ''],
+    /* The other way a caller names a field: the number the last read printed.
+       Finding that number costs a read, so the read happens outside the clock. */
+    ['type_ref', 'browser_type', { text: 'bench', clear: true }, '', async () => {
+      await run('browser_eval', { code: poke })
+      const seen = text(await run('browser_view', {}))
+      const hit = /^(\d+) \[[a-z]+\][^\n]*\bName\b/m.exec(seen)
+      if (hit === null) throw new Error(`no number for Name in view: ${seen.slice(0, 200)}`)
+      return { ref: Number(hit[1]) }
+    }],
     ['shot', 'browser_shot', { name: 'bench' }, ''],
     ['eval', 'browser_eval', { code: 'document.title' }, ''],
   ]
-  for (const [label, name, args, before] of acts) {
+  for (const [label, name, args, before, prep] of acts) {
     const samples = []
     const chars = []
     /* Two warm calls: the first press of a code path pays for lazily built
        maps, and a benchmark of steady state should not include them. */
     for (let i = 0; i < reps + 2; i += 1) {
       if (before !== '') await run('browser_eval', { code: before })
+      const prepared = prep === undefined ? {} : await prep()
       const at = Date.now()
-      const said = await run(name, { ...args })
+      const said = await run(name, { ...args, ...prepared })
       const ms = Date.now() - at
       if (i >= 2) {
         samples.push(ms)

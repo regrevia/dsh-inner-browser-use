@@ -1498,3 +1498,26 @@ fixture、同一台机器跑出来，取一次快照的返回文本长度。
 
 复现：`node scripts/bench-actions.mjs --reps 6 --json out.json`（`actions.type_field` / `actions.type_long` /
 `actions.type_search_long` 三行）。
+
+## 点击到开打 — 0.47.20（同机、同夹具、`--reps 8`）
+
+两次运行隔几分钟、同一夹具同一 profile：前一次是旧代码（固定等待），后一次是 `focusedAt()` 轮询焦点。
+
+| 行 | 固定等待 | 轮询焦点 | 变化 |
+| --- | --- | --- | --- |
+| `type_ref`（按 `browser_view` 的编号打 5 字符） | 129 ms | **53 ms** | −59% |
+| `type_field`（按字段名打 5 字符） | 143 ms | **114 ms** | −20% |
+| `type_long`（按字段名打 480 字符） | 140 ms | **118 ms** | −16% |
+| `type_search_long`（搜索框 480 字符） | 268 ms | 267 ms | 持平 |
+| `type`（无目标裸打） | 93 ms | 96 ms | 噪声 |
+
+怎么读：
+
+- `type_ref` 省下的 76 ms 几乎全是原来那句固定 `wait(80)`：页面通常一两帧内就把光标放进字段，剩下的七十多毫秒是白等。
+- 上限和原固定等待的最大值相同（`ref` 80 ms、`field` 32 ms），每 4 ms 问一次，所以「慢页面」的最坏情况不变；唯一的行为差别是**快页面提前返回**。
+- 判定用 `document.elementFromPoint(x, y)` 与 `document.activeElement` 是否同在一棵子树里且那个控件可输入，不是「页面上有焦点」——「点新字段、旧字段还带着光标」不会被误判。
+- `type_search_long` 持平，说明这一轮没碰键的节奏：它贵在开头 8 个键和落值后的 30 ms 等待。
+- `type` 那行的 93→96 ms 是噪声，同一夹具前后两次都在 ±10 ms 内浮动。
+
+复现：`node scripts/bench-actions.mjs --reps 8 --json out.json`，看 `actions.type_ref` / `actions.type_field` /
+`actions.type_long` / `actions.type_search_long`。
