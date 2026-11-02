@@ -11,7 +11,7 @@
 | 版本 / 许可 | 0.47.18 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
 | npm | `dsh-inner-browser-use@0.47.18` |
-| 代码 | 约 12.2k 行（index 986 · sidecar 3912 · tools 4114 · read 2039 · rest 124 · client 1004） |
+| 代码 | 约 12.2k 行（index 986 · sidecar 3961 · tools 4114 · read 2039 · rest 124 · client 1004） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（24 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
 | 验证脚本 | 31 个 `scripts/`，含 live / live-safety / breadth / soak / rest / tabs / doctor / flash-fit / flash-idle / bench-actions |
@@ -44,7 +44,7 @@
 - **内存当策略**：超预算先收 LRU 页签、降码率，再决定休息
 - **唤醒回原页**：**0.39–0.44 s**（竞品恢复是整棵重启 4.6–5.1 s），接着原地址，不是冷启动白页；计时从休息彻底结束开始，人回来不会遇到「关到一半」
 - **冷启动**：五次独立新进程中位 **453 ms**（433–603），同机竞品 713 / 760 / 2185 / 2755 ms；阶段拆解见 `docs/BENCH.md` 的「冷启动拆解」，`DSH_INNER_BROWSER_TRACE=1` 可自查
-- **重复读不花第二遍钱**：同一页、同一形状再读，387 → 49 token（read）/ 344 → 49 token（view），0–2 ms 就答完——竞品每次读都是整页重渲染一遍
+- **重复读不花第二遍钱**：同一页、同一形状再读，429 → 49 token（read）/ 425 → 49 token（view），0–2 ms 就答完——竞品每次读都是整页重渲染一遍
 - **声音可控**：Flash 默认静音（首帧前即静音），右栏音符键实时开关，状态由桥回报、`/sidecar/state` 广播；运行中改声音不用重开游戏
 - **常驻成本**：6 个页签共用 4 个渲染进程（`npm run tabs` 实测 864–921 MB、空闲 0.9%、稳态 0.24%），单页空闲 RSS 551 MB、空闲 CPU 0.03–0.32%；按同机同法测，竞品是 1280–1414 MB 和 36–38%
 - 竞品对照与出处见 `docs/RESOURCES.md` 与 `docs/BENCH.md`（Playwright MCP 有 `--idle-timeout` 但只按时辰、Chrome DevTools MCP 没有、browser-use 只有 `keep_alive`、Stagehand 反而关掉 Chrome 节流）
