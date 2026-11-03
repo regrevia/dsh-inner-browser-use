@@ -100,7 +100,22 @@ Electron 11 的两个真实限制，代码里已按它们写：
 | 声音 | `DSH_FLASH_SOUND=1` 启动成功，运行中 `/sound` 关→开都返回 true，`browser_state` 报 `sound: on` |
 | 熔断 | 全部探针 `inputFails` 0，无 30 秒回退 |
 
-上一版用带缩放的桥接量到 `pressMs 8 / releaseMs 0 / keyMs 3`，那组数字对应的是「坐标已经错了」的管线，作废。仍要说清：这些是**窗口里普通 HTML** 的端到端证明——坐标、按钮位、命名键、文字落地都走同一条桥接，但影片内部（`loop.swf`）的输入回路只验到「事件确实送到渲染进程」，影片自己的响应还要真实游戏复核。
+### 拖动：按住、走过、松开（0.47.25）
+
+点得中之后剩下的问题是拖不动。`browser_drag` 走的是 `mouseMoved` → `mousePressed` → 若干 `mouseMoved` → `mouseReleased`，而桥接以前只在按下那一下声明按键，中间每个移动都到窗口时是 `buttons:0`——插件的输入循环看到手一按就抬起来，进度条、滑块、拖放全部无效。现在桥接记住哪个键按着（`flashButtons` 按下置 1、松开清 0），每个移动都带上，`heldButtons()` 把它翻成窗口认的 `leftButtonDown`，松开时清空。
+
+真实 Electron 11.3.0 窗口里，用与 `browser_drag` 相同的一条序列量到页面事件：
+
+| 事件 | 页面看到 |
+|---|---|
+| 按下前移动 | `pointermove` (40,30) `buttons=0` |
+| 按下 | `mousedown` (300,300) `buttons=1` |
+| 拖动中移动 | `pointermove` (380,340) `buttons=1`、`pointermove` (400,350) `buttons=1` |
+| 松开 | `mouseup` (400,350) `buttons=0` |
+
+窗口按帧合并相邻移动（浏览器本来就这样，真人拖也一样），所以 5 次移动只上屏 2 次 `pointermove`，终点仍落在被要求的 (400,350)；`inputFails:0`，无 30 秒回退。`test/flash-input.test.mjs` 多一条契约测试钉住整段拖动形状（按下带位、途中保持、松开清空、横坐标递进）。
+
+上一版用带缩放的桥接量到 `pressMs 8 / releaseMs 0 / keyMs 3`，那组数字对应的是「坐标已经错了」的管线，作废。仍要说清：这些是**窗口里普通 HTML** 的端到端证明——坐标、按钮位、命名键、文字落地都走同一条桥接，但影片内部（`loop.swf`）的输入回路只验到「事件确实送到渲染进程」，影片自己的响应还要真实游戏复核；拖动同理——事件以「按住」状态进了渲染进程，影片内部对拖动的处理仍需真实游戏复核。
 
 **不能随包分发 Adobe Flash Player**：插件本体留在本机状态目录（`~/.dsh/inner-browser-use/flash/plugin/`），由 `npm run flash:setup` 从本机已有的安装里找/拷，找不到就明说；Ruffle 那条路（MIT/BSD）仍是可分发的那条。
 

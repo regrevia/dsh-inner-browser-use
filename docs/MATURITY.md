@@ -1,4 +1,4 @@
-# 成熟度（0.47.24，2026-11）
+# 成熟度（0.47.25，2026-11）
 
 结论：**可日常用，边界清楚**。能力面已经越过「能开网页」的层次，长跑与资源回收这条链路是本版
 重点并且有实测；短板集中在跨平台验证（只有 macOS 真机跑过）和少数只有真机才能验的交互（Flash、
@@ -8,9 +8,9 @@
 
 | | |
 | --- | --- |
-| 版本 / 许可 | 0.47.24 / MIT |
+| 版本 / 许可 | 0.47.25 / MIT |
 | 仓库 | github.com/regrevia/dsh-inner-browser-use（main 与远端一致） |
-| npm | `dsh-inner-browser-use@0.47.24` |
+| npm | `dsh-inner-browser-use@0.47.25` |
 | 代码 | 约 12.3k 行（index 986 · sidecar 3986 · tools 4185 · read 2039 · rest 124 · client 1004） |
 | 工具 | 39 个 `browser_*`，模型侧零配置 |
 | 文档 | README ×2、ARCHITECTURE、VERIFY（10 节）、BENCH（27 个阶段）、RESOURCES、ARTIFACTS、COMPATIBILITY、FLASH、ROADMAP |
@@ -20,13 +20,13 @@
 
 | 项 | 结果 |
 | --- | --- |
-| 单元测试 | `node --test test/*.test.mjs` → **295 项，0 失败**（普通 shell；应用内还会多跑宿主进程专属的几项） |
+| 单元测试 | `node --test test/*.test.mjs` → **303 项，0 失败**（含 Flash 输入契约 8 项）（普通 shell；应用内还会多跑宿主进程专属的几项） |
 | 资源对照 | 同机同法：冷启动中位 **465–544 ms**（多次采样 434–1079，0.47.3 两次 448 / 471）、空闲 RSS 542–663 MB、空闲 CPU 0.15–1.0%、从静止的休息醒来 **389 ms**；读同一页 2302 字（view）/ 2174 字（read）。竞品 Playwright MCP 冷启动 2755 ms / 1414 MB / 38.1% / 快照 7804 字、Chrome DevTools MCP 2185 ms / 1280 MB / 36.3% / 快照 5381 字（`docs/BENCH.md`、`docs/measure-competitors-2026-11.json`、`docs/measure-tokens-2026-11.json`） |
 | 五家对照 | 同机同法、都只量「不用模型」的那一层（开页/截图/读页/空闲/收尾），竞品为 Playwright MCP 0.0.84、Chrome DevTools MCP 1.12.0、Stagehand 4.3.0、browser-use 0.13.14：空闲 CPU **0.33% 对 36–51%**、空闲 RSS **459–552 MB 对 1265–1672 MB**、读同一页 **2302 字符对 5662–21396**、热页签内部 `start` **20 ms** 对 24–33 ms、截图 48–71 ms 四家打平（`docs/BENCH.md`「五家对照」段、`docs/measure-competitors-2026-11.json`）。没赢的照实写：热页签工具层 42–54 ms 对 browser-use 裸 `new_page` 27 ms；冷启动这一项 0.47.6 时落后（840 ms 对 760/713 ms），0.47.13 五次重测中位 **453 ms** 已反超，幅度有限、随负载浮动（`docs/BENCH.md`「冷启动」段） |
 | 六个页签 | `npm run tabs`（0.47.23 重跑）：812 MB、8 进程 / **4 渲染进程**不变、空闲 **0.6%**（稳态 0.08%）一个核；热浏览器再开一页中位 **45 ms**；第 7 个会话拿到自己的页、树不长（812 → 829 MB、8 → 10 进程、仍 4 渲染进程） |
 | 每页成本 | 1→6 页签、每步 3 次采样取中位：总 RSS **883–1058 MB 来回**、无单调增长，单步差值（−102…+152 MB）大于采样极差（1–94 MB）也大于「每页」本身——页签数不是内存驱动因素，只有渲染进程数（≤4）随页签涨（`docs/BENCH.md`「每页成本」段） |
 | Flash 收尾 | `scripts/check-flash-idle.mjs`：`putAway()` 后 pid、整个进程组、桥端口全消失（`exit 0`）；组杀之后再读一次 `ps -E`，按 `DSH_FLASH_BRIDGE_PORT=<本会话端口>` 收掉逃出进程组的助手（这类助手会继续出声，而主进程已没），扫描 39 ms 且只碰自己的桥；父进程不辞而别时桥自己 2 s 内 `app.exit(0)`（之前抓到过无父、存活 3 h 以上、仍在画的旧桥），首帧前即静音 |
-| Flash 输入 | 真实 Electron 11.3.0 窗口、无缩放桥接：按下+松开 **1.3 ms**（p95 3.3）、一次按键 **1.0 ms**（p95 1.6）、滚轮 **0.4 ms**、`humanType` 每字符 **3.5 ms**；点 (40,30) 命中页面 (40,30)、`buttons` 1 → 0；`ArrowUp` 38 / `PageUp` 33 / `Delete` 46 / `Enter` 13，键入落到焦点框（空 → `ab` → `xxxxxx`）；`DSH_FLASH_SOUND=1` 启动成功、运行中 `/sound` 关开皆 true；全部探针 `inputFails` 0（旧缩放管线报的 `pressMs 8 / keyMs 3` 作废，`docs/FLASH.md`「输入真的进到影片里 — 0.47.24」） |
+| Flash 输入 | 真实 Electron 11.3.0 窗口、无缩放桥接：按下+松开 **1.3 ms**（p95 3.3）、一次按键 **1.0 ms**（p95 1.6）、滚轮 **0.4 ms**、`humanType` 每字符 **3.5 ms**；点 (40,30) 命中页面 (40,30)、`buttons` 1 → 0；`ArrowUp` 38 / `PageUp` 33 / `Delete` 46 / `Enter` 13，键入落到焦点框（空 → `ab` → `xxxxxx`）；`DSH_FLASH_SOUND=1` 启动成功、运行中 `/sound` 关开皆 true；全部探针 `inputFails` 0（旧缩放管线报的 `pressMs 8 / keyMs 3` 作废，拖动：按下 `buttons=1` → 途中 `pointermove` 保持 `buttons=1` → 松开 `buttons=0`，终点精确落在被要求的位置；`docs/FLASH.md`「输入真的进到影片里 — 0.47.24」「拖动：按住、走过、松开 — 0.47.25」） |
 | 长跑 | `npm run soak`（0.47.23 重跑，0.47.22 改完之后）：24 轮 **10.5 s**，内存 **1128 → 1000 MB**（增长 −128 MB，天花板 2500），页数始终 1，3 次休息都归还内存，24 次读全部有答案 |
 | 热页签 | 热浏览器里再开一页（新建页签 + 导航，同一本地 fixture）：**中位 41–45 ms**（41–72）；Playwright MCP 中位 45 ms（40–87）、Chrome DevTools MCP 中位 130 ms（127–136）。与 Playwright 打平、比 DevTools MCP 快 3.2 倍，`npm run tabs` 断言中位 ≤ 150 ms（`docs/BENCH.md` 的「热页签」段） |
 | 打字 | 同夹具同 `--reps 8`：按编号打 **29 ms**（0.47.19 时 129 ms）、按字段名打 5 字符 **79 ms**（143 ms）、480 字符 **84 ms**（140 ms）、搜索框 480 字符 **89 ms**（0.47.21 时 231 ms、0.47.18 时 997 ms；开头 3 个键仍是真敲，页面照样看到 trusted 的逐键 `input`）；点击后按「光标就位」轮询、落值后不再补 `wait(30)`，两次都只少不多（`docs/BENCH.md`「点击到开打 — 0.47.20」「打字收尾 — 0.47.21」） |

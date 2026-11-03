@@ -657,6 +657,9 @@ export class SidecarPage {
     /* Health of the input bridge, so a stalled window costs nothing per event. */
     this.flashInputFails = 0
     this.flashInputPausedUntil = 0
+    /* Which buttons the plugin believes are held: a drag is only a drag to it
+       when the moves in between carry the button. */
+    this.flashButtons = 0
     this.url = ''
     this.lastUrl = ''
     this.crashed = false
@@ -1619,6 +1622,7 @@ export class SidecarPage {
        answering again, and one post is cheap next to guessing wrongly. */
     this.flashInputFails = 0
     this.flashInputPausedUntil = 0
+    this.flashButtons = 0
     if (this.flashBridge !== null && this.casting !== true) {
       this.casting = true
       void this.pollBridge()
@@ -1912,7 +1916,7 @@ export class SidecarPage {
        its distance from the corner. */
     const payload = wheel
       ? { type: kind, x: Math.round(point.x), y: Math.round(point.y), deltaX: Math.round(point.dx ?? 0), deltaY: Math.round(point.dy ?? 0) }
-      : { type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }
+      : { type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', buttons: this.flashButtons, clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }
     if ((await this.flashPost(payload)) !== true) return false
     if (!wheel) this.lastFlashPoint = { x: Math.round(point.x), y: Math.round(point.y) }
     return true
@@ -1921,7 +1925,13 @@ export class SidecarPage {
   async mouse(type, point) {
     await this.revive()
     this.movePointer(point)
-    if (this.flashBridge !== null && (await this.flashInput(type === 'mousePressed' ? 'mouseDown' : type === 'mouseReleased' ? 'mouseUp' : 'mouseMove', point)) === true) return
+    const flashKind = type === 'mousePressed' ? 'mouseDown' : type === 'mouseReleased' ? 'mouseUp' : 'mouseMove'
+    if (this.flashBridge !== null && (await this.flashInput(flashKind, point)) === true) {
+      /* A window needs the held button on every move to see a drag: without it
+         the page gets a pointer that is down and then not, one pixel later. */
+      this.flashButtons = flashKind === 'mouseDown' ? 1 : flashKind === 'mouseUp' ? 0 : this.flashButtons
+      return
+    }
     await this.input('Input.dispatchMouseEvent', {
       type,
       x: point.x,
@@ -2320,6 +2330,7 @@ export class Sidecar {
        the next launch: a browser that starts clean is given a clean chance. */
     this.flashInputFails = 0
     this.flashInputPausedUntil = 0
+    this.flashButtons = 0
     this.headless = true
     this.starting = null
     this.idle = null

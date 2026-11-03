@@ -11,6 +11,18 @@ const { MAX_INPUT_BYTES, keyCodeOf, keyEvents, modifiersOf, planInput } = await 
 
 const post = (body) => planInput({ method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body), alive: true })
 
+test('a drag keeps the button held from press to release', () => {
+  /* A plugin's input loop reads the held button on every move. Without it the
+     page sees a hand that goes down and comes up one pixel later. */
+  const press = post({ type: 'mouseDown', x: 10, y: 10, buttons: 0 }).event
+  const moves = [12, 14, 16].map((x) => post({ type: 'mouseMove', x, y: 12, buttons: 1 }).event)
+  const release = post({ type: 'mouseUp', x: 16, y: 12, buttons: 1 }).event
+  assert.deepEqual(press.modifiers, ['leftButtonDown'])
+  for (const move of moves) assert.deepEqual(move.modifiers, ['leftButtonDown'])
+  assert.deepEqual(release.modifiers, [])
+  assert.deepEqual(moves.map((move) => move.x), [12, 14, 16])
+})
+
 test('the endpoint answers the way the window does', () => {
   assert.equal(planInput({ method: 'GET', body: '{}', alive: true }).status, 405)
   assert.equal(post('x'.repeat(MAX_INPUT_BYTES + 1)).status, 413)
