@@ -5,6 +5,7 @@
    starts. */
 const { app, BrowserWindow, Menu } = require('electron')
 const http = require('http')
+const { MAX_INPUT_BYTES, planInput } = require('../flash-input.cjs')
 const env = process.env
 
 /* How many device pixels one CSS pixel of the game becomes. The pane is drawn
@@ -281,29 +282,19 @@ app.whenReady().then(() => {
       if (request.url.startsWith('/input')) {
         /* Input goes straight into the page instead of round-tripping through
            the debugging protocol: a press arrives in a few milliseconds, and a
-           game that reads its mouse every frame is not left behind. */
+           game that reads its mouse every frame is not left behind. The shape
+           of the event is decided in flash-input.cjs and unit-tested there. */
         try {
-          if (request.method !== 'POST') { response.writeHead(405).end(); return }
           const chunks = []
           let bytes = 0
           for await (const chunk of request) {
             bytes += chunk.length
-            if (bytes > 8192) { response.writeHead(413).end(); return }
+            if (bytes > MAX_INPUT_BYTES) { response.writeHead(413).end(); return }
             chunks.push(chunk)
           }
-          const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-          if (alive(capture) !== true) { response.writeHead(503).end(); return }
-          const event = {}
-          for (const field of ['type', 'x', 'y', 'button', 'clickCount', 'deltaX', 'deltaY', 'keyCode', 'modifiers']) {
-            if (body[field] !== undefined && body[field] !== null) event[field] = body[field]
-          }
-          if (typeof event.type !== 'string' || event.type === '') { response.writeHead(400).end(); return }
-          /* Points arrive in the game's own pixels; the window holds `scale`
-             times as many. */
-          for (const axis of ['x', 'y']) {
-            if (typeof event[axis] === 'number') event[axis] = Math.round(event[axis] * windowScale)
-          }
-          capture.webContents.sendInputEvent(event)
+          const plan = planInput({ method: request.method, body: Buffer.concat(chunks).toString('utf8'), alive: alive(capture) })
+          if (plan.status !== 200) { response.writeHead(plan.status).end(); return }
+          capture.webContents.sendInputEvent(plan.event)
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end('{"ok":true}')
         } catch {

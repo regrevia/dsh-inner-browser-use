@@ -1051,6 +1051,15 @@ async function coverProbe(page, ref) {
  * @param {ReturnType<typeof coverProbe>} probe - what the page said is on top.
  * @returns {string} a sentence, or an empty string.
  */
+/* How long typed keys are going round the watched window instead of into it,
+   if they are: two lost events in a row mean that side needs a rest, and the
+   page keeps working the slower way until it answers again. */
+function flashInputRest(sidecar) {
+  const wait = Number(sidecar?.page?.flashInputPausedUntil ?? 0) - Date.now()
+  if (wait <= 0) return ''
+  return `flash input bypassed ${String(Math.ceil(wait / 1000))} s`
+}
+
 function coverNote(probe, moved) {
   if (probe === null || probe === undefined) return ''
   const what = probe.tag === 'div' || probe.tag === 'section' ? 'an overlay' : `a ${probe.tag}`
@@ -3598,6 +3607,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           `default tab ${String(sidecar.page?.url)}`, // ui-copy-ignore
           state.headless === false ? 'showing a window' : 'no window',
           sidecar.flash ? `Flash-era runtime — ${flashNote().replace('flash runtime: ', '')}` : 'Chrome runtime',
+          /* A window that stopped taking typed keys is why typing suddenly got
+             slower: it is being driven the long way while it is watched. */
+          flashInputRest(sidecar),
           `profile ${String(state.profile)}`,
           `url ${String(state.url)}`,
           `title ${String(state.title)}`,

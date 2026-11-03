@@ -77,6 +77,31 @@ Electron 11 的两个真实限制，代码里已按它们写：
 | 镜像 SSE 节奏 | 15 fps（66 ms 一轮），4 s 收 60 帧，均值 97.8 KB |
 | PC 版判定 | 页面里出现 `EMBED .../weblogin/20171026_1.swf`、登录框是「多多号/手机/邮箱」而不是 H5 的样式 |
 
+### 输入真的进到影片里（0.47.24）
+
+起得来、画得出，不等于能玩：登录要打字，游戏要点击。这一版把 Flash 窗口的输入从头验到页面事件，修掉四个各自独立的问题，每一个都会让「点一下没反应」看起来像影片坏了：
+
+1. **声音一开就起不来。** 宿主进程带着 `ELECTRON_RUN_AS_NODE=1`，Electron 11 把命令行当 Node 参数解析，报 `bad option: --mute-audio` 后直接退出。启动环境里删掉这个变量；声音开关改由 `DSH_FLASH_SOUND` 与运行中的 `/sound` 决定。
+2. **输入模块加载错路径。** `runtime/flash-app/main.js` 在 `flash-app/` 里 `require('./flash-input.cjs')`，文件在上层目录；改 `../flash-input.cjs`，运行时才进得去。
+3. **坐标被缩放两次。** `sendInputEvent` 的坐标就是 DIP，与 CSS 1:1，旧代码又乘了一次窗口缩放：点 40,30 落在 80,60。同时按下事件以 `buttons:0` 到达（拖动、选中都用不了），命名键 `ArrowUp` 以 `key="" keyCode=0` 到达。现在缩放乘法已删除，`mouseDown` 补 `leftButtonDown`，`mouseMove` 带住按下的键，命名键用 accelerator 名映射（`ArrowUp→Up`、`PageUp`、`Enter`、`Space`…）。
+4. **桥接卡住时每个事件赔 1.2 秒。** 请求挂起而不是拒绝时，一次点击要等超时才退回去走 CDP，连续动作会慢到没法用。现在连续 2 次失败就放到 30 秒后再说，期间一个事件最多 1.2 秒，`browser_state` 会写一行 `flash input bypassed N s`，让人知道慢在哪；唤醒浏览器时清零，重新给一次机会。
+
+输入约定抽成纯模块 `runtime/flash-input.cjs`（`planInput` 决定状态码与事件），`runtime/flash-app/main.js` 只负责读 body 和调用 `sendInputEvent`，`test/flash-input.test.mjs` 用 7 项测试钉住 405/413/500/503/400、坐标 1:1、按钮位、滚轮增量、命名键拼写与修饰键。实测（Apple 芯片 + Rosetta，真实 Electron 11.3.0 窗口，页面是自带 HTML）：
+
+| 指标 | 值 |
+|---|---|
+| 按下+松开一次（中位 / p95 / 最大） | 1.3 / 3.3 / 10.6 ms（首个含冷路径） |
+| 一次按键（按下+抬起） | 1.0 / 1.6 / 2.2 ms |
+| 一次滚轮 | 0.4 ms |
+| `humanType` 每字符 | 3.5 ms |
+| 坐标 | 点 (40,30) 命中 (40,30) 的 `#near`，`buttons` 1 → 0 |
+| 键入 | 焦点框里 `value` 从空到 `ab`、到 `xxxxxx`，`input` 事件逐字到达 |
+| 命名键 | `ArrowUp` 38、`PageUp` 33、`Delete` 46（删掉一个字符）、`Enter` 13，`key` 为真名 |
+| 声音 | `DSH_FLASH_SOUND=1` 启动成功，运行中 `/sound` 关→开都返回 true，`browser_state` 报 `sound: on` |
+| 熔断 | 全部探针 `inputFails` 0，无 30 秒回退 |
+
+上一版用带缩放的桥接量到 `pressMs 8 / releaseMs 0 / keyMs 3`，那组数字对应的是「坐标已经错了」的管线，作废。仍要说清：这些是**窗口里普通 HTML** 的端到端证明——坐标、按钮位、命名键、文字落地都走同一条桥接，但影片内部（`loop.swf`）的输入回路只验到「事件确实送到渲染进程」，影片自己的响应还要真实游戏复核。
+
 **不能随包分发 Adobe Flash Player**：插件本体留在本机状态目录（`~/.dsh/inner-browser-use/flash/plugin/`），由 `npm run flash:setup` 从本机已有的安装里找/拷，找不到就明说；Ruffle 那条路（MIT/BSD）仍是可分发的那条。
 
 ## 分阶段

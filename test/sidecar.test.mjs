@@ -905,7 +905,7 @@ test('Flash input goes into the window directly, not through the debugging proto
   const source = readFileSync(new URL('../runtime/flash-app/main.js', import.meta.url), 'utf8')
   const side = readFileSync(new URL('../sidecar.js', import.meta.url), 'utf8')
   assert.match(source, /request\.url\.startsWith\('\/input'\)/)
-  assert.match(source, /webContents\.sendInputEvent\(event\)/)
+  assert.match(source, /webContents\.sendInputEvent\(plan\.event\)/)
   assert.match(side, /async flashInput/)
   assert.match(side, /sendInputEvent|\/input`/)
   for (const path of ['mouseDown', 'mouseUp', 'mouseMove', 'mouseWheel']) {

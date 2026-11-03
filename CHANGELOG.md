@@ -1,3 +1,15 @@
+## 0.47.24 — Flash 窗口里的输入真正进到影片：点中了、字进去了，每个动作 1–4 ms
+
+- **点击坐标错了一倍，已修**。`sendInputEvent` 的坐标本来就是 DIP，与 CSS 1:1，旧桥接又乘了一次窗口缩放：`browser_click` 点 (40,30) 实际落在 (80,60)，游戏里点不中任何东西。缩放乘法删掉后实测点 (40,30) 命中页面 (40,30) 的元素，`buttons` 1 → 0。
+- **按下事件以前到页面时没有按键状态**：普通 `mouseDown` 以 `buttons:0` 到达，拖动与选中都用不了。现在按下补 `leftButtonDown` 修饰位、移动带住已按下的键，拖动路径（`mouseMoved` + `mousePressed` + `mouseReleased`）才成立。
+- **命名键以前是空键**：`ArrowUp` 以 `key="" keyCode=0` 到达页面，翻页、删除、回车都可能变成无操作。现在按 accelerator 名映射（`ArrowUp→Up`、`PageUp`、`Delete`、`Enter`、`Space`…），实测 `ArrowUp` 38、`PageUp` 33、`Delete` 46（真的删掉一个字符）、`Enter` 13，`key` 是真名；普通字符仍以字符本身进 `keyCode`，`keypress` 的 `charCode` 正确（a → 97），`input` 事件逐字到达（输入框从空到 `ab`、到 `xxxxxx`）。
+- **输入契约抽成可测的纯模块**：新增 `runtime/flash-input.cjs`（`planInput` 决定状态码与事件，`MAX_INPUT_BYTES` 8 KB），`runtime/flash-app/main.js` 只负责读 body 与 `sendInputEvent`；`test/flash-input.test.mjs` 7 项钉住 405/413/500/503/400、坐标 1:1、按钮位、滚轮增量、命名键拼写、修饰键位。`test/sidecar.test.mjs` 的源码断言跟着改成 `sendInputEvent(plan.event)`。
+- **桥接卡住时不再每个事件赔 1.2 秒**：请求挂起（而不是拒连）时，一次点击要等超时才退回 CDP，连续动作慢到没法用。现在连续 2 次失败就把桥接放 30 秒假，期间一个事件最多 1.2 秒、动作走 CDP；`browser_state` 多一行 `flash input bypassed N s` 让人知道慢在哪，唤醒浏览器时清零重新给机会。实测全部探针 `inputFails` 0、无回退。
+- **声音一开就起不来的真 bug 修了**：宿主进程带着 `ELECTRON_RUN_AS_NODE=1`，Electron 11 把命令行当 Node 参数，报 `bad option: --mute-audio` 直接退出。启动环境删掉该变量后，`DSH_FLASH_SOUND=1` 启动成功（`alive` true、页面可读、键入 `ab` 落地），运行中 `/sound` 关→开都返回 true。
+- **`main.js` 加载输入模块的路径错了**：`require('./flash-input.cjs')` 在 `flash-app/` 里找不到上层文件，改 `../flash-input.cjs`。
+- **实测延迟（真实 Electron 11.3.0 窗口，无缩放）**：按下+松开中位 **1.3 ms**（p95 3.3、最大 10.6，首个含冷路径）、一次按键 **1.0 ms**（p95 1.6）、一次滚轮 **0.4 ms**、`humanType` 每字符 **3.5 ms**。0.47.23 之前那组 `pressMs 8 / keyMs 3` 是带错误缩放的管线，作废。
+- **诚实边界**：以上是窗口里普通 HTML 的端到端证明——坐标、按钮位、命名键、文字落地走同一条桥接；影片内部（`loop.swf`）只验到「事件确实送进渲染进程」，游戏自身响应仍需真实游戏复核。`docs/FLASH.md` 新增一节写清四条根因与上表。
+
 ## 0.47.23 — 大页上也量了一遍：指纹 1.9 ms，读被预算截住
 
 - **大页成本的第一个实测**：新基准 `scripts/bench-pagesize.mjs` 现发 1.6 KB / 43 KB / 344 KB 三档页面（344 KB / 2 514 个节点），同一套 headless Chrome、每行 7 次取中位。结果：**读 5–6 ms / 6 090 字**（`browser_read` 的预算截断，比 43 KB 的页只多 3–4 ms）、**view 14 ms / 2 820 字**、点 27–28 ms；0.47.22 加的 djb2 校验和在这张页上 **0.3 → 2.2 ms（+1.9）**，宿主 `pageMark` 整趟 **2.9 ms、仍是一次往返**。闸门钉住「校验和 ≤ 3 ms、整趟 < 10 ms」，8 项检查全过。

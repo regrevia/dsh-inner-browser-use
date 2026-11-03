@@ -11,6 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GapClock, MAX_REST_MS, MIN_REST_MS, decide } from './rest.js'
+import flashInputPlanner from './runtime/flash-input.cjs'
 import { readyFlash } from './runtime/flash-setup.mjs'
 import { readSealed, tightenDir, writeSealed } from './vault.js'
 import { isMedia, kindOf } from './media.js?m=1'
@@ -111,6 +112,13 @@ const MAX_TABS = 6
 /* A tab nobody has watched or driven for this long is closed even under the cap:
    six chats can stay open for days, and each one is a renderer's worth of memory. */
 const TAB_IDLE_MS = 10 * 60_000
+/* A Flash window answers input in milliseconds or not at all: a post that has
+   not answered in this long is treated as a loss, not as a slow success. */
+const INPUT_TIMEOUT_MS = 1200
+/* After two lost posts the bridge is left alone for this long. A stopped window
+   is still a running process: asking it again on every keystroke would cost the
+   whole timeout each time, and the debugging protocol can carry input instead. */
+const INPUT_REST_MS = 30_000
 /* Ceiling for the process tree, renderers included. macOS reports each
    renderer's RSS as if it were private, so an ordinary one-page browser reads
    as ~1.4 GB; the number is comparable across runs, which is what a limit
@@ -646,6 +654,9 @@ export class SidecarPage {
        moves there first, because a Flash button ignores a press it never saw
        the hand arrive for. */
     this.lastFlashPoint = null
+    /* Health of the input bridge, so a stalled window costs nothing per event. */
+    this.flashInputFails = 0
+    this.flashInputPausedUntil = 0
     this.url = ''
     this.lastUrl = ''
     this.crashed = false
@@ -1604,6 +1615,10 @@ export class SidecarPage {
   async revive() {
     if (this.frozen !== true) return
     await this.thaw()
+    /* A wake is a fresh start for the picture and for input: the window may be
+       answering again, and one post is cheap next to guessing wrongly. */
+    this.flashInputFails = 0
+    this.flashInputPausedUntil = 0
     if (this.flashBridge !== null && this.casting !== true) {
       this.casting = true
       void this.pollBridge()
@@ -1847,32 +1862,60 @@ export class SidecarPage {
    * @param {{x: number, y: number, button?: string, clickCount?: number}} point - CSS pixels.
    * @returns {Promise<boolean>} true when the window took it.
    */
+  /**
+   * One POST to the Flash window's input bridge, with a breaker.
+   * @param {object} payload - one event, as `flash-input.cjs` shapes it.
+   * @returns {Promise<boolean>} true when the window answered `ok`.
+   */
+  async flashPost(payload) {
+    if (this.flashBridge === null) return false
+    if (Date.now() < this.flashInputPausedUntil) return false
+    const started = Date.now()
+    try {
+      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(INPUT_TIMEOUT_MS),
+      })
+      const said = await reply.json().catch(() => null)
+      if (said?.ok !== true) throw new Error('silent')
+      this.inputMs = Date.now() - started
+      this.flashInputFails = 0
+      return true
+    } catch {
+      this.inputMs = Date.now() - started
+      this.flashInputFails += 1
+      if (this.flashInputFails >= 2) {
+        this.flashInputFails = 0
+        this.flashInputPausedUntil = Date.now() + INPUT_REST_MS
+      }
+      return false
+    }
+  }
+
+  /**
+   * Hands one mouse event to the Flash window directly, skipping the debugging
+   * protocol on the way in.
+   * @param {string} kind - mouseDown, mouseUp or mouseMove.
+   * @param {{x: number, y: number, button?: string, clickCount?: number}} point - CSS pixels.
+   * @returns {Promise<boolean>} true when the window took it.
+   */
   async flashInput(kind, point) {
     const last = this.lastFlashPoint
     if (kind === 'mouseDown' && (last === null || Math.abs(last.x - point.x) > 1 || Math.abs(last.y - point.y) > 1)) {
       await this.flashInput('mouseMove', point)
     }
     const wheel = kind === 'mouseWheel'
-    const started = Date.now()
-    try {
-      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(wheel
-          ? { type: kind, x: Math.round(point.x), y: Math.round(point.y), deltaX: Math.round(point.dx ?? 0), deltaY: Math.round(point.dy ?? 0) }
-          : { type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }),
-        signal: AbortSignal.timeout(1200),
-      })
-      this.inputMs = Date.now() - started
-      // The window answers 200 with `{ok}`: a 200 alone only says the bridge is up.
-      const said = await reply.json().catch(() => null)
-      if (said?.ok !== true) return false
-      if (!wheel) this.lastFlashPoint = { x: Math.round(point.x), y: Math.round(point.y) }
-      return true
-    } catch {
-      this.inputMs = Date.now() - started
-      return false
-    }
+    /* The point is already in the page's own pixels: the window takes them as
+       they are, and scaling them here is what used to put every press at twice
+       its distance from the corner. */
+    const payload = wheel
+      ? { type: kind, x: Math.round(point.x), y: Math.round(point.y), deltaX: Math.round(point.dx ?? 0), deltaY: Math.round(point.dy ?? 0) }
+      : { type: kind, x: Math.round(point.x), y: Math.round(point.y), button: point.button ?? 'left', clickCount: point.clickCount ?? (kind === 'mouseMove' ? 0 : 1) }
+    if ((await this.flashPost(payload)) !== true) return false
+    if (!wheel) this.lastFlashPoint = { x: Math.round(point.x), y: Math.round(point.y) }
+    return true
   }
 
   async mouse(type, point) {
@@ -1917,39 +1960,17 @@ export class SidecarPage {
    */
   async flashKey(type, key) {
     await this.revive()
-    const bits = Number(key.modifiers ?? 0)
-    const modifiers = []
-    if ((bits & 1) !== 0) modifiers.push('alt')
-    if ((bits & 2) !== 0) modifiers.push('control')
-    if ((bits & 4) !== 0) modifiers.push('meta')
-    if ((bits & 8) !== 0) modifiers.push('shift')
-    const char = String(key.text ?? '')
-    const named = String(key.key ?? '')
-    const code = char !== '' ? char : named
-    const events = [{ type, keyCode: code, modifiers }]
-    if (type === 'keyDown' && char !== '') events.push({ type: 'char', keyCode: char, modifiers })
-    try {
-      for (const event of events) {
-        const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/input`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(event),
-          signal: AbortSignal.timeout(1200),
-        })
-        const said = await reply.json().catch(() => null)
-        if (said?.ok !== true) return false
-      }
-      return true
-    } catch {
-      return false
+    /* The shape of a keystroke is decided in flash-input.cjs, where it is
+       tested: a named key spelled the way a page spells it (`ArrowUp`) is not a
+       key code the window knows, and used to arrive as an empty key. */
+    const events = flashInputPlanner.keyEvents({ type, key: key?.key, text: key?.text, modifiers: key?.modifiers })
+    if (events.length === 0) return false
+    for (const event of events) {
+      if ((await this.flashPost(event)) !== true) return false
     }
+    return true
   }
 
-  /**
-   * @param {string} type - `keyDown` or `keyUp`.
-   * @param {{key: string, code?: string, keyCode?: number, text?: string, modifiers?: number}} key - one key.
-   * @returns {Promise<void>} resolves when Chrome took it.
-   */
   async key(type, key) {
     await this.revive()
     this.touched = Date.now()
@@ -2295,6 +2316,10 @@ export class Sidecar {
     this.flashCheck = null
     /* The Flash app serves its own frames; the screencast cannot see a plugin. */
     this.flashBridge = null
+    /* A rest taken because the window stopped answering is not carried into
+       the next launch: a browser that starts clean is given a clean chance. */
+    this.flashInputFails = 0
+    this.flashInputPausedUntil = 0
     this.headless = true
     this.starting = null
     this.idle = null
