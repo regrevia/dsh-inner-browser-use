@@ -661,7 +661,8 @@ test('a read says when the answer is a picture', async () => {
 test('typing asks the box for one paste, and the keys in order only where they are needed', async () => {
   const { typeInto } = await import('../tools.js?v=1')
   const log = []
-  const box = { quickType: async (text) => { log.push(`paste:${text}`); return true }, humanType: async (text) => { log.push(`keys:${text}`) }, insertText: async (text) => { log.push(`paste:${text}`) } }
+  const pace = []
+  const box = { quickType: async (text) => { log.push(`paste:${text}`); return true }, humanType: async (text, options) => { log.push(`keys:${text}`); pace.push(options ?? null) }, insertText: async (text) => { log.push(`paste:${text}`) } }
   await typeInto(box, 'hello', 'Note')
   assert.deepEqual(log, ['paste:hello'])
   /* A box that reacts as you type gets the keys, so its list really appears. */
@@ -674,7 +675,12 @@ test('typing asks the box for one paste, and the keys in order only where they a
   const paragraph = `${'title:'.repeat(1)}${'a long query that filters a list as it is typed '.repeat(4)}`
   assert.ok(paragraph.length > 160)
   await typeInto(box, paragraph, 'Filter')
-  assert.deepEqual(log, [`keys:${paragraph.slice(0, 8)}`, `paste:${paragraph.slice(8)}`])
+  assert.deepEqual(log, [`keys:${paragraph.slice(0, 3)}`, `paste:${paragraph.slice(3)}`])
+  /* Three opening keys are enough to drive a list; they are also pressed at
+     round-trip speed, because the paste behind them is not a human either. */
+  assert.deepEqual(pace.at(-1), { burst: 3, min: 2, max: 5 })
+  /* Nothing is lost between the keys and the paste. */
+  assert.equal(log[0].slice('keys:'.length).length + log[1].slice('paste:'.length).length, paragraph.length)
   /* When the paste does not take, the keys are the fallback. */
   log.length = 0
   box.quickType = async (text) => { log.push(`paste:${text}`); return false }
@@ -753,6 +759,32 @@ test('a second read of the same page is one line', async () => {
   assert.equal(sameRead(one, { ...one, url: 'https://example.test/next' }), false)
   assert.equal(sameRead(one, { ...one, controls: [{ ref: 2, kind: 'button', name: 'Go' }] }), false)
   assert.equal(sameRead(undefined, one), false)
+})
+
+test('a page that swaps a word for one of the same size is not mistaken for a page that stood still', async () => {
+  const { pageMark } = await import('../tools.js?v=1')
+  const { runInNewContext } = await import('node:vm')
+  /* The mark is computed by the page, so the fake page runs the expression it
+     is handed against a document with the same shape Chrome gives it. */
+  const marked = async (words) => {
+    const document = {
+      title: 'Desk',
+      body: { innerText: words },
+      querySelectorAll: () => ({ length: 3 }),
+    }
+    const page = {
+      url: 'https://example.test/desk',
+      cdp: {
+        send: async (method, params) => ({ result: { value: runInNewContext(String(params.expression), { document, location: { href: 'https://example.test/desk' } }) } }),
+      },
+    }
+    return pageMark(page)
+  }
+  const ready = await marked('status ready')
+  assert.equal(await marked('status ready'), ready)
+  assert.notEqual(await marked('status error'), ready)
+  assert.equal(ready.split('|').length, 5)
+  assert.match(ready, /\|12\|3\|\d+$/)
 })
 
 test('there is a tool that asks a chat in the page and brings the answer back', async () => {

@@ -80,15 +80,17 @@ try {
      has — that is the cheap path, and it is measured on its own. A page that
      did move pays for the words, so those reps poke the page first, outside the
      timed span. */
-  const poke = 'document.getElementById("tick").textContent = String(Date.now()) + Math.random()'
+  /* Every poke is longer than the one before: a page that moved must never be
+     mistaken for a page that stood still, whatever the clock says. */
+  const poke = 'window.__poke = (window.__poke || 0) + 1; document.getElementById("tick").textContent = "x".repeat(20 + window.__poke)'
   /* 480 characters: a paragraph someone would paste into a form. */
 const LONG = 'The sidecar keeps one page per chat and gives it back when the column closes. '.repeat(6).slice(0, 480)
 
 const acts = [
     ['read', 'browser_read', {}, poke],
     ['read_repeat', 'browser_read', {}, ''],
-    ['view', 'browser_view', {}, poke],
-    ['view_repeat', 'browser_view', {}, ''],
+    ['view', 'browser_view', { mode: 'text' }, poke],
+    ['view_repeat', 'browser_view', { mode: 'text' }, ''],
     ['click', 'browser_click', { text: 'Go' }, ''],
     ['type', 'browser_type', { text: 'bench' }, ''],
     /* The same contract every competitor's type tool has: a field is given, so
@@ -101,7 +103,7 @@ const acts = [
        Finding that number costs a read, so the read happens outside the clock. */
     ['type_ref', 'browser_type', { text: 'bench', clear: true }, '', async () => {
       await run('browser_eval', { code: poke })
-      const seen = text(await run('browser_view', {}))
+      const seen = text(await run('browser_view', { mode: 'text' }))
       const hit = /^(\d+) \[[a-z]+\][^\n]*\bName\b/m.exec(seen)
       if (hit === null) throw new Error(`no number for Name in view: ${seen.slice(0, 200)}`)
       return { ref: Number(hit[1]) }
@@ -130,9 +132,17 @@ const acts = [
         await run('browser_eval', { code: 'document.getElementById("q").value = ""; document.getElementById("n").value = ""' })
       }
     }
-    const row = { ...spread(samples), chars: round(chars.reduce((sum, one) => sum + one, 0) / chars.length) }
+    /* The mean alone hides a blend: a row that answers "the text is the one
+       above" on some reps and reads the page on others still has a plausible
+       mean. The smallest rep is the one that says what the row really returns. */
+    const row = {
+      ...spread(samples),
+      chars: round(chars.reduce((sum, one) => sum + one, 0) / chars.length),
+      charsMin: Math.min(...chars),
+      charsMax: Math.max(...chars),
+    }
     timed.push([label, row])
-    console.log(`${label.padEnd(11)} median ${String(row.median).padStart(4)} ms  p95 ${String(row.p95).padStart(4)} ms  max ${String(row.max).padStart(4)} ms  ${String(row.chars).padStart(6)} chars`)
+    console.log(`${label.padEnd(11)} median ${String(row.median).padStart(4)} ms  p95 ${String(row.p95).padStart(4)} ms  max ${String(row.max).padStart(4)} ms  ${String(row.chars).padStart(6)} chars (${String(row.charsMin)}–${String(row.charsMax)})`)
   }
   report.actions = Object.fromEntries(timed)
 
@@ -156,6 +166,8 @@ const acts = [
   }
   for (const [label, row] of timed) check(row.median < 500 && row.max < 2000, `${label} at the tool surface: median ${String(row.median)} ms, max ${String(row.max)} ms`)
   check(readChars > 200, `a read returns ${String(readChars)} chars`)
+  /* Every read rep must be the page, not "the text is the one above". */
+  check(report.actions.read.charsMin > 200, `every read rep returns page text (smallest ${String(report.actions.read.charsMin)} chars)`)
   check(report.tokens.read < 1500, `a read costs about ${String(report.tokens.read)} tokens`)
   check(report.tokens.read_repeat < report.tokens.read, `a repeat read costs ${String(report.tokens.read_repeat)} tokens instead of ${String(report.tokens.read)}`)
   check(report.tokens.view_repeat < report.tokens.view, `a repeat view costs ${String(report.tokens.view_repeat)} tokens instead of ${String(report.tokens.view)}`)

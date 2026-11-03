@@ -1298,7 +1298,17 @@ export async function pageMark(page) {
   if (page?.flashBridge !== null && page?.flashBridge !== undefined) {
     return `flash:${Number(page.seq ?? 0)}:${Number(page.lastFrameAt ?? 0)}`
   }
-  const said = await evaluate(page, `(() => { const body = document.body; return String(document.title || '').slice(0, 80) + '|' + String(location.href).slice(0, 200) + '|' + (body ? body.innerText.length : 0) + '|' + document.querySelectorAll('*').length })()`).catch(() => undefined)
+  const said = await evaluate(page, `(() => {
+  const body = document.body
+  const words = body ? String(body.innerText ?? '') : ''
+  /* A page that swaps one word for another of the same size — "ready" for
+     "error" — must not pass for a page that did not move: the length alone
+     cannot tell them apart, so a cheap checksum of the words goes with it. */
+  let sum = 5381
+  for (let i = 0; i < words.length; i += 1) sum = ((sum * 33) ^ words.charCodeAt(i)) >>> 0
+  const nodes = document.querySelectorAll('*').length
+  return String(document.title || '').slice(0, 80) + '|' + String(location.href).slice(0, 200) + '|' + words.length + '|' + nodes + '|' + String(sum)
+})()`).catch(() => undefined)
   return typeof said === 'string' ? said : ''
 }
 
@@ -1675,11 +1685,12 @@ export async function typeInto(page, text, hint = '') {
      pressing five hundred more keys only makes the caller wait. */
   const letters = Array.from(words)
   if (live && letters.length > 160) {
-    await page.humanType(letters.slice(0, 8).join(''))
+    const lead = letters.slice(0, 3)
+    await page.humanType(lead.join(''), { burst: 3, min: 2, max: 5 })
     /* The opening keys have driven whatever filters the list; the rest is
        committed in one go and confirmed the same way. Same reason as above:
        no dwell — the reply or the next step is the frame. */
-    await page.insertText(letters.slice(8).join(''))
+    await page.insertText(letters.slice(lead.length).join(''))
     return
   }
   await page.humanType(words)
