@@ -683,6 +683,20 @@ test('typing asks the box for one paste, and the keys in order only where they a
   assert.deepEqual(log.filter((line) => line.startsWith('keys')), ['keys:hello'])
 })
 
+test('typing hands back the moment the box confirms the paste', async () => {
+  const { typeInto } = await import('../tools.js?v=1')
+  const box = { quickType: async () => true, humanType: async () => {}, insertText: async () => {} }
+  const oneGo = Date.now()
+  await typeInto(box, 'hello', 'Note')
+  assert.ok(Date.now() - oneGo < 20, `paste path held the call ${Date.now() - oneGo} ms`)
+  /* The filter-as-you-type path commits the rest in one paste; it also owes no
+     fixed dwell, because the caller reads the page next. */
+  const paragraph = 'a long query that filters a list as it is typed '.repeat(4)
+  const committed = Date.now()
+  await typeInto(box, paragraph, 'Filter')
+  assert.ok(Date.now() - committed < 20, `commit path held the call ${Date.now() - committed} ms`)
+})
+
 test('a click stops waiting once the caret is in the field it landed on', async () => {
   const { focusedAt } = await import('../tools.js?v=1')
   const asked = []

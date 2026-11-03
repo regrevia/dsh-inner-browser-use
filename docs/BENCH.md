@@ -1521,3 +1521,25 @@ fixture、同一台机器跑出来，取一次快照的返回文本长度。
 
 复现：`node scripts/bench-actions.mjs --reps 8 --json out.json`，看 `actions.type_ref` / `actions.type_field` /
 `actions.type_long` / `actions.type_search_long`。
+
+## 打字收尾 — 0.47.21（同机、同夹具、`--reps 8`）
+
+上一轮把「点击后等光标」换成了条件轮询，这一轮把「落值后再等 30 ms」整段去掉。两次运行同夹具同 profile，前一次保留两处 `wait(30)`：
+
+| 行 | 有 30 ms 静默（0.47.20） | 无静默（0.47.21） | 变化 |
+| --- | --- | --- | --- |
+| `type_field`（按字段名打 5 字符） | 114 ms | **78 ms** | −32% |
+| `type_long`（按字段名打 480 字符） | 118 ms | **84 ms** | −29% |
+| `type_search_long`（搜索框 480 字符） | 267 ms | **231 ms** | −13% |
+| `type_ref`（按编号打 5 字符） | 53 ms | **29 ms** | −45% |
+| `type`（无目标裸打） | 96 ms | 99 ms | 噪声 |
+
+和 0.47.19 的固定等待基线并排看，这条链两轮共省：`type_ref` 129 → 29 ms、`type_field` 143 → 78 ms、`type_long` 140 → 84 ms、`type_search_long` 268 → 231 ms。
+
+为什么可以直接去掉：
+
+- `quickType()` 返回 `true` 的条件就是**回读到了新值**，DOM 已经改完；`Input.insertText` 触发的 `input` 监听在返回前就跑完了。
+- 两个调用方本来就接着读页面：`browser_type` 走 `settle()`（两次读页、至少 12 ms 间隔、页面 `complete` 才放行），`browser_do` 走下一步。回复本身是一行「typed into …」，不含页面快照，所以这段静默从来没有让回复更新鲜。
+- 延迟反应夹具（`queueMicrotask` / `requestAnimationFrame` 写回显、`requestAnimationFrame` 改大写）验证：去掉静默后大写读回 3/3 正确，随后的 `browser_view` 两个回显都在，同一夹具打字中位 115 → 83 ms。
+
+复现：`node scripts/bench-actions.mjs --reps 8 --json out.json`。

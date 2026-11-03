@@ -1663,8 +1663,11 @@ export async function typeInto(page, text, hint = '') {
   const words = String(text)
   if (words === '') return
   const live = /search|query|lookup|filter|搜索|筛选|查询/i.test(hint)
+  /* The paste is in and the readback inside quickType already saw it. Nothing
+     waits here: every caller goes straight on to settle() or to the next step,
+     so a fixed pause would be paid by every keystroke path for a frame the
+     caller is about to spend anyway. */
   if (!live && (await page.quickType(words)) === true) {
-    await wait(30)
     return
   }
   /* A search box filters on what it is given, so its opening keys stay real;
@@ -1673,8 +1676,10 @@ export async function typeInto(page, text, hint = '') {
   const letters = Array.from(words)
   if (live && letters.length > 160) {
     await page.humanType(letters.slice(0, 8).join(''))
+    /* The opening keys have driven whatever filters the list; the rest is
+       committed in one go and confirmed the same way. Same reason as above:
+       no dwell — the reply or the next step is the frame. */
     await page.insertText(letters.slice(8).join(''))
-    await wait(30)
     return
   }
   await page.humanType(words)
