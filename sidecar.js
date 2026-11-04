@@ -654,6 +654,10 @@ export class SidecarPage {
        moves there first, because a Flash button ignores a press it never saw
        the hand arrive for. */
     this.lastFlashPoint = null
+    /* Whether the last input really reached the page: a click swallowed by a
+       socket that had already died is why a pane looked alive and did nothing. */
+    this.inputFails = 0
+    this.inputFault = ''
     /* Health of the input bridge, so a stalled window costs nothing per event. */
     this.flashInputFails = 0
     this.flashInputPausedUntil = 0
@@ -1257,6 +1261,9 @@ export class SidecarPage {
           url: this.url, // ui-copy-ignore
           title: this.title, // ui-copy-ignore
           pointer: this.pointer, // ui-copy-ignore
+          /* Which tab this picture came from: the pane sends it back with every
+             click, so input cannot land on a page the person never saw. */
+          target: this.targetId, // ui-copy-ignore
           /* Whether the person is driving right now: the pane hides the agent's
              arrow while they are, so two cursors never claim the same hand. */
           hold: this.holdOf(), // ui-copy-ignore
@@ -1489,6 +1496,23 @@ export class SidecarPage {
     return false
   }
 
+  /**
+   * Tells every pane watching this tab that the browser took it away: the pane
+   * keeps its last picture, so without the note it looks like a page that
+   * stopped taking clicks.
+   * @returns {void}
+   */
+  markGone() {
+    const note = { type: 'gone' } // ui-copy-ignore
+    for (const sink of this.frames ?? []) {
+      try {
+        sink(note)
+      } catch {
+        /* a viewer that already closed takes no note */
+      }
+    }
+  }
+
   /** Feeds one picture to every viewer of this browser. @param {string} data - base64 JPEG. */
   publish(data) {
     if (data === '' || this.frames.size === 0) return
@@ -1506,6 +1530,7 @@ export class SidecarPage {
       title: this.title, // ui-copy-ignore
       hold: this.holdOf(), // ui-copy-ignore
       pointer: this.pointer, // ui-copy-ignore
+      target: this.targetId, // ui-copy-ignore
     }
     for (const sink of this.frames) {
       try {
@@ -1833,10 +1858,23 @@ export class SidecarPage {
    * @returns {Promise<void>} done when sent or when the wait gives up.
    */
   async input(method, params) {
+    const started = Date.now()
+    let took = false
     await Promise.race([
-      this.cdp.send(method, params).catch(() => {}),
+      this.cdp.send(method, params).then(() => {
+        took = true
+      }).catch(() => {}),
       new Promise((resolve) => setTimeout(resolve, 1200)),
     ])
+    this.inputMs = Date.now() - started
+    if (took === true) {
+      this.inputFails = 0
+      this.inputFault = ''
+    } else {
+      this.inputFails += 1
+      this.inputFault = String(method)
+    }
+    return took
   }
 
   async hover(point) {
@@ -1930,9 +1968,9 @@ export class SidecarPage {
       /* A window needs the held button on every move to see a drag: without it
          the page gets a pointer that is down and then not, one pixel later. */
       this.flashButtons = flashKind === 'mouseDown' ? 1 : flashKind === 'mouseUp' ? 0 : this.flashButtons
-      return
+      return true
     }
-    await this.input('Input.dispatchMouseEvent', {
+    return await this.input('Input.dispatchMouseEvent', {
       type,
       x: point.x,
       y: point.y,
@@ -1950,8 +1988,8 @@ export class SidecarPage {
   async wheel(args) {
     await this.revive()
     this.movePointer(args)
-    if (this.flashBridge !== null && (await this.flashInput('mouseWheel', args)) === true) return
-    await this.input('Input.dispatchMouseEvent', {
+    if (this.flashBridge !== null && (await this.flashInput('mouseWheel', args)) === true) return true
+    return await this.input('Input.dispatchMouseEvent', {
       type: 'mouseWheel', // ui-copy-ignore
       x: args.x, // ui-copy-ignore
       y: args.y, // ui-copy-ignore
@@ -1984,9 +2022,9 @@ export class SidecarPage {
   async key(type, key) {
     await this.revive()
     this.touched = Date.now()
-    if (this.flashBridge !== null && (await this.flashKey(type, key)) === true) return
+    if (this.flashBridge !== null && (await this.flashKey(type, key)) === true) return true
     const virtual = key.keyCode ?? key.windowsVirtualKeyCode ?? 0
-    await this.input('Input.dispatchKeyEvent', {
+    return await this.input('Input.dispatchKeyEvent', {
       type: key.autoRepeat === true && type === 'keyDown' ? 'keyDown' : type,
       ...(key.autoRepeat === true && type === 'keyDown' ? { autoRepeat: true } : {}),
       key: key.key, // ui-copy-ignore
@@ -2142,7 +2180,7 @@ export class SidecarPage {
   /** @param {string} text - any unicode, including Chinese. @returns {Promise<void>} resolves when typed. */
   async insertText(text) {
     this.touched = Date.now()
-    await this.input('Input.insertText', { text })
+    return await this.input('Input.insertText', { text })
   }
 
   /** @returns {Promise<string>} a full-size screenshot as base64 PNG. */
@@ -2636,6 +2674,11 @@ export class Sidecar {
          idle tab tells it: without the note the pane keeps showing its last
          frame and looks like a page that stopped taking clicks. */
       ;(this.expired ??= new Map()).set(String(row.id), Date.now())
+      try {
+        row.page.markGone()
+      } catch {
+        /* a tab with no pane needs no note */
+      }
       await row.page.stopCast().catch(() => {})
       await fetch(`http://127.0.0.1:${String(row.port)}/json/close/${row.target}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
     }
@@ -2665,6 +2708,11 @@ export class Sidecar {
       /* The column is told the tab is gone, so a chat coming back to the front
          does not re-expand a pane for a page that already went away. */
       ;(this.expired ??= new Map()).set(String(id), Date.now())
+      try {
+        page.markGone()
+      } catch {
+        /* a tab with no pane needs no note */
+      }
       await page.stopCast().catch(() => {})
       await fetch(`http://127.0.0.1:${String(page.port)}/json/close/${target}`, { signal: AbortSignal.timeout(800) }).catch(() => {}) // ui-copy-ignore
       this.note(`closed an idle tab — its address is kept for the chat`)

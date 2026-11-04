@@ -1,3 +1,20 @@
+## 镜像输入失灵：四个根因与修复后的实测 — 0.47.26
+
+同机、一次新进程、headless Chrome、本地页面，脚本一次性（`node /tmp/r21-live.mjs`，
+含 `DSH_INNER_BROWSER_STATE_DIR` 隔离）：
+
+| 项 | 结果 |
+| --- | --- |
+| 帧与页签的对应 | 帧 `target` = 页面 `targetId`（`287A04652252B75C6B56933059F4187E`） |
+| socket 必抛时一次点击 | 返回 `false`，`inputFails 1`，`inputFault "Input.dispatchMouseEvent"` |
+| socket 永不回答时一次点击 | **1201 ms** 返回 `false`（旧实现会一直等或谎报成功） |
+| 恢复后一次点击 | 返回 `true`，`inputFails 0`、`inputFault ""` |
+| `markGone()` 之后 | 同一个流的观看者当场收到 **1 条** `{type:'gone'}`，没有新帧 |
+| 主套件 | `npm test` → **308 项 / 0 失败** |
+
+四个根因：输入失败被吞成 `200`；回收不通知、只在 ≤5 秒采样里出现；重建页签后第一下
+点击打到新页；右栏客户端从不读回话。四条都改了，且都留了回归测试。
+
 ## Flash 镜像（0.47.9，单页，隔离状态目录）
 
 同一台机器、同一个登录页（`account.100bt.com`，12:7 固定画面）、同一套脚本

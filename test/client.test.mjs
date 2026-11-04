@@ -415,3 +415,14 @@ test('a column whose page was reclaimed says so instead of going mute', () => {
   /* One check every few beats, not a retry ladder. */
   assert.ok(source.includes('if (beats % 5 === 1) dropExpired()'))
 })
+
+test('a gone note marks the pane instead of waiting for a frame that never comes', () => {
+  /* Reclaim used to be sampled on a five second cadence, so a pane could sit
+     on a dead picture and quietly drop every click. The note arrives on the
+     stream the pane already holds. */
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes("message.type === 'gone'"), 'the pane hears the note on its own stream')
+  assert.ok(source.includes("answer?.status === 403"), 'a chat that lost the mirror is told so, not left silent')
+  assert.ok(source.includes("answer?.retry === true"), 'a refused act is tried once more before the pane gives up')
+  assert.ok(source.includes('side.lost') && source.includes('side.held'), 'and the pane says which of the two happened')
+})

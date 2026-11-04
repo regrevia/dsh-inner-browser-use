@@ -973,3 +973,17 @@ test('a mirror ask never leaks to a different chat, however similar the ids look
   bridge.attach('session-bbbb-3333', quiet)
   assert.equal(quiet.frames.length, 0)
 })
+
+test('the input route answers honestly when the tab moved or refused the act', () => {
+  /* A click that silently reports success is the same to the person as a
+     mirror that stopped answering: both leave a picture that ignores them.
+     These are the two answers that turn that into something visible. */
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.ok(source.includes("body?.target"), 'the pane names the tab its picture came from')
+  assert.ok(
+    source.includes("json(409, { ok: false, stale: true, target: String(page.targetId ?? '') })"),
+    'a click for a tab the browser reclaimed is refused, and names the tab that took its place',
+  )
+  assert.ok(source.includes("json(503, { ok: false, retry: true, text: 'the page did not take that' })"), 'a page that never took the act says so once, after one look again')
+  assert.ok(source.includes('page.answeredAt = 0'), 'and the look again is a real one, not the cached answer')
+})

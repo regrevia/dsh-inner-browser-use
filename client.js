@@ -45,6 +45,8 @@ window.__ModuleLoader__.load({
         'side.type': '输入文字',
         'side.soundOn': '关闭游戏声音',
         'side.soundOff': '开启游戏声音',
+        'side.lost': '页面没有回应这一次操作，点一下恢复',
+        'side.held': '另一个会话正在使用浏览器，点一下拿回',
       },
       en: {
         'side.label': 'Background browser',
@@ -61,6 +63,8 @@ window.__ModuleLoader__.load({
         'side.type': 'Type here',
         'side.soundOn': 'Mute the game',
         'side.soundOff': 'Unmute the game',
+        'side.lost': 'The page did not take that — click to bring it back',
+        'side.held': 'Another chat is using the browser — click to take it back',
       },
     }
     const LANG = /^zh/i.test(typeof navigator === 'undefined' ? '' : navigator.language ?? '') ? 'zh' : 'en'
@@ -88,6 +92,7 @@ window.__ModuleLoader__.load({
       '.dshib-side-back{border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}',
       '.dshib-side-back:hover{background:var(--dsw-alias-bg-subtle)}',
       '.dshib-side-sound[data-on="0"]{opacity:.45}.dshib-side-gone{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:0;border-radius:8px;background:var(--dsw-alias-bg-elevated,rgba(0,0,0,.72));color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:8px 14px;cursor:pointer}',
+      '.dshib-side-dead{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);border:0;border-radius:8px;background:var(--dsw-alias-bg-elevated,rgba(0,0,0,.72));color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer;z-index:3}',
     ].join('')
 
     return {
@@ -551,6 +556,12 @@ window.__ModuleLoader__.load({
          so the switch shows what the window reports instead of guessing. */
       const [sound, setSound] = React.useState({ flash: false, on: false })
       const drawnAt = React.useRef(0)
+      /* Which page the picture came from: every action names it, so a tab that
+         was replaced between two frames cannot take a click meant for another. */
+      const target = React.useRef('')
+      /* An action the page did not take says so here, in the pane's own words,
+         instead of looking like one that landed. */
+      const [dead, setDead] = React.useState('')
 
       React.useEffect(() => {
         if (mine !== true) return undefined
@@ -570,6 +581,8 @@ window.__ModuleLoader__.load({
           pending = null
           setFrame(message)
           setGone(false)
+          setDead('')
+          if (typeof message.target === 'string') target.current = message.target
           setPtr(message.pointer ?? null)
           if (Number.isFinite(Number(message.w)) && Number.isFinite(Number(message.h))) {
             setView({ w: Number(message.w), h: Number(message.h) })
@@ -600,11 +613,16 @@ window.__ModuleLoader__.load({
           if (message.type === 'hello') {
             setPhase('live')
             drawnAt.current = Date.now()
+            if (typeof message.target === 'string') target.current = message.target
             setUrl(String(message.url ?? ''))
             setBack(String(message.chat?.remembered ?? ''))
           } else if (message.type === 'failed') {
             setPhase('failed')
             setNote(String(message.text ?? ''))
+          } else if (message.type === 'gone') {
+            /* The browser took this chat's page back: the last frame stays as a
+               backdrop, and the overlay offers the one click that reopens it. */
+            setGone(true)
           } else if (message.type === 'pointer') {
             /* The arrow is drawn the moment the agent moves, not when the page
                next repaints: it stays honest even on a page that is idle. */
@@ -742,6 +760,68 @@ window.__ModuleLoader__.load({
           body: JSON.stringify({ ...body, session: who }),
         }).catch(() => {})
       }
+      /* Input is the one request whose failure the person can see: a click that
+         went nowhere must not look like one that landed. Every answer comes back
+         here instead of being dropped, and the ones that mean something are said
+         on the pane. */
+      const input = (body) => {
+        const send = () => fetch(`${ROUTE}/sidecar/input`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...body, session: who, ...(target.current === '' ? {} : { target: target.current }) }),
+        })
+          .then((reply) => reply.json().catch(() => ({})).then((answer) => ({ ...answer, status: reply.status })))
+          .catch(() => ({ ok: false, offline: true }))
+        return send().then((answer) => {
+          if (answer?.ok === true) {
+            setDead('')
+            return answer
+          }
+          /* The picture and the page it looks like are no longer the same page:
+             the action went nowhere, so say so and offer the way back. */
+          if (answer?.stale === true) {
+            setDead('')
+            setGone(true)
+            return answer
+          }
+          /* Worth one more try, then the page is gone rather than slow. */
+          if (answer?.retry === true) {
+            return new Promise((resolve) => setTimeout(resolve, 180))
+              .then(send)
+              .then((again) => {
+                if (again?.ok === true) {
+                  setDead('')
+                  return again
+                }
+                setDead('')
+                setGone(true)
+                return again
+              })
+          }
+          if (answer?.status === 403) {
+            setDead('side.held')
+            return answer
+          }
+          setDead('side.lost')
+          return answer
+        })
+      }
+      /* One way back from a page this pane no longer drives: reopen where this
+         chat was. The reclaimed overlay and the status line share it. */
+      const restore = () => {
+        setGone(false)
+        setDead('')
+        void fetch(`${ROUTE}/sidecar/open`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ session: who, url: back !== '' ? back : url }),
+        })
+          .then((reply) => (reply.ok === true ? reply.json() : null))
+          .then((info) => {
+            if (info?.ok === true) setAttempt((n) => n + 1)
+          })
+          .catch(() => {})
+      }
       /* The page names the cursor it would show under the hand; the black
          arrow is the agent's, so it keeps its own shape and colour. */
       const CURSORS = ['default', 'text', 'pointer', 'crosshair', 'move', 'grab', 'grabbing', 'not-allowed', 'help', 'wait', 'progress', 'ew-resize', 'ns-resize', 'nwse-resize', 'nesw-resize', 'col-resize', 'row-resize', 'zoom-in', 'zoom-out']
@@ -752,16 +832,10 @@ window.__ModuleLoader__.load({
       }
       const hover = (point) => {
         /* A page that cannot say keeps the plain cursor: nothing here throws. */
-        void fetch(`${ROUTE}/sidecar/input`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ kind: 'hover', x: point.x, y: point.y, session: who }),
-        })
-          .then((reply) => (reply.ok === true ? reply.json() : null))
+        void input({ kind: 'hover', x: point.x, y: point.y })
           .then((answer) => {
             if (answer !== null && typeof answer.cursor === 'string') setCursor(answer.cursor)
           })
-          .catch(() => {})
       }
       const toView = (event) => {
         const el = stage.current
@@ -779,7 +853,7 @@ window.__ModuleLoader__.load({
       const sendText = (value) => {
         const text = String(value ?? '')
         if (text === '') return
-        post('/sidecar/input', { kind: 'text', text })
+        void input({ kind: 'text', text })
       }
       const clearIme = () => {
         const field = ime.current
@@ -796,7 +870,7 @@ window.__ModuleLoader__.load({
           const el = stageRef.current
           if (el !== null && typeof el.focus === 'function') el.focus()
         }
-        post('/sidecar/input', { kind: 'click', x: point.x, y: point.y })
+        void input({ kind: 'click', x: point.x, y: point.y })
       }
       const movedAt = React.useRef(0)
       const onPointerMove = (event) => {
@@ -815,7 +889,7 @@ window.__ModuleLoader__.load({
         touched()
         event.preventDefault()
         const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
-        post('/sidecar/input', { kind: 'wheel', x: point.x, y: point.y, dx: event.deltaX, dy: event.deltaY })
+        void input({ kind: 'wheel', x: point.x, y: point.y, dx: event.deltaX, dy: event.deltaY })
       }
       /* The page's keys are the person's keys: shift makes a capital, a
          shortcut stays a shortcut so Ctrl+V pastes and Ctrl+A selects, and the
@@ -845,13 +919,13 @@ window.__ModuleLoader__.load({
         if (event.isComposing === true) return
         if (event.key == null || MODIFIER_KEYS.includes(event.key) === true) return
         event.preventDefault()
-        post('/sidecar/input', event.repeat === true ? { ...keyBody(event, true), repeat: true } : keyBody(event, true))
+        void input(event.repeat === true ? { ...keyBody(event, true), repeat: true } : keyBody(event, true))
       }
       const onKeyUp = (event) => {
         if (event.isComposing === true) return
         if (event.key == null || MODIFIER_KEYS.includes(event.key) === true) return
         event.preventDefault()
-        post('/sidecar/input', keyBody(event, false))
+        void input(keyBody(event, false))
       }
       const goto = () => {
         const address = String(draft ?? '').trim()
@@ -927,19 +1001,7 @@ window.__ModuleLoader__.load({
             ? h('button', {
               className: 'dshib-side-gone',
               type: 'button', // ui-copy-ignore
-              onClick: () => { // ui-copy-ignore
-                setGone(false)
-                void fetch(`${ROUTE}/sidecar/open`, { // ui-copy-ignore
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({ session: who, url: back !== '' ? back : url }), // ui-copy-ignore
-                })
-                  .then((reply) => (reply.ok === true ? reply.json() : null))
-                  .then((info) => {
-                    if (info?.ok === true) setAttempt((n) => n + 1)
-                  })
-                  .catch(() => {})
-              },
+              onClick: restore, // ui-copy-ignore
             }, L('side.gone'))
             : frame === null && back !== ''
             ? h('button', {
@@ -996,7 +1058,12 @@ window.__ModuleLoader__.load({
             src: SIDE_POINTER, // ui-copy-ignore
             alt: '', // ui-copy-ignore
             style: spot === null ? undefined : { left: `${spot.x + pointer.x * spot.scale}px`, top: `${spot.y + pointer.y * spot.scale}px` },
-          })))
+          }),
+          dead === '' ? null : h('button', {
+            className: 'dshib-side-dead',
+            type: 'button', // ui-copy-ignore
+            onClick: restore,
+          }, L(dead))))
     }
   },
 })

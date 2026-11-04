@@ -1108,3 +1108,56 @@ test('a launch waits for the browser that is still going out', async () => {
   sidecar.pageSocket = async () => { throw new Error(`socket asked for after the old browser was gone: ${String(gone)}`) }
   await assert.rejects(() => sidecar.launch('about:blank'), /socket asked for after the old browser was gone: true/)
 })
+
+test('an input the page never took says so instead of looking delivered', async () => {
+  /* The socket can die while the pane still shows a picture. Swallowing that
+     made a click vanish with a 200 behind it, which reads as a mirror that
+     stopped answering. */
+  const refusing = {
+    sent: [],
+    send: async () => {
+      throw new Error('socket closed')
+    },
+    on: () => {},
+    close: () => {},
+  }
+  const page = new SidecarPage(refusing, 'default')
+  const took = await page.input('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 2 })
+  assert.equal(took, false, 'a refused event is reported as not taken')
+  assert.equal(page.inputFails, 1, 'and counted, so the next action knows to look again')
+  assert.equal(page.inputFault, 'Input.dispatchMouseEvent')
+
+  const cdp = fakeCdp()
+  page.cdp = cdp
+  const again = await page.input('Input.insertText', { text: 'x' })
+  assert.equal(again, true, 'a page that answers is a page that took it')
+  assert.equal(page.inputFails, 0, 'health is cleared by the next good event')
+  assert.equal(page.inputFault, '')
+})
+
+test('a page the browser took away tells every viewer, and a closed pane costs nothing', () => {
+  const page = new SidecarPage(fakeCdp(), 'default')
+  const seen = []
+  page.frames.add((/** @type {any} */ message) => seen.push(message))
+  page.frames.add(() => {
+    throw new Error('this pane is already gone')
+  })
+  const after = []
+  page.frames.add((/** @type {any} */ message) => after.push(message))
+
+  page.markGone()
+
+  assert.deepEqual(seen, [{ type: 'gone' }], 'the pane hears it at once, not on the next frame')
+  assert.deepEqual(after, [{ type: 'gone' }], 'a closed pane does not stop the others')
+})
+
+test('every picture names its tab and every reclaim names the viewer', () => {
+  const source = readFileSync(new URL('../sidecar.js', import.meta.url), 'utf8')
+  assert.equal(
+    source.split('target: this.targetId').length - 1,
+    2,
+    'both places that build a frame carry the tab it came from',
+  )
+  assert.equal(source.split('row.page.markGone()').length - 1, 1, 'trimming a tab tells its pane')
+  assert.equal(source.split('page.markGone()').length - 1, 2, 'reaping an idle tab tells its pane too')
+})

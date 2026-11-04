@@ -712,32 +712,63 @@ export function apply(ctx) {
       const actor = acting(body)
       if (actor === '') return
       try {
-        const page = await sidecar.ensure({ session: actor })
         const kind = String(body.kind ?? '')
         const x = Number(body.x ?? 0)
         const y = Number(body.y ?? 0)
+        /* The pane sends back the tab its picture came from: if the browser
+           reclaimed that tab, the click must not land on the page that took its
+           place, or a person clicks one screen and acts on another. */
+        const asked = String(body?.target ?? '')
+        let page = await sidecar.ensure({ session: actor })
+        if (asked !== '' && String(page.targetId ?? '') !== asked) {
+          json(409, { ok: false, stale: true, target: String(page.targetId ?? '') })
+          return
+        }
         let cursor
-        if (kind === 'hover') cursor = await page.hover({ x, y })
-        else if (kind === 'move') await page.mouse('mouseMoved', { x, y })
-        else if (kind === 'click') {
-          const clickCount = body.double === true ? 2 : 1
-          await page.mouse('mouseMoved', { x, y })
-          await page.mouse('mousePressed', { x, y, clickCount })
-          await page.mouse('mouseReleased', { x, y, clickCount })
-          if (body.double === true) {
-            await page.mouse('mousePressed', { x, y, clickCount: 2 })
-            await page.mouse('mouseReleased', { x, y, clickCount: 2 })
+        const act = async () => {
+          if (kind === 'hover') {
+            cursor = await page.hover({ x, y })
+            return true
           }
-        } else if (kind === 'wheel') await page.wheel({ x, y, dx: Number(body.dx ?? 0), dy: Number(body.dy ?? 0) })
-        else if (kind === 'text') await page.insertText(String(body.text ?? ''))
-        else if (kind === 'key') {
-          const key = keyEvent(body)
-          if (key.down !== true) await page.key('keyUp', { ...key.spec, text: undefined })
-          else if (key.repeat === true) {
-            /* Typing repeat: the page draws a held key as a fresh keydown. */
-            await page.key('keyDown', { ...key.spec, autoRepeat: true })
-          } else if (key.command === null) await page.key('keyDown', key.spec)
-          else await page.key('keyDown', { ...key.spec, text: undefined, commands: [key.command] })
+          if (kind === 'move') return (await page.mouse('mouseMoved', { x, y })) !== false
+          if (kind === 'click') {
+            const clickCount = body.double === true ? 2 : 1
+            const moved = await page.mouse('mouseMoved', { x, y })
+            const pressed = await page.mouse('mousePressed', { x, y, clickCount })
+            const released = await page.mouse('mouseReleased', { x, y, clickCount })
+            if (body.double === true) {
+              await page.mouse('mousePressed', { x, y, clickCount: 2 })
+              await page.mouse('mouseReleased', { x, y, clickCount: 2 })
+            }
+            return moved !== false && pressed !== false && released !== false
+          }
+          if (kind === 'wheel') return (await page.wheel({ x, y, dx: Number(body.dx ?? 0), dy: Number(body.dy ?? 0) })) !== false
+          if (kind === 'text') return (await page.insertText(String(body.text ?? ''))) !== false
+          if (kind === 'key') {
+            const key = keyEvent(body)
+            if (key.down !== true) return (await page.key('keyUp', { ...key.spec, text: undefined })) !== false
+            if (key.repeat === true) {
+              /* Typing repeat: the page draws a held key as a fresh keydown. */
+              return (await page.key('keyDown', { ...key.spec, autoRepeat: true })) !== false
+            }
+            if (key.command === null) return (await page.key('keyDown', key.spec)) !== false
+            return (await page.key('keyDown', { ...key.spec, text: undefined, commands: [key.command] })) !== false
+          }
+          return true
+        }
+        let took = await act()
+        if (took !== true) {
+          /* The page answered nothing. A dead socket is the one failure worth
+             putting right before telling the person anything: look the page up
+             again (that is also what replaces a tab that went away) and repeat
+             the same event once. */
+          page.answeredAt = 0
+          page = await sidecar.ensure({ session: actor })
+          took = await act()
+        }
+        if (took !== true) {
+          json(503, { ok: false, retry: true, text: 'the page did not take that' })
+          return
         }
         /* Hovering and moving are looking, not acting: only real input counts as
            the person taking the page. */
