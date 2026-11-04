@@ -887,6 +887,18 @@ window.__ModuleLoader__.load({
         if (field !== null && typeof field.value === 'string') field.value = ''
       }
       const stageRef = stage
+      /* A press is a press and not a click: the page keeps the button down
+         until the hand lets go, so a slider drags, text selects and a canvas
+         draws. Two presses close together are the two halves of a double. */
+      const pressed = React.useRef(null)
+      const lastPress = React.useRef(0)
+      const release = (event) => {
+        const held = pressed.current
+        if (held === null) return
+        pressed.current = null
+        const point = event === null || event === undefined ? held : toView(event) ?? held
+        void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })
+      }
       const onPointerDown = (event) => {
         touched()
         const point = toView(event)
@@ -897,7 +909,21 @@ window.__ModuleLoader__.load({
           const el = stageRef.current
           if (el !== null && typeof el.focus === 'function') el.focus()
         }
-        void input({ kind: 'click', ...point })
+        const now = Date.now()
+        const clicks = now - lastPress.current < 400 && pressed.current === null ? 2 : 1
+        lastPress.current = now
+        pressed.current = { ...point, clicks }
+        /* Capture keeps the moves coming once the hand leaves the picture, so a
+           drag that starts on the page still ends on the page. */
+        const el = event.currentTarget
+        if (el !== null && el !== undefined && typeof el.setPointerCapture === 'function' && event.pointerId !== undefined) {
+          try {
+            el.setPointerCapture(event.pointerId)
+          } catch {
+            /* a pane that cannot capture still drags inside its own picture */
+          }
+        }
+        void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })
       }
       const movedAt = React.useRef(0)
       const moving = React.useRef(null)
@@ -924,7 +950,9 @@ window.__ModuleLoader__.load({
         /* Hover is part of a page: menus open under the hand, so the movement
            also reaches the browser. It never moves the agent's arrow, which
            only follows what the agent itself did. */
-        moving.current = point
+        /* While the button is down every move carries it: a move without it is
+           a hover, and a slider that only ever sees hovers never moves. */
+        moving.current = pressed.current === null ? point : { ...point, pressed: true }
         queue()
       }
       const onWheel = (event) => {
@@ -933,6 +961,21 @@ window.__ModuleLoader__.load({
         const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
         void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })
       }
+      /* A pane that is hidden or loses focus may never see the release; the
+         button is let go anyway, or the page keeps dragging after the hand. */
+      React.useEffect(() => {
+        const letGo = () => release(null)
+        const hidden = () => {
+          if (document.hidden === true) letGo()
+        }
+        window.addEventListener('blur', letGo)
+        document.addEventListener('visibilitychange', hidden)
+        return () => {
+          window.removeEventListener('blur', letGo)
+          document.removeEventListener('visibilitychange', hidden)
+          letGo()
+        }
+      }, [])
       /* The page's keys are the person's keys: shift makes a capital, a
          shortcut stays a shortcut so Ctrl+V pastes and Ctrl+A selects, and the
          key that goes down also goes up so a game can hold it. */
@@ -1034,6 +1077,8 @@ window.__ModuleLoader__.load({
           ref: stage,
           tabIndex: 0,
           onPointerDown,
+          onPointerUp: release,
+          onPointerCancel: release,
           onPointerMove,
           onWheel,
           onKeyDown,

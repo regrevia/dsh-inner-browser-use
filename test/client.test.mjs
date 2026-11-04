@@ -431,7 +431,8 @@ test('a click names a fraction of the picture, not a pixel of a stale one', () =
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.ok(source.includes('const fx = Math.min(1, Math.max(0, px / wide))'))
   assert.ok(source.includes('return { fx, fy, fw, fh, x: Math.round(fx * (fw - 1)), y: Math.round(fy * (fh - 1)) }'))
-  assert.ok(source.includes("void input({ kind: 'click', ...point })"))
+  assert.ok(source.includes("void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })"))
+  assert.ok(source.includes("void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })"))
   assert.ok(source.includes("void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })"))
   /* A point outside the picture is not the picture's edge, and no picture is
      not a scale of one: both refuse instead of guessing. */
@@ -439,12 +440,28 @@ test('a click names a fraction of the picture, not a pixel of a stale one', () =
   assert.ok(source.includes('const spot = pointer === null ? null : picture()'))
 })
 
+test('a press stays down until the hand lets go, so a drag can drag', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The picture used to send a click on the way down, which is press and
+     release on one point: nothing on the page could be dragged. */
+  assert.ok(!source.includes("void input({ kind: 'click', ...point })"), 'a press is not a click')
+  assert.ok(source.includes("void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })"))
+  assert.ok(source.includes('pressed.current = { ...point, clicks }'), 'the point of the press is remembered')
+  assert.ok(source.includes("const point = event === null || event === undefined ? held : toView(event) ?? held"), 'the release goes where the hand let go, or where the press was')
+  assert.ok(source.includes('onPointerUp: release'), 'letting go ends the press')
+  assert.ok(source.includes('onPointerCancel: release'), 'a cancelled pointer ends the press too')
+  assert.ok(source.includes("window.addEventListener('blur', letGo)"), 'a pane that loses focus does not keep the button down')
+  assert.ok(source.includes("document.addEventListener('visibilitychange', hidden)"), 'nor one that is hidden')
+  assert.ok(source.includes('el.setPointerCapture(event.pointerId)'), 'a drag that leaves the picture still ends on the page')
+  assert.ok(source.includes('clickCount: clicks'), 'the second press of a double says it is the second')
+})
+
 test('a fast hand cannot queue stale hover positions', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* One ask in the air at a time; the newest point replaces the waiting one. */
   assert.ok(source.includes('const queue = () => {'))
   assert.ok(source.includes('if (moveClock.current !== 0) return'))
-  assert.ok(source.includes('moving.current = point'))
+  assert.ok(source.includes('moving.current = pressed.current === null ? point : { ...point, pressed: true }'))
   assert.ok(source.includes('if (moving.current !== null) queue()'))
   assert.ok(source.includes('const wait = Math.max(0, 40 - (Date.now() - movedAt.current))'))
 })

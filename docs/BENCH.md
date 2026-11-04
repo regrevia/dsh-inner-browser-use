@@ -1,3 +1,33 @@
+## 按住拖：协议里有没有 press-move-release — 0.47.28
+
+同机、新进程、headless Chrome、本地页面，两条探针都走插件自己的代码：
+
+- `/tmp/r23-drag.mjs`：直接驱动 `SidecarPage` 的鼠标原语，量「同一段轨迹能不能拖动」。
+- `/tmp/r23-route.mjs`：起 `apply()` 注册的真实路由，用 HTTP 发 `{session, kind, fx, fy, fw, fh}`，
+  页面把 `mousedown/mousemove/mouseup` 自己的坐标与 `buttons` 回报给本地 fixture 服务——
+  这一条不含右栏 UI，但含协议解码、`pointAt()` 换算与 CDP 派发。
+
+### 滑块拖动（页面 900×900，轨迹 x 210→880，25 步，每步 30 ms）
+
+| 路径 | 按下 | 按住中的移动 | 拇指位移 | 页面判定 |
+| --- | --- | --- | --- | --- |
+| 旧：`click` 后跟 `hover` | 1 次 | `buttons:1` 的移动 **0** 条 | **0 px** | `dragged: false` |
+| 新：`down` → 25 次 `pressed` 移动 → `up` | 1 次 | **25** 条 | **660 px** | `dragged: true` |
+
+### 真实路由 + 页面自报（900×900 视口）
+
+| 量 | 结果 |
+| --- | --- |
+| `hover` 50% 落点 | `(450, 450)`，与理想值一致 |
+| 按下 | `(108, 324)`，`buttons: 1` |
+| 按住中的移动 | 5 条，全部 `buttons: 1`，总位移 **539 px** |
+| 抬起 | `(647, 324)`，`buttons: 0` |
+| 松开后的移动里仍带着按住的 | **0** 条 |
+| 没有按下过的移动里带按钮的（幽灵按住） | **0** 条 |
+
+判据：`pressHeldAcrossMoves: true`、`releasedAtEnd: true`、`routeDrags: true`。
+旧路径的 `mouseMoved` 一律发 `buttons: 1`，这一列在新路径上是 0。
+
 ## 镜像偏移：按比例传点，实测落点 — 0.47.27
 
 同机、一次新进程、headless Chrome、本地页面（`node /tmp/r22-frac.mjs`，含

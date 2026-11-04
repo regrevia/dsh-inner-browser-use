@@ -742,9 +742,14 @@ export function apply(ctx) {
         let cursor
         const act = async () => {
           if (kind === 'hover') {
-            cursor = await page.hover({ x, y })
+            cursor = await page.hover({ x, y, pressed: body.pressed === true })
             return true
           }
+          /* A press and its release are their own events: the page sees a
+             button that stays down across the moves in between, which is what
+             makes a drag a drag and a double click a double click. */
+          if (kind === 'down') return (await page.mouse('mousePressed', { x, y, button: 'left', clickCount: Number(body.clickCount ?? 1) })) !== false
+          if (kind === 'up') return (await page.mouse('mouseReleased', { x, y, button: 'left', clickCount: Number(body.clickCount ?? 1) })) !== false
           if (kind === 'move') return (await page.mouse('mouseMoved', { x, y })) !== false
           if (kind === 'click') {
             const clickCount = body.double === true ? 2 : 1

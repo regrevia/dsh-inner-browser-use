@@ -100,6 +100,37 @@ test('a hand on the page hovers it without moving the agent arrow', async () => 
   assert.equal(typeof cursor, 'string', 'a page that cannot answer still yields a usable cursor')
 })
 
+test('a drag carries the held button on every move between press and release', async () => {
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+
+  await page.mouse('mousePressed', { x: 10, y: 20 })
+  await page.hover({ x: 30, y: 40 })
+  await page.mouse('mouseMoved', { x: 50, y: 60 })
+  await page.mouse('mouseReleased', { x: 70, y: 80 })
+
+  const events = cdp.sent.filter(([method]) => method === 'Input.dispatchMouseEvent').map(([, params]) => params)
+  const moves = events.filter((event) => event.type === 'mouseMoved')
+  assert.equal(moves.length, 2)
+  assert.equal(moves[0].buttons, 1, 'a hover while the button is down belongs to the drag')
+  assert.equal(moves[0].button, 'none', 'the held button is not the one that moved')
+  assert.equal(moves[1].buttons, 1)
+  assert.equal(events.find((event) => event.type === 'mousePressed').buttons, 1)
+  assert.equal(events.find((event) => event.type === 'mouseReleased').buttons, 0)
+  assert.equal(page.buttons, 0, 'the release leaves nothing held')
+})
+
+test('a move no press preceded holds no button, so a page never sees a phantom drag', async () => {
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+
+  await page.mouse('mouseMoved', { x: 5, y: 6 })
+  const moved = cdp.sent.find(([method]) => method === 'Input.dispatchMouseEvent')[1]
+  assert.equal(moved.type, 'mouseMoved')
+  assert.equal(moved.buttons, 0, 'this used to arrive with the button held before any press')
+  assert.equal(page.buttons, 0)
+})
+
 test('a viewer that goes away stops receiving pointer messages', async () => {
   const cdp = fakeCdp()
   const page = new SidecarPage(cdp, 'default')

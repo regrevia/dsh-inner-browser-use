@@ -664,6 +664,8 @@ export class SidecarPage {
     /* Which buttons the plugin believes are held: a drag is only a drag to it
        when the moves in between carry the button. */
     this.flashButtons = 0
+    /* Which button the page believes is held: a move in a drag carries it. */
+    this.buttons = 0
     this.url = ''
     this.lastUrl = ''
     this.crashed = false
@@ -1879,13 +1881,19 @@ export class SidecarPage {
 
   async hover(point) {
     await this.revive()
-    if (this.flashBridge !== null && (await this.flashInput('mouseMove', point)) === true) return this.cursorAt(point)
+    /* A hand with the button down is dragging, not hovering: every move must
+       say so, or the page reads the press as a click that ended instantly. */
+    const held = point?.pressed === true || (this.buttons & 1) === 1
+    if (this.flashBridge !== null) {
+      this.flashButtons = held ? 1 : 0
+      if ((await this.flashInput('mouseMove', point)) === true) return this.cursorAt(point)
+    }
     await this.input('Input.dispatchMouseEvent', {
       type: 'mouseMoved', // ui-copy-ignore
       x: Math.round(point.x),
       y: Math.round(point.y),
       button: 'none', // ui-copy-ignore
-      buttons: 0, // ui-copy-ignore
+      buttons: held ? 1 : 0, // ui-copy-ignore
       clickCount: 0,
       pointerType: 'mouse',
     })
@@ -1970,15 +1978,22 @@ export class SidecarPage {
       this.flashButtons = flashKind === 'mouseDown' ? 1 : flashKind === 'mouseUp' ? 0 : this.flashButtons
       return true
     }
-    return await this.input('Input.dispatchMouseEvent', {
-      type,
-      x: point.x,
-      y: point.y,
-      button: point.button ?? 'left',
-      buttons: type === 'mouseReleased' ? 0 : 1,
+    const button = point.button ?? 'left'
+    const held = type === 'mousePressed' ? 1 : type === 'mouseReleased' ? 0 : this.buttons
+    /* A protocol event, not a screen: the keys below are the browser's names. */
+    const took = await this.input('Input.dispatchMouseEvent', { // ui-copy-ignore
+      type, // ui-copy-ignore
+      x: point.x, // ui-copy-ignore
+      y: point.y, // ui-copy-ignore
+      button: type === 'mouseMoved' ? 'none' : button, // ui-copy-ignore
+      buttons: held, // ui-copy-ignore
       clickCount: point.clickCount ?? (type === 'mouseMoved' ? 0 : 1),
       pointerType: 'mouse',
     })
+    /* The held button is remembered between events, so a move in the middle of
+       a drag is dispatched with it even when the pane did not say so. */
+    if (took === true) this.buttons = held
+    return took
   }
 
   /**
