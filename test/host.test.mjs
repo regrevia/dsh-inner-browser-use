@@ -987,3 +987,14 @@ test('the input route answers honestly when the tab moved or refused the act', (
   assert.ok(source.includes("json(503, { ok: false, retry: true, text: 'the page did not take that' })"), 'a page that never took the act says so once, after one look again')
   assert.ok(source.includes('page.answeredAt = 0'), 'and the look again is a real one, not the cached answer')
 })
+
+test('a click named as a fraction of the picture is resolved against the picture it came from', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  /* The pane sends where on the picture the hand was, plus the shape that
+     picture was drawn at. The host owns the page's real size, so the turn from
+     fraction to pixel happens here, once, against a known shape. */
+  assert.ok(source.includes("import { pointAt } from './pixels.js?v=1'"))
+  assert.ok(source.includes('const at = pointAt('))
+  assert.ok(source.includes('Number(body.fw ?? 0) > 0 ? Number(body.fw) : Number(sidecar?.view?.width ?? 0)'))
+  assert.ok(source.includes('if (at !== null) {'))
+})

@@ -24,6 +24,7 @@
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { pointAt } from './pixels.js?v=1'
 import { Sidecar } from './sidecar.js?v=1'
 
 /** Where the mirror's owner is remembered across a reload: the column should not go dark because the code reloaded. */
@@ -713,8 +714,22 @@ export function apply(ctx) {
       if (actor === '') return
       try {
         const kind = String(body.kind ?? '')
-        const x = Number(body.x ?? 0)
-        const y = Number(body.y ?? 0)
+        let x = Number(body.x ?? 0)
+        let y = Number(body.y ?? 0)
+        /* A point can arrive as a fraction of the picture with the shape that
+           picture was drawn at. It is turned into page pixels here, against that
+           same shape, so a pane that is a moment behind the page still names the
+           spot the person pointed at. */
+        const at = pointAt(
+          Number(body.fx ?? NaN),
+          Number(body.fy ?? NaN),
+          Number(body.fw ?? 0) > 0 ? Number(body.fw) : Number(sidecar?.view?.width ?? 0),
+          Number(body.fh ?? 0) > 0 ? Number(body.fh) : Number(sidecar?.view?.height ?? 0),
+        )
+        if (at !== null) {
+          x = at.x
+          y = at.y
+        }
         /* The pane sends back the tab its picture came from: if the browser
            reclaimed that tab, the click must not land on the page that took its
            place, or a person clicks one screen and acts on another. */

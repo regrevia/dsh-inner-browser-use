@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
       '.dshib-side-ime{position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;resize:none;overflow:hidden;opacity:0;pointer-events:none}',
       /* The black arrow is the agent's pointer, not the person's cursor: both are
          on screen at once, and moving the mouse never takes the arrow over. */
-      '.dshib-side-ptr{position:absolute;width:20px;height:20px;pointer-events:none;z-index:2;transform:translate(-2px,-2px);transition:left 60ms linear,top 60ms linear;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}',
+      '.dshib-side-ptr{position:absolute;width:20px;height:20px;pointer-events:none;z-index:2;transform:translate(-2px,-2px);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}',
       '.dshib-side-note{font-size:12px;color:var(--dsw-alias-label-tertiary);padding:0 16px;text-align:center}',
       '.dshib-side-back{border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}',
       '.dshib-side-back:hover{background:var(--dsw-alias-bg-subtle)}',
@@ -779,10 +779,26 @@ window.__ModuleLoader__.load({
           }
           /* The picture and the page it looks like are no longer the same page:
              the action went nowhere, so say so and offer the way back. */
+          /* The tab behind the picture changed. The answer names the tab that
+             took its place: act on that one, and only call the page gone when
+             the click still goes nowhere. */
           if (answer?.stale === true) {
-            setDead('')
-            setGone(true)
-            return answer
+            const next = typeof answer.target === 'string' ? answer.target : ''
+            if (next === '' || next === target.current) {
+              setDead('')
+              setGone(true)
+              return answer
+            }
+            target.current = next
+            return send().then((again) => {
+              if (again?.ok === true) {
+                setDead('')
+                return again
+              }
+              setDead('')
+              setGone(true)
+              return again
+            })
           }
           /* Worth one more try, then the page is gone rather than slow. */
           if (answer?.retry === true) {
@@ -832,21 +848,32 @@ window.__ModuleLoader__.load({
       }
       const hover = (point) => {
         /* A page that cannot say keeps the plain cursor: nothing here throws. */
-        void input({ kind: 'hover', x: point.x, y: point.y })
+        void input({ kind: 'hover', ...point })
           .then((answer) => {
             if (answer !== null && typeof answer.cursor === 'string') setCursor(answer.cursor)
           })
       }
+      /* A point travels as a fraction of the picture, together with the shape
+         that picture was drawn at. The page side turns it back into pixels with
+         that same shape, so a page that changed size since the picture arrived
+         cannot slide the click sideways. */
       const toView = (event) => {
         const el = stage.current
         if (el === null) return null
         const spot = picture()
         if (spot === null) return null
         const box = el.getBoundingClientRect()
-        const x = (event.clientX - box.left - spot.x) / spot.scale
-        const y = (event.clientY - box.top - spot.y) / spot.scale
-        if (x < 0 || y < 0 || x > view.w || y > view.h) return null
-        return { x: Math.round(x), y: Math.round(y) }
+        const px = event.clientX - box.left - spot.x
+        const py = event.clientY - box.top - spot.y
+        const wide = view.w * spot.scale
+        const tall = view.h * spot.scale
+        if (!(wide > 0) || !(tall > 0)) return null
+        if (px < -1 || py < -1 || px > wide + 1 || py > tall + 1) return null
+        const fx = Math.min(1, Math.max(0, px / wide))
+        const fy = Math.min(1, Math.max(0, py / tall))
+        const fw = Math.max(1, Math.round(view.w))
+        const fh = Math.max(1, Math.round(view.h))
+        return { fx, fy, fw, fh, x: Math.round(fx * (fw - 1)), y: Math.round(fy * (fh - 1)) }
       }
       const ime = React.useRef(null)
       const composing = React.useRef(false)
@@ -870,9 +897,26 @@ window.__ModuleLoader__.load({
           const el = stageRef.current
           if (el !== null && typeof el.focus === 'function') el.focus()
         }
-        void input({ kind: 'click', x: point.x, y: point.y })
+        void input({ kind: 'click', ...point })
       }
       const movedAt = React.useRef(0)
+      const moving = React.useRef(null)
+      const moveClock = React.useRef(0)
+      /* One ask is in the air at a time and only the newest point is kept: a
+         fast hand cannot queue a trail of stale positions behind itself. */
+      const queue = () => {
+        if (moveClock.current !== 0) return
+        const wait = Math.max(0, 40 - (Date.now() - movedAt.current))
+        moveClock.current = setTimeout(() => {
+          moveClock.current = 0
+          const latest = moving.current
+          moving.current = null
+          if (latest === null) return
+          movedAt.current = Date.now()
+          hover(latest)
+          if (moving.current !== null) queue()
+        }, wait)
+      }
       const onPointerMove = (event) => {
         touched()
         const point = toView(event)
@@ -880,16 +924,14 @@ window.__ModuleLoader__.load({
         /* Hover is part of a page: menus open under the hand, so the movement
            also reaches the browser. It never moves the agent's arrow, which
            only follows what the agent itself did. */
-        const now = Date.now()
-        if (now - movedAt.current < 60) return
-        movedAt.current = now
-        hover(point)
+        moving.current = point
+        queue()
       }
       const onWheel = (event) => {
         touched()
         event.preventDefault()
         const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
-        void input({ kind: 'wheel', x: point.x, y: point.y, dx: event.deltaX, dy: event.deltaY })
+        void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })
       }
       /* The page's keys are the person's keys: shift makes a capital, a
          shortcut stays a shortcut so Ctrl+V pastes and Ctrl+A selects, and the
@@ -940,7 +982,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshib-side-note' }, L('side.foreign')))
       }
       const pointer = person === true || hand === true ? null : ptr
-      const spot = pointer === null ? null : (picture() ?? { scale: 1, x: 0, y: 0 })
+      const spot = pointer === null ? null : picture()
       const noteText = phase === 'failed' ? note || L('side.failed') : phase === 'live' ? L('side.empty') : L('side.connecting')
       return h('div', { className: 'dshib-side' },
         h('div', { className: 'dshib-side-bar' },

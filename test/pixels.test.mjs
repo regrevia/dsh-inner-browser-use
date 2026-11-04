@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { deflateSync } from 'node:zlib'
-import { around, decodePng, diffGrid, gridOf, quantize } from '../pixels.js'
+import { around, decodePng, diffGrid, fractionAt, gridOf, pictureBox, pointAt, quantize } from '../pixels.js'
 
 /** CRC-32 as PNG wants it, kept here so the test makes its own image. */
 function crc32(bytes) {
@@ -101,4 +101,52 @@ test('a change names how much moved and where', () => {
 
 test('a grid of a different shape is a different screen, not a diff', () => {
   assert.equal(diffGrid(['..'], ['...']).cells, Number.POSITIVE_INFINITY)
+})
+
+test('a picture keeps its shape, and the leftover becomes bars', () => {
+  /* A wide page in a tall column: full width, bars above and below. */
+  const wide = pictureBox(1440, 900, 700, 900)
+  assert.equal(wide.scale, 700 / 1440)
+  assert.equal(wide.w, 700)
+  assert.equal(wide.x, 0)
+  assert.equal(wide.y, (900 - 900 * (700 / 1440)) / 2)
+  /* A tall page in a wide column: full height, bars left and right. */
+  const tall = pictureBox(900, 1440, 1400, 900)
+  assert.equal(tall.h, 900)
+  assert.equal(tall.y, 0)
+  assert.equal(tall.x, (1400 - 900 * (900 / 1440)) / 2)
+  /* Nothing to draw yet is answered with nothing, not a guess. */
+  assert.equal(pictureBox(0, 900, 700, 900), null)
+  assert.equal(pictureBox(1440, 900, 0, 0), null)
+})
+
+test('a click travels as a fraction of the picture, and comes back as the same pixel', () => {
+  const box = pictureBox(1440, 900, 700, 900)
+  for (const [fx, fy] of [[0, 0], [0.1, 0.15], [0.5, 0.5], [0.85, 0.75], [1, 1]]) {
+    const spot = fractionAt(box.x + fx * box.w, box.y + fy * box.h, box)
+    assert.ok(spot !== null)
+    assert.ok(Math.abs(spot.fx - fx) < 1e-9)
+    assert.ok(Math.abs(spot.fy - fy) < 1e-9)
+    assert.deepEqual(pointAt(spot.fx, spot.fy, 1440, 900), { x: Math.round(fx * 1439), y: Math.round(fy * 899) })
+  }
+  /* A point on the bar beside the picture is not on the page. */
+  assert.equal(fractionAt(10, 5, box), null)
+  /* Rounding outside the picture by a pixel still counts as the edge. */
+  const edge = fractionAt(box.x - 0.4, box.y + box.h / 2, box)
+  assert.ok(edge !== null && edge.fx === 0)
+})
+
+test('the same fraction lands on the same spot after the page changes size', () => {
+  /* The point of a fraction: a picture drawn at one shape, a page that has
+     since become another. A pixel would slide; a fraction does not. */
+  const before = pictureBox(1440, 900, 700, 900)
+  const spot = fractionAt(before.x + 0.5 * before.w, before.y + 0.5 * before.h, before)
+  assert.deepEqual(pointAt(spot.fx, spot.fy, 1440, 900), { x: 719 + 1, y: 449 + 1 })
+  assert.deepEqual(pointAt(spot.fx, spot.fy, 720, 450), { x: Math.round(spot.fx * 719), y: Math.round(spot.fy * 449) })
+  assert.deepEqual(pointAt(spot.fx, spot.fy, 760, 900), { x: Math.round(spot.fx * 759), y: Math.round(spot.fy * 899) })
+  /* A page with no size cannot name a point. */
+  assert.equal(pointAt(0.5, 0.5, 0, 450), null)
+  assert.equal(pointAt(Number.NaN, 0.5, 800, 450), null)
+  /* A fraction outside 0..1 is the edge of the page, never a point beyond it. */
+  assert.deepEqual(pointAt(-3, 7, 800, 450), { x: 0, y: 449 })
 })

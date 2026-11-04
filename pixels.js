@@ -215,3 +215,62 @@ export function around(rows, box) {
   const down = Math.min(rows.length, box.y + box.h + 1)
   return { rows: rows.slice(y, down).map((row) => row.slice(x, to)), x, y }
 }
+
+/**
+ * Where the picture sits inside the pane, and where a point on the pane falls on
+ * the page. A point travels as a fraction of the picture rather than as a pixel:
+ * a fraction still names the same spot after the page has changed size, a pixel
+ * does not, and a click that slides is worse than one that refuses.
+ *
+ * @param {number} viewW - the page's width in its own pixels.
+ * @param {number} viewH - the page's height in its own pixels.
+ * @param {number} areaW - the pane's width on screen.
+ * @param {number} areaH - the pane's height on screen.
+ * @returns {{scale: number, x: number, y: number, w: number, h: number}|null} the drawn box, or null when nothing can be drawn.
+ */
+export function pictureBox(viewW, viewH, areaW, areaH) {
+  if (!(viewW > 0) || !(viewH > 0) || !(areaW > 1) || !(areaH > 1)) return null
+  const scale = Math.min(areaW / viewW, areaH / viewH)
+  if (!(scale > 0) || Number.isFinite(scale) === false) return null
+  const w = viewW * scale
+  const h = viewH * scale
+  return { scale, x: (areaW - w) / 2, y: (areaH - h) / 2, w, h }
+}
+
+/**
+ * A point on the pane as a fraction of the picture. A point on the bar beside a
+ * letterboxed picture is not on the page, so it answers null instead of
+ * pretending to be the picture's nearest edge.
+ * @param {number} px - across, from the pane's own left edge.
+ * @param {number} py - down, from the pane's own top edge.
+ * @param {{x: number, y: number, w: number, h: number}|null} box - from pictureBox.
+ * @returns {{fx: number, fy: number}|null} 0..1 across and down.
+ */
+export function fractionAt(px, py, box) {
+  if (box === null || box === undefined) return null
+  if (Number.isFinite(px) === false || Number.isFinite(py) === false) return null
+  if (!(box.w > 0) || !(box.h > 0)) return null
+  const fx = (px - box.x) / box.w
+  const fy = (py - box.y) / box.h
+  if (!(fx >= -1 / box.w) || !(fx <= 1 + 1 / box.w)) return null
+  if (!(fy >= -1 / box.h) || !(fy <= 1 + 1 / box.h)) return null
+  return { fx: Math.min(1, Math.max(0, fx)), fy: Math.min(1, Math.max(0, fy)) }
+}
+
+/**
+ * The page point a fraction names, inside the page's own viewport.
+ * @param {number} fx - 0..1 across.
+ * @param {number} fy - 0..1 down.
+ * @param {number} width - the page's width in CSS pixels.
+ * @param {number} height - the page's height in CSS pixels.
+ * @returns {{x: number, y: number}|null} the point, or null when the page has no size.
+ */
+export function pointAt(fx, fy, width, height) {
+  const w = Math.round(Number(width))
+  const h = Math.round(Number(height))
+  if (!(w > 0) || !(h > 0)) return null
+  if (Number.isFinite(fx) === false || Number.isFinite(fy) === false) return null
+  const across = Math.min(1, Math.max(0, fx))
+  const down = Math.min(1, Math.max(0, fy))
+  return { x: Math.round(across * (w - 1)), y: Math.round(down * (h - 1)) }
+}

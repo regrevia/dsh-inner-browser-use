@@ -426,3 +426,35 @@ test('a gone note marks the pane instead of waiting for a frame that never comes
   assert.ok(source.includes("answer?.retry === true"), 'a refused act is tried once more before the pane gives up')
   assert.ok(source.includes('side.lost') && source.includes('side.held'), 'and the pane says which of the two happened')
 })
+
+test('a click names a fraction of the picture, not a pixel of a stale one', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('const fx = Math.min(1, Math.max(0, px / wide))'))
+  assert.ok(source.includes('return { fx, fy, fw, fh, x: Math.round(fx * (fw - 1)), y: Math.round(fy * (fh - 1)) }'))
+  assert.ok(source.includes("void input({ kind: 'click', ...point })"))
+  assert.ok(source.includes("void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })"))
+  /* A point outside the picture is not the picture's edge, and no picture is
+     not a scale of one: both refuse instead of guessing. */
+  assert.ok(source.includes('if (px < -1 || py < -1 || px > wide + 1 || py > tall + 1) return null'))
+  assert.ok(source.includes('const spot = pointer === null ? null : picture()'))
+})
+
+test('a fast hand cannot queue stale hover positions', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* One ask in the air at a time; the newest point replaces the waiting one. */
+  assert.ok(source.includes('const queue = () => {'))
+  assert.ok(source.includes('if (moveClock.current !== 0) return'))
+  assert.ok(source.includes('moving.current = point'))
+  assert.ok(source.includes('if (moving.current !== null) queue()'))
+  assert.ok(source.includes('const wait = Math.max(0, 40 - (Date.now() - movedAt.current))'))
+})
+
+test('a tab that changed behind the picture is taken over, not declared gone', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The answer names the tab that replaced the one the picture came from: act
+     on that one, and call the page gone only when the click still goes nowhere. */
+  assert.ok(source.includes("const next = typeof answer.target === 'string' ? answer.target : ''"))
+  assert.ok(source.includes('target.current = next'))
+  /* The agent arrow follows what the agent did, without a trail behind it. */
+  assert.ok(!source.includes('transition:left 60ms linear'))
+})
