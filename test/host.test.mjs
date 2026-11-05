@@ -377,6 +377,7 @@ test('a state read on a stopped sidecar says so without starting one', async () 
   assert.equal(state.alive, false)
   assert.equal(state.profile, 'default')
   assert.equal(state.url, '')
+  assert.equal(state.press, true, 'this host takes a press held across moves and a later release')
 })
 
 test('the mirror belongs to one chat until another one asks', () => {

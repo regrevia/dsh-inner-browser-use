@@ -1,3 +1,26 @@
+## 点击与右键：旧服务端会不会把按下回执后丢掉 — 0.47.29
+
+同机、新进程、headless Chrome、本地页面，走 `apply()` 注册的真实路由
+（`/sidecar/open` → `/sidecar/viewport` → `/sidecar/input`）。页面把自己的
+`mousedown/mouseup/click/contextmenu` 回报给本地 fixture，不看截图、不读 CDP 结果。
+
+```
+node /tmp/r24-click.mjs           # 本仓库（0.47.29）
+MODULE=old node /tmp/r24-click.mjs # /tmp/r23-base（0.47.28 的服务端）
+```
+
+| 同一请求 | 0.47.28 服务端 | 0.47.29 服务端 |
+| --- | --- | --- |
+| `/sidecar/state` 里的 `press` | 无 | `true` |
+| `down` + `up` 的回执 | `200 ok` ×2 | `200 ok` ×2 |
+| 页面收到的按下/抬起 | **0** | `mousedown buttons:1`、`mouseup buttons:0` |
+| 页面收到的 `click` | **0** | 1 |
+| `click button:'right'` | 左键，菜单 0 | `button:2 buttons:2` → `contextmenu button:2` → `mouseup buttons:0`，菜单 1 |
+
+结论：0.47.28 的服务端把新面板的按下抬起**回执为成功却什么都没派发**，这正是
+「右栏里左右键都点不动」；0.47.29 让面板先问能力（`press`），问不到就退回单一
+`click`，问到了才发按下/抬起，右键按位掩码走同一条链路。
+
 ## 按住拖：协议里有没有 press-move-release — 0.47.28
 
 同机、新进程、headless Chrome、本地页面，两条探针都走插件自己的代码：

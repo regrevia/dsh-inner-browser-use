@@ -1979,7 +1979,10 @@ export class SidecarPage {
       return true
     }
     const button = point.button ?? 'left'
-    const held = type === 'mousePressed' ? 1 : type === 'mouseReleased' ? 0 : this.buttons
+    /* The browser's mask: left is 1, right is 2, middle is 4. A page reads the
+       mask to know which button a drag or a menu is holding. */
+    const bit = button === 'right' ? 2 : button === 'middle' ? 4 : 1
+    const held = type === 'mousePressed' ? bit : type === 'mouseReleased' ? 0 : this.buttons
     /* A protocol event, not a screen: the keys below are the browser's names. */
     const took = await this.input('Input.dispatchMouseEvent', { // ui-copy-ignore
       type, // ui-copy-ignore

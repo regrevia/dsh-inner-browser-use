@@ -131,6 +131,21 @@ test('a move no press preceded holds no button, so a page never sees a phantom d
   assert.equal(page.buttons, 0)
 })
 
+test('the right button arrives as the right button, with the bit the browser uses for it', async () => {
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+
+  await page.mouse('mousePressed', { x: 4, y: 5, button: 'right' })
+  await page.mouse('mouseReleased', { x: 4, y: 5, button: 'right' })
+
+  const events = cdp.sent.filter(([method]) => method === 'Input.dispatchMouseEvent').map(([, params]) => params)
+  assert.equal(events[0].button, 'right')
+  assert.equal(events[0].buttons, 2, 'right is bit 2, so a page opens its menu instead of selecting')
+  assert.equal(events[1].button, 'right')
+  assert.equal(events[1].buttons, 0)
+  assert.equal(page.buttons, 0, 'the menu button leaves nothing held either')
+})
+
 test('a viewer that goes away stops receiving pointer messages', async () => {
   const cdp = fakeCdp()
   const page = new SidecarPage(cdp, 'default')

@@ -60,7 +60,7 @@ stealing the column from other chats.
 
 ## Phase 3 — any operation (target: no "can't do that" left)
 
-- Hover, drag, double-click, right-click, wheel with modifiers.
+- ~~Hover, drag, double-click, right-click, wheel with modifiers.~~ The mirror now sends a real press, a move that carries the held button, a release, and the right button (0.47.29); the tool layer stays the reference implementation.
 - `select` option by label or value; checkboxes and radios by label.
 - File upload (`DOM.setFileInputFiles`), download capture with a returned path,
   print-to-PDF, full-page and element screenshots.

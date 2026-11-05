@@ -515,6 +515,7 @@ window.__ModuleLoader__.load({
               const flash = info?.flash !== null && info?.flash !== undefined && info?.flash !== false
               const audible = info?.sound === true
               setSound((prev) => (prev.flash === flash && prev.on === audible ? prev : { flash, on: audible }))
+              pressOn.current = info?.press === true
               const was = String(info?.chat?.remembered ?? '')
               if (was !== '') setBack((prev) => (prev === was ? prev : was))
               /* Another chat holds the browser now: this tab goes away instead
@@ -892,12 +893,19 @@ window.__ModuleLoader__.load({
          draws. Two presses close together are the two halves of a double. */
       const pressed = React.useRef(null)
       const lastPress = React.useRef(0)
+      /* Press and release are a newer ask than click: an app older than them
+         takes the ask, says yes, and does nothing. The pane starts out not
+         knowing, and the state poll tells it what this one understands. */
+      const pressOn = React.useRef(false)
       const release = (event) => {
         const held = pressed.current
         if (held === null) return
         pressed.current = null
         const point = event === null || event === undefined ? held : toView(event) ?? held
-        void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })
+        /* An app that never learned press and release would swallow both and
+           the hand would never click: fall back to the one event it knows. */
+        if (pressOn.current === true) void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })
+        else void input({ kind: 'click', ...point })
       }
       const onPointerDown = (event) => {
         touched()
@@ -923,7 +931,7 @@ window.__ModuleLoader__.load({
             /* a pane that cannot capture still drags inside its own picture */
           }
         }
-        void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })
+        if (pressOn.current === true) void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })
       }
       const movedAt = React.useRef(0)
       const moving = React.useRef(null)
@@ -954,6 +962,17 @@ window.__ModuleLoader__.load({
            a hover, and a slider that only ever sees hovers never moves. */
         moving.current = pressed.current === null ? point : { ...point, pressed: true }
         queue()
+      }
+      /* The right button is a menu, not a drag: one click of that button where
+         the hand is, and the page draws its own menu there. Until the app says
+         it takes a button, the browser's own menu is left alone. */
+      const onContextMenu = (event) => {
+        touched()
+        if (pressOn.current !== true) return
+        event.preventDefault()
+        const point = toView(event)
+        if (point === null) return
+        void input({ kind: 'click', button: 'right', ...point })
       }
       const onWheel = (event) => {
         touched()
@@ -1080,6 +1099,7 @@ window.__ModuleLoader__.load({
           onPointerUp: release,
           onPointerCancel: release,
           onPointerMove,
+          onContextMenu,
           onWheel,
           onKeyDown,
           onKeyUp,

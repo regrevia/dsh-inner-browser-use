@@ -602,7 +602,10 @@ export function apply(ctx) {
           } catch {}
         }
       }
-      json(200, { ...said, ...(chat === '' ? {} : { chat: mineChat ?? (await sidecar.chatState(chat)) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
+      /* "press" says this app takes a press held across moves and a later
+         release: a pane served by an older app sees no such word and clicks
+         with the single event that one does take. */
+      json(200, { ...said, press: true, ...(chat === '' ? {} : { chat: mineChat ?? (await sidecar.chatState(chat)) }), owner: bridge.owner, chats: [...bridge.seats.keys()], recent: mine })
       return
     }
 
@@ -739,7 +742,16 @@ export function apply(ctx) {
           json(409, { ok: false, stale: true, target: String(page.targetId ?? '') })
           return
         }
+        /* An event the app does not know used to be answered as taken and
+           then dropped: the same silence this round is about. */
+        if (!['hover', 'down', 'up', 'move', 'click', 'wheel', 'text', 'key'].includes(kind)) {
+          json(400, { ok: false, text: 'that is not an input event' })
+          return
+        }
         let cursor
+        /* The right button arrives with the click that asks for a menu; every
+           other press is the left one. */
+        const button = body?.button === 'right' ? 'right' : 'left'
         const act = async () => {
           if (kind === 'hover') {
             cursor = await page.hover({ x, y, pressed: body.pressed === true })
@@ -748,17 +760,17 @@ export function apply(ctx) {
           /* A press and its release are their own events: the page sees a
              button that stays down across the moves in between, which is what
              makes a drag a drag and a double click a double click. */
-          if (kind === 'down') return (await page.mouse('mousePressed', { x, y, button: 'left', clickCount: Number(body.clickCount ?? 1) })) !== false
-          if (kind === 'up') return (await page.mouse('mouseReleased', { x, y, button: 'left', clickCount: Number(body.clickCount ?? 1) })) !== false
+          if (kind === 'down') return (await page.mouse('mousePressed', { x, y, button, clickCount: Number(body.clickCount ?? 1) })) !== false
+          if (kind === 'up') return (await page.mouse('mouseReleased', { x, y, button, clickCount: Number(body.clickCount ?? 1) })) !== false
           if (kind === 'move') return (await page.mouse('mouseMoved', { x, y })) !== false
           if (kind === 'click') {
             const clickCount = body.double === true ? 2 : 1
             const moved = await page.mouse('mouseMoved', { x, y })
-            const pressed = await page.mouse('mousePressed', { x, y, clickCount })
-            const released = await page.mouse('mouseReleased', { x, y, clickCount })
+            const pressed = await page.mouse('mousePressed', { x, y, button, clickCount })
+            const released = await page.mouse('mouseReleased', { x, y, button, clickCount })
             if (body.double === true) {
-              await page.mouse('mousePressed', { x, y, clickCount: 2 })
-              await page.mouse('mouseReleased', { x, y, clickCount: 2 })
+              await page.mouse('mousePressed', { x, y, button, clickCount: 2 })
+              await page.mouse('mouseReleased', { x, y, button, clickCount: 2 })
             }
             return moved !== false && pressed !== false && released !== false
           }
