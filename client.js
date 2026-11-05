@@ -140,6 +140,55 @@ window.__ModuleLoader__.load({
           let paneSeen = false
           let missing = 0
           const closedAt = new Map()
+          /* A reload or another mount forgets the map above, and the first
+             restore then draws a column the person shut again. The mark is kept
+             where it outlives this mount, and only a fresh ask clears it. */
+          const SHUT_KEY = 'dsh-inner-browser-use:mirror-shut' // ui-copy-ignore
+          const savedShuts = () => {
+            try {
+              const said = JSON.parse(globalThis.localStorage?.getItem(SHUT_KEY) ?? '{}')
+              return said !== null && typeof said === 'object' ? said : {}
+            } catch {
+              return {}
+            }
+          }
+          const shutAt = (sessionId) => {
+            if (closedAt.has(sessionId)) return closedAt.get(sessionId)
+            const at = Number(savedShuts()[sessionId] ?? 0)
+            if (at > 0) closedAt.set(sessionId, at)
+            return at > 0 ? at : undefined
+          }
+          const keepShut = (sessionId, at) => {
+            closedAt.set(sessionId, at)
+            try {
+              const said = savedShuts()
+              said[sessionId] = at
+              globalThis.localStorage?.setItem(SHUT_KEY, JSON.stringify(said))
+            } catch {
+              /* a page that keeps no notes still keeps this mount's mark */
+            }
+          }
+          const forgetShut = (sessionId) => {
+            closedAt.delete(sessionId)
+            try {
+              const said = savedShuts()
+              delete said[sessionId]
+              globalThis.localStorage?.setItem(SHUT_KEY, JSON.stringify(said))
+            } catch {
+              /* nothing to drop where nothing is kept */
+            }
+          }
+          /* Whether the column is showing its panel right now. A collapsed
+             column is the person's choice, not a lost picture: a shrink of the
+             column must not be answered with a fresh tab. An app that cannot
+             answer keeps the older rule. */
+          const columnShut = () => {
+            try {
+              return typeof surface?.isExpanded === 'function' && surface.isExpanded() === false
+            } catch {
+              return false
+            }
+          }
           const hasPane = (sessionId) => {
             try {
               const rows = surface?.tabsIn?.(sessionId) ?? []
@@ -154,7 +203,7 @@ window.__ModuleLoader__.load({
           }
           const closeHere = (sessionId, byPerson = false) => {
             if (sessionId === '') return
-            closedAt.set(sessionId, Date.now())
+            keepShut(sessionId, Date.now())
             if (openWho === sessionId) {
               openWho = ''
               openAt = 0
@@ -187,10 +236,10 @@ window.__ModuleLoader__.load({
               const kind = String(record?.kind ?? record?.record?.kind ?? '')
               const id = String(record?.id ?? record?.record?.id ?? '')
               if (kind !== SIDE_KIND && id !== SIDE_ID) continue
-              /* The person's close arrives from the tab strip: the host is
-                 already taking that tab down, and closing it again here races
-                 the host and can leave the tab half closed. Forgetting the ask
-                 is what this path owes. */
+              /* The person's close arrives from the tab strip, which is
+                 already taking that tab down: closing it again here races that
+                 and can leave the tab half closed. Forgetting the ask is what
+                 this path owes. */
               if (byPerson) continue
               try {
                 if (typeof record?.close === 'function') record.close()
@@ -202,15 +251,18 @@ window.__ModuleLoader__.load({
           }
           const ask = (sessionId, reason = 'ask', at = 0) => {
             if (sessionId === '' || mountedOf() !== sessionId) return
-            const shut = closedAt.get(sessionId)
+            const shut = shutAt(sessionId)
             /* A slow beat that only wants the frames back must not put a closed
                column on screen again: it may refresh a pane that is drawn and
                nothing else. */
-            if (reason === 'keepalive' && (shut !== undefined || !hasPane(sessionId))) return
+            if (reason === 'keepalive' && (shut !== undefined || !hasPane(sessionId) || columnShut() === true)) return // ui-copy-ignore
             /* A real ask is only newer than the close that preceded it: a
                replayed one from before the person shut the pane stays spent. */
+            /* Paint and restore are the page coming back, not the person
+               asking: a column they collapsed stays collapsed. */
+            if (reason !== 'ask' && columnShut() === true) return
             if (shut !== undefined && (reason !== 'ask' || (at !== 0 && at <= shut))) return
-            if (shut !== undefined) closedAt.delete(sessionId)
+            if (shut !== undefined) forgetShut(sessionId)
             if (ownerSession !== '' && ownerSession !== sessionId) closeHere(ownerSession)
             ownerSession = sessionId
             openWho = sessionId
@@ -231,6 +283,14 @@ window.__ModuleLoader__.load({
             if (openWho === '') return
             if (mountedOf() !== openWho) return
             if (hasPane(openWho)) {
+              /* The tab stays in the layout when the person shuts the column
+                 with its own control, so the ask stayed alive and every later
+                 restore put the mirror back with no work behind it. A column
+                 that shrank counts as a close; the tab is left where it is. */
+              if (paneSeen === true && Date.now() - openAt >= 2500 && columnShut() === true) {
+                closeHere(openWho, true)
+                return
+              }
               paneSeen = true
               missing = 0
               return
@@ -345,6 +405,10 @@ window.__ModuleLoader__.load({
           const restore = (tries = 0) => {
             const who = mountedOf()
             if (who === '') return
+            /* Asking the browser's state is itself a request to draw: a
+               collapsed column must send none, or the answering side rebuilds
+               a tab for a mirror nobody is looking at. */
+            if (columnShut() === true) return
             const again = () => {
               if (tries >= 2) return
               restoreTimers.push(setTimeout(() => restore(tries + 1), 1500))
@@ -372,6 +436,9 @@ window.__ModuleLoader__.load({
           const dropExpired = () => {
             const who = mountedOf()
             if (who === '' || hasPane(who) !== true) return
+            /* A collapsed column keeps its tab, and this poll would keep asking
+               after a browser that should be at rest. */
+            if (columnShut() === true) return
             void fetch(`${ROUTE}/sidecar/state?session=${encodeURIComponent(who)}`) // ui-copy-ignore
               .then((said) => (said.ok === true ? said.json() : null))
               .then((state) => {

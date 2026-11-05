@@ -75,6 +75,14 @@ globalThis.window = {
     },
   },
 }
+/* A page keeps a note between mounts here: the mark that a person shut the
+   column has to outlive the mount that saw it. */
+const stored = new Map()
+globalThis.localStorage = {
+  getItem: (key) => (stored.has(key) ? stored.get(key) : null),
+  setItem: (key, value) => stored.set(key, String(value)),
+  removeItem: (key) => stored.delete(key),
+}
 globalThis.document = {
   head: { appendChild() {} },
   body: { appendChild() {} },
@@ -112,7 +120,10 @@ new Script(clientSource).runInThisContext()
  * @param {{openTab?: string, openTabIn?: string, mounted?: string | (() => string)}} options
  *   `mounted` may be a function so a test can move the on-screen chat.
  */
-function scene({ openTab, openTabIn, mounted = '', state = null, pane = false } = {}) {
+function scene({ openTab, openTabIn, mounted = '', state = null, pane = false, expanded, keepNotes = false } = {}) {
+  /* Each scene starts with no notes unless it is asked to inherit them: a
+     note about one mount must not decide another test's mount. */
+  if (keepNotes !== true) stored.clear()
   const onScreen = () => (typeof mounted === 'function' ? mounted() : mounted)
   /** @type {any[]} */
   const opened = []
@@ -145,7 +156,8 @@ function scene({ openTab, openTabIn, mounted = '', state = null, pane = false } 
     },
     sidebarRight: {
       mounted: { getSnapshot: () => onScreen() },
-      tabsIn: () => (pane === true ? [{ id: 'dsh-inner-browser-use:sidecar', kind: 'inner-browser-sidecar' }] : []),
+      tabsIn: () => ((typeof pane === 'function' ? pane() : pane) === true ? [{ id: 'dsh-inner-browser-use:sidecar', kind: 'inner-browser-sidecar' }] : []),
+      ...(expanded === undefined ? {} : { isExpanded: () => (typeof expanded === 'function' ? expanded() : expanded) }),
       ...(openTab === undefined ? {} : {
         openTab: (...args) => {
           if (openTab === 'throw') throw new Error('no strip')
@@ -208,6 +220,67 @@ test('a nudge for the frames cannot draw a column the person closed', () => {
   const drawn = scene({ mounted: 'chat-shown', pane: true })
   drawn.source.send({ type: 'sidecar-wanted', session: 'chat-shown', reason: 'keepalive', at: Date.now() })
   assert.deepEqual(drawn.opened, [['session', 'chat-shown', 'inner-browser-sidecar', {}]])
+})
+
+test('a column the person shut is not drawn again by the page coming back', async () => {
+  stored.clear()
+  /* They close the mirror's tab: the mark is written down, not just held. */
+  const first = scene({ mounted: 'chat-shown' })
+  first.tabs[0].onClose({ id: 'dsh-inner-browser-use:sidecar' }, { sessionId: 'chat-shown' })
+  assert.equal(stored.size, 1, 'the close is kept where a reload still finds it')
+
+  /* The page comes back in the same chat, browser alive, and asks the browser
+     how it is: that answer alone must not draw the mirror. */
+  const again = scene({ mounted: 'chat-shown', keepNotes: true, state: { owner: 'chat-shown', alive: true, chat: { alive: true } } })
+  await new Promise((done) => setTimeout(done, 10))
+  assert.deepEqual(again.opened, [], 'a restore does not undo their close')
+
+  /* A real ask from the agent still reaches them: the mirror is not bricked. */
+  again.source.send({ type: 'sidecar-wanted', session: 'chat-shown', reason: 'ask', at: Date.now() })
+  assert.deepEqual(again.opened, [['session', 'chat-shown', 'inner-browser-sidecar', {}]])
+  assert.deepEqual(JSON.parse(stored.get('dsh-inner-browser-use:mirror-shut')), {}, 'a fresh ask clears the mark')
+})
+
+test('a collapsed column asks the browser nothing and draws nothing on mount', async () => {
+  stored.clear()
+  const folded = scene({
+    mounted: 'chat-shown',
+    expanded: false,
+    pane: true,
+    state: { owner: 'chat-shown', alive: true, chat: { alive: true } },
+  })
+  await new Promise((done) => setTimeout(done, 10))
+  assert.deepEqual(folded.opened, [], 'a shrunken column is not a lost picture')
+  assert.deepEqual(posts.filter((post) => post.url.includes('/sidecar/state')), [], 'and it sends no request the other side would answer with a tab')
+})
+
+test('shutting the column, tab still in the layout, counts as a close and says so', () => {
+  stored.clear()
+  /* Two facts move while the person uses the column: whether it is showing,
+     and whether the pane has been seen. */
+  let open = true
+  let seenPane = false
+  const realNow = Date.now
+  let skew = 0
+  Date.now = () => realNow() + skew
+  try {
+    const one = scene({ mounted: 'chat-shown', expanded: () => open, pane: () => seenPane })
+    one.source.send({ type: 'sidecar-wanted', session: 'chat-shown', reason: 'ask', at: Date.now() })
+    seenPane = true
+    ticks.at(-1)()
+    assert.equal(posts.some((post) => post.url.includes('/sidecar/forget')), false, 'a drawn pane is not a close')
+    /* The person shrinks the column; the tab stays in the layout. */
+    open = false
+    skew = 10_000
+    ticks.at(-1)()
+    assert.equal(posts.some((post) => post.url.includes('/sidecar/forget?session=chat-shown')), true, 'the close reaches the other side')
+    assert.equal(JSON.parse(stored.get('dsh-inner-browser-use:mirror-shut'))['chat-shown'] > 0, true, 'and it is written down')
+    /* It says so once, not on every beat. */
+    ticks.at(-1)()
+    assert.equal(posts.filter((post) => post.url.includes('/sidecar/forget')).length, 1)
+  } finally {
+    Date.now = realNow
+  }
 })
 
 test('the mirror opens only in the chat a tool asked for, and only while it is on screen', () => {

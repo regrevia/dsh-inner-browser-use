@@ -308,6 +308,16 @@ The phases above were written one at a time as the work happened; the run from
 
 还差的一层是「看」：4399 / 7k7k / 奥拉星这类页游把画面画在 canvas 上，文本树里没有可读的东西，判断走位、Boss 血条、按钮位置都要靠像素。本会话的模型没有视觉能力，所以这里的正确做法不是假装能玩，而是把可判读的信号做出来：canvas 局部像素采样、颜色/区域变化率、画面是否在动（`blind` 行已经在报 canvas 数量）。有视觉能力的模型接着用同一套帧路就能玩。
 
+## 关掉之后不回来，0.47.30
+
+右栏的收起不是页签关闭：页签留在布局里，面板既收不到页签关闭，也没人写「这个人不要了」。于是人关一次、空闲问候又挂回来一次。0.47.30 起把这件事当成三件事做：
+
+- 当场认定：页签还在、人看见过、栏已收起（`isExpanded() === false`）三条同时成立即按关闭处理，发一次 `/sidecar/forget`，不重复。
+- 记下来：按会话写进本地面板的 `localStorage`，刷新、重挂都有效；`keepalive`/`restore` 不再看这家，只有人自己新的一次 ask 才清账。
+- 服务端也认账：`Bridge.closed` 让状态轮询不再替刚关掉的会话补页签、补浏览器，空闲问候最多连问 5 次。
+
+实测关闭后重挂 7 → 0，关闭回执 0 → 1（`docs/BENCH.md`）。仍未覆盖：宿主布局变化没有事件可听，收起只能靠面板轮询比对；这一步的端到端证据还是注入层，不是真人点击。
+
 ## Where the next round should go
 
 Ranked by what a real task still loses:

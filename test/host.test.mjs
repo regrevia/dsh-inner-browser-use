@@ -895,6 +895,26 @@ test('only the owning chat picks a browser up on a state poll', async () => {
   assert.equal(shouldAdoptOnState({ alive: false }, 'session-a', ''), false)
   assert.equal(shouldAdoptOnState({ alive: true }, 'session-a', 'session-a'), false)
   assert.equal(shouldAdoptOnState({ alive: false }, '', 'session-a'), false)
+  /* A chat whose mirror the person shut is not picked up by its own state
+     poll: that poll is the column being mounted, not a request for a browser. */
+  assert.equal(shouldAdoptOnState({ alive: false }, 'session-a', 'session-a', 'session-a'), false)
+  assert.equal(shouldAdoptOnState({ alive: false }, 'session-a', 'session-a', 'session-b'), true)
+})
+
+test('a shut mirror is remembered per chat and a new ask reopens it', async () => {
+  const { Bridge } = await import('../index.js')
+  const bridge = new Bridge()
+  bridge.want('session-a')
+  assert.equal(bridge.forget('session-a'), true)
+  assert.equal(bridge.wanted.session, '', 'the ask goes with the close')
+  assert.equal(bridge.closed.session, 'session-a', 'and the close is remembered')
+  /* The answer to that chat now says no, even with the browser at rest. */
+  const { shouldAdoptOnState, wantsMirrorAgain } = await import('../index.js')
+  assert.equal(shouldAdoptOnState({ alive: false }, 'session-a', bridge.owner, bridge.closed.session), false)
+  /* Another chat asking is not that chat asking. */
+  bridge.want('session-a')
+  assert.equal(bridge.closed.session, '', 'a new ask clears the mark')
+  assert.equal(wantsMirrorAgain({ alive: true, owner: 'session-a', wanted: bridge.wanted.session, listeners: 0 }), true)
 })
 
 test('a running browser that nobody is drawing asks its own chat to draw it again', async () => {

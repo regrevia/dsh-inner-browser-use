@@ -119,6 +119,10 @@ export class Bridge {
        is not on screen has no stream, so a push at ask time is lost; remembering
        the ask is what makes the mirror appear when the person returns. */
     this.wanted = { session: '', at: 0 }
+    /* The chat the person last shut the mirror for. A poll from that chat is
+       not a reason to build a tab or start the browser again; only a new ask
+       clears this. */
+    this.closed = { session: '', at: 0 }
     /* Frame streams by chat. A close can arrive while a stream is still
        attaching, so closing the mirror hangs up what that chat started: a
        browser nobody watches is what lets it go to rest. */
@@ -166,6 +170,7 @@ export class Bridge {
     const id = this.canon(sessionId)
     if (id === '') return false
     this.claim(id)
+    if (this.closed.session === id) this.closed = { session: '', at: 0 }
     this.wanted = { session: id, at }
     if (this.persist === true) writeMirror({ owner: this.owner, session: id, at })
     return this.push(id, { type: 'sidecar-wanted', session: id, at, reason })
@@ -266,6 +271,7 @@ export class Bridge {
        closed keeps the browser awake with nobody looking at it. */
     this.unwatch(id)
     this.wanted = { session: '', at: 0 }
+    this.closed = { session: id, at: Date.now() }
     if (this.owner === id) this.owner = ''
     if (this.persist === true) writeMirror({ owner: this.owner, session: '', at: 0 })
     return held
@@ -338,8 +344,11 @@ export function adoptOptions(chat, remembered) {
   return back === '' ? { session: chat } : { session: chat, url: back }
 }
 
-export function shouldAdoptOnState(said, chat, owner) {
-  return said?.alive === false && chat !== '' && owner === chat
+export function shouldAdoptOnState(said, chat, owner, closed = '') {
+  if (said?.alive !== false || chat === '' || owner !== chat) return false
+  /* The person shut this chat's mirror: the state poll that follows is the
+     column being mounted, not a request to start the browser again. */
+  return String(closed ?? '') !== chat
 }
 
 /**
@@ -397,15 +406,29 @@ export function apply(ctx) {
   const lastAsk = new Map()
   ctx.effect(() => {
     let last = 0
+    /* A chat that never draws the pane is not asked forever: a mirror the
+       person shut would otherwise be nudged every dozen seconds all night. */
+    let quiet = 0
+    let quietFor = ''
     const timer = setInterval(() => {
       try {
         const owner = bridge.owner
         const listeners = sidecar.page?.frames?.size ?? 0
         const again = wantsMirrorAgain({ alive: sidecar.page !== null && sidecar.page !== undefined, owner, wanted: bridge.wanted.session, listeners }) // ui-copy-ignore
-        if (again !== true) return
+        if (again !== true) {
+          quiet = 0
+          quietFor = ''
+          return
+        }
+        if (quietFor !== owner) {
+          quiet = 0
+          quietFor = owner
+        }
+        if (quiet >= 5) return
         const due = nudgeDue({ askedAgo: Date.now() - (lastAsk.get(owner) ?? 0), sinceLast: Date.now() - last }) // ui-copy-ignore
         if (due !== true) return
         last = Date.now()
+        quiet += 1
         bridge.want(owner, Date.now(), 'keepalive')
         note(`asked ${owner.slice(-8)} to draw the mirror again`)
       } catch {}
@@ -575,7 +598,11 @@ export function apply(ctx) {
          before the column draws an empty picture — waiting for a claim first
          left a blank frame in front of the person. */
       let mineChat = chat === '' ? undefined : await sidecar.chatState(chat)
-      if (needsTab(mineChat, chat, bridge.owner)) {
+      /* A chat whose mirror the person shut still polls while its column is
+         restored, and both repairs below would hand it a tab and a browser
+         with no work behind them. The shut mark ends both until a new ask. */
+      const shutMirror = chat !== '' && bridge.closed.session === chat
+      if (shutMirror !== true && needsTab(mineChat, chat, bridge.owner)) {
         try {
           await sidecar.ensure(adoptOptions(chat, sidecar.rememberedTab?.(chat)))
           said = await sidecar.state()
@@ -587,7 +614,7 @@ export function apply(ctx) {
          called open again: the mirror would come back empty in a chat that
          never closed it. The chat that owned the browser asks for its state, so
          answering honestly means picking the browser up first. */
-      if (shouldAdoptOnState(said, chat, bridge.owner) && mineChat?.expired !== true) {
+      if (shutMirror !== true && shouldAdoptOnState(said, chat, bridge.owner, bridge.closed.session) && mineChat?.expired !== true) {
         try {
           await sidecar.ensure(adoptOptions(chat, sidecar.rememberedTab?.(chat)))
           said = await sidecar.state()
