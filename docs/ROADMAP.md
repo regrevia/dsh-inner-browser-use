@@ -19,6 +19,7 @@ wish. Baselines come from `node scripts/bench.mjs`; every phase must move one.
 | Stagehand | `act` / `observe` / `extract` split, self-healing selectors, natural-language actions | server round trips; two model calls per step |
 | Playwright MCP | accessibility tree with `ref` handles, deterministic waits | text-only; a page read is large; no live picture |
 | Skyvern / CUA screenshot models | works on canvas apps and hostile DOM | ~1 image per step, slow and token-expensive |
+| ego(lite) / ego-browser | own Chromium fork, so snapshots reach cross-origin iframes and shadow DOM; a Space per agent runs in parallel; code-based helpers run many steps per call | a second browser to install and keep updated; Chrome data import; Full access to launch an app; nothing inside the chat that asked |
 
 Our position: **a real Chrome with a live, interactive mirror in the owning
 chat, and a read model that is small by construction** — accessibility refs that
@@ -26,6 +27,11 @@ survive a read, viewport-only text, diffs instead of full re-reads, and one
 batched tool for multi-step work. The mirror is not decoration: it is the human
 takeover surface, and no other plugin can show it inside the asking chat without
 stealing the column from other chats.
+
+The full comparison, including what ego(lite) and the Codex browser paths do
+better and the four lines that would beat them, is in `docs/COMPETITORS.md`. The
+short version: depth of snapshot, batch execution, background pages and a
+reproducible bench are the work; copying its Chromium fork is not.
 
 ## Phase 0 — measurement (done when numbers exist)
 
