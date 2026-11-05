@@ -4,10 +4,10 @@
 面板看见过一次 → 人收起右栏（页签仍在布局里）→ 六拍空闲问候 → 页面回来再
 `restore` 一次。数的是「关闭之后又挂回去几次」和「关闭回执发了几条」。
 
-```
-R25_CLIENT=<旧 client.js> node --test --test-name-pattern "r25 measure" test/r25probe.mjs
-R25_CLIENT=<新 client.js> node --test --test-name-pattern "r25 measure" test/r25probe.mjs
-```
+临时探针：把 `test/client.test.mjs` 复制成一份临时测试，客户端源码路径改成可传的
+`R25_CLIENT`，再补一条数数的用例（关闭后放六拍问候、再来一次 restore）。探针本身
+不随仓库发布，仓库里留下的是同一套 harness 的常驻用例
+（`a column the person shut is not drawn again by the page coming back`）。
 
 | | 0.47.29（旧面板） | 0.47.30（新面板） |
 | --- | --- | --- |
