@@ -781,6 +781,63 @@ test('a scaled display is measured in the page pixels its input is counted in', 
   assert.deepEqual({ ...scaled.view }, { width: 1600, height: 1000 }, 'no answer means the frame is all there is')
 })
 
+test('a frame that only repeats the cast cap does not shrink the page', async () => {
+  /* A cast told to fit 2000x1200 scales a 3000x1800 device picture down and
+     reports 2000x1200 as the frame's size. Riding on that number shrank the
+     page to two thirds of itself and put every click beside the thing the hand
+     was on; a frame that only says the cap is not news about the page. */
+  const calls = []
+  const page = new SidecarPage({
+    on: (handler) => own.push(handler),
+    send: async (method, params) => {
+      calls.push({ method, params })
+      return {}
+    },
+  }, 'unit-cap', 0, () => 0)
+  const own = []
+  await page.start()
+  calls.length = 0
+  page.view = { width: 2000, height: 1200 }
+  page.dpr = 1.5
+  const frames = []
+  page.frames.add((message) => frames.push(message))
+  page.sentAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'cap-echo', sessionId: 61, metadata: { deviceWidth: 2000, deviceHeight: 1200 } },
+  })
+  await settle()
+  assert.deepEqual({ ...page.view }, { width: 2000, height: 1200 }, 'the page keeps the size it is laid out at')
+  assert.equal(calls.some((call) => call.method === 'Runtime.evaluate'), false, 'the echo is not worth asking the page')
+  assert.equal(frames.at(-1).w, 2000, 'and the picture keeps its own size')
+  /* The cast is capped in device pixels, or a scaled display gets a picture
+     shrunk to fit a cap that was already measured in page pixels. */
+  calls.length = 0
+  await page.cast()
+  const cap = calls.find((call) => call.method === 'Page.startScreencast')
+  assert.equal(cap.params.maxWidth, 3000, 'the cap leaves room for the display scale')
+  assert.equal(cap.params.maxHeight, 1800)
+})
+
+test('the display scale is measured with the page, not guessed from a frame', async () => {
+  /* Windows at 150%: a 3000x1800 frame is a page laid out at 2000x1200, so
+     the scale has to come from the page along with its size. */
+  const own = []
+  const page = new SidecarPage({
+    on: (handler) => own.push(handler),
+    send: async (method) => (method === 'Runtime.evaluate' ? { result: { value: [2000, 1200, 1.5] } } : {}),
+  }, 'unit-dpr', 0, () => 0)
+  await page.start()
+  page.sentAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'dpr-one', sessionId: 51, metadata: { deviceWidth: 3000, deviceHeight: 1800 } },
+  })
+  await settle()
+  assert.deepEqual({ ...page.view }, { width: 2000, height: 1200 }, 'the page lays out at 2000x1200')
+  assert.equal(page.dpr, 1.5, 'and the scale between the frame and the page is remembered')
+})
+
 test('a control from the last read is found without reading the page again', async () => {
   const looks = []
   const page = {

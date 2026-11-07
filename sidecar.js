@@ -644,6 +644,10 @@ export class SidecarPage {
        in a row is the same layout, and asking again would spend a round trip
        per frame. */
     this.seenFrame = /** @type {{width: number, height: number}|null} */ (null)
+    /* The scale between a frame's device pixels and the page's own: learned
+       from the page, and what lets a resize be believed on the frame that
+       reports it instead of one frame later. */
+    this.dpr = 0
     /* What the pane already has: an unchanged picture is not worth a second
        copy, but silence still needs a heartbeat or the pane thinks the stream
        died. */
@@ -1251,7 +1255,12 @@ export class SidecarPage {
            page answers in the pixels its own input is counted in. */
         const metaWidth = Math.round(Number(metadata?.deviceWidth))
         const metaHeight = Math.round(Number(metadata?.deviceHeight))
-        if (this.seenFrame === null || this.seenFrame.width !== metaWidth || this.seenFrame.height !== metaHeight) {
+        /* A cast that had to scale a frame down to fit reports the size it
+           scaled to, not the size of the page it shows. Taking that as the
+           page would shrink the mirror and put the hand somewhere else, so a
+           frame that only repeats the cast's own cap teaches nothing. */
+        const echoedCap = metaWidth === Math.round(this.view.width) && metaHeight === Math.round(this.view.height)
+        if (echoedCap !== true && (this.seenFrame === null || this.seenFrame.width !== metaWidth || this.seenFrame.height !== metaHeight)) {
           this.seenFrame = Number.isFinite(metaWidth) && Number.isFinite(metaHeight) ? { width: metaWidth, height: metaHeight } : null
           void this.remeasure(metaWidth, metaHeight)
         }
@@ -1370,6 +1379,17 @@ export class SidecarPage {
       })
     }
     await this.readTitle()
+    /* The display scale turns a frame counted in device pixels back into the
+       page it shows, and it is what keeps the cast capped in the pixels a
+       scaled display really has. Measured here, once, so the first frame after
+       a resize already has it; the layout measure refreshes it when it moves. */
+    await this.cdp
+      .send('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true })
+      .then((answer) => {
+        const scale = Number(answer?.result?.value)
+        if (Number.isFinite(scale) && scale > 0) this.dpr = scale
+      })
+      .catch(() => {})
     return this
   }
 
@@ -1420,6 +1440,8 @@ export class SidecarPage {
       if (this.casting !== true) return
       void this.recast(this.castQuality)
     }, 250)
+    /* A pending restack is not a reason for the app to stay awake. */
+    this.sizeClock.unref?.()
   }
 
   /** @returns {Promise<void>} resolves once the page is casting. */
@@ -1438,12 +1460,16 @@ export class SidecarPage {
     }
     this.casting = true
     /* Full-resolution mirror at a quality that keeps small text readable;
-       `optimizeForSpeed` keeps the encoder from adding to the round trip. */
+       `optimizeForSpeed` keeps the encoder from adding to the round trip. The
+       cap is in device pixels: on a display that scales, a cap given in page
+       pixels makes the cast downscale a picture that was already the right
+       size, and the pane shows a soft copy of a sharp page. */
+    const scale = this.dpr > 0 ? this.dpr : 1
     await this.cdp.send('Page.startScreencast', {
       format: 'jpeg', // ui-copy-ignore
       quality: this.castQuality, // ui-copy-ignore
-      maxWidth: this.view.width, // ui-copy-ignore
-      maxHeight: this.view.height,
+      maxWidth: Math.round(this.view.width * scale), // ui-copy-ignore
+      maxHeight: Math.round(this.view.height * scale),
       optimizeForSpeed: true,
       everyNthFrame: 1,
     }).catch(() => {
@@ -1478,12 +1504,14 @@ export class SidecarPage {
        layout viewport that leaves the scrollbar out would put the last column
        of pixels out of reach. */
     const answered = await this.cdp
-      .send('Runtime.evaluate', { expression: '[window.innerWidth, window.innerHeight]', returnByValue: true })
+      .send('Runtime.evaluate', { expression: '[window.innerWidth, window.innerHeight, window.devicePixelRatio]', returnByValue: true })
       .catch(() => null)
     const told = answered === null || answered === undefined ? null : answered.result
     const pair = told === null || told === undefined ? null : told.value
     let width = Array.isArray(pair) === true ? Number(pair[0]) : NaN
     let height = Array.isArray(pair) === true ? Number(pair[1]) : NaN
+    const scale = Array.isArray(pair) === true ? Number(pair[2]) : NaN
+    if (Number.isFinite(scale) && scale > 0) this.dpr = scale
     if (!(Number.isFinite(width) && Number.isFinite(height) && width >= 200 && height >= 200)) {
       const metrics = await this.cdp.send('Page.getLayoutMetrics').catch(() => null)
       const css = metrics === null || metrics === undefined ? null : metrics.cssLayoutViewport
