@@ -624,6 +624,35 @@ test('a screencast frame carries the person hold and cannot throw out of the CDP
   rmSync(join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-hold-broken'), { recursive: true, force: true })
 })
 
+test('a frame that arrives at another size teaches the page its size', async () => {
+  /* A window keeps its own size, and a display scale can change it at any
+     time. The frame itself carries the size the page laid out at, so the one
+     number the picture, the click mapping and the frame header all use is the
+     size the browser reports, not the size anyone asked for. */
+  const own = []
+  const sized = new SidecarPage({ on: (handler) => own.push(handler), send: async () => ({}) }, 'unit-size', 0, () => 0)
+  await sized.start()
+  const sizedSeen = []
+  sized.frames.add((message) => sizedSeen.push(message))
+  assert.deepEqual({ ...sized.view }, { width: 1440, height: 900 })
+  sized.sentAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'sized-one', sessionId: 21, metadata: { deviceWidth: 1000, deviceHeight: 700 } },
+  })
+  assert.deepEqual({ ...sized.view }, { width: 1000, height: 700 }, 'the frame wins over the request')
+  assert.equal(sizedSeen[0].w, 1000)
+  assert.equal(sizedSeen[0].h, 700)
+  /* A size no screen has is noise from a frame, not a layout. */
+  sized.sentAt = 0
+  sized.lastShotAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'sized-two', sessionId: 22, metadata: { deviceWidth: 12, deviceHeight: 9 } },
+  })
+  assert.deepEqual({ ...sized.view }, { width: 1000, height: 700 }, 'a bad size changes nothing')
+})
+
 test('a control from the last read is found without reading the page again', async () => {
   const looks = []
   const page = {

@@ -58,9 +58,12 @@ The lookup list has a Windows entry: `Google\Chrome\Application\chrome.exe` unde
 out as CDP pointer and key events, so nothing on that path depends on the platform. Two features do
 not exist there: the Flash canvas (macOS only) and importing a sign-in from the system keychain.
 
-No Windows machine has run the release test pass, and the layout fix in 0.47.31 was measured on
-macOS in a browser that keeps its own size instead. Treat the Windows path as code, not a checked
-claim, until such a run exists.
+No Windows machine has run the release test pass. The 0.47.31 and 0.47.32 layout fixes were
+measured on macOS, in a Chrome that keeps its own size: the page was laid out at 1000×700 while the
+pane still held 1440×900, and a click at the middle of the mirror landed 100 px low before the fix.
+Those two fixes measure the frame that arrives and adopt the size each frame reports, so a resized
+window and a changed display scale are followed without asking the browser for anything. Treat the
+Windows path as code, not a checked claim, until such a run exists.
 
 ## When an assumption fails
 
@@ -70,7 +73,7 @@ claim, until such a run exists.
 | Harness older than 0.2.0 | The plugin does not load. |
 | A Harness build with no right column | The tools still drive the browser; there is nowhere to show the mirror. |
 | A site that refuses headless | The user agent is replaced with an ordinary desktop Chrome string; a site that insists on a window can be opened with `headless: false`. |
-| A page wider than 1440×900 | The page lays out at the column's size. The mirror measures the frame that actually arrives, so a browser that keeps its own size still maps a click onto the page it shows. |
+| A page wider than 1440×900 | The page lays out at the column's size. The mirror measures the frame that actually arrives, and each frame reports the size the page laid out at, so a resized window, a changed display scale, or a browser that keeps its own size all map a click onto the page that is on screen. |
 | Two plugin instances, one profile | The second adopts the Chrome already running on that profile rather than starting another. |
 | The debugging file left by a crashed Chrome | It is removed and the browser is started again. |
 

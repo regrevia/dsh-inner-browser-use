@@ -1237,6 +1237,10 @@ export class SidecarPage {
         const { data, sessionId, metadata } = message.params ?? {}
         void this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
         if (typeof data !== 'string' || data === '') return
+        /* Every frame says how big the page it shows was. A window resize or a
+           display scale change arrives here first, so the picture and the size
+           the input is mapped onto stay the same picture. */
+        this.tookSize(metadata?.deviceWidth, metadata?.deviceHeight)
         this.latest = data
         this.lastFrameAt = Date.now()
         this.seq += 1
@@ -1425,15 +1429,32 @@ export class SidecarPage {
    * against a shape the page never had. The report wins over the request.
    * @returns {Promise<void>} leaves `view` alone when the report is unusable.
    */
+  /**
+   * Believe the size the page reports over the size anyone asked for.
+   * A window keeps its own size, a display scale changes it, and a request the
+   * browser refuses leaves the asked-for number behind: in every one of those
+   * cases the only usable size is the one the browser says it laid out at.
+   * @param {number} width - CSS pixels the browser reports.
+   * @param {number} height - CSS pixels the browser reports.
+   * @returns {boolean} Whether this changed the size the page is known by.
+   */
+  tookSize(width, height) {
+    const w = Math.round(Number(width))
+    const h = Math.round(Number(height))
+    if (!(w >= 200) || !(h >= 200) || w > 2560 || h > 2560) return false
+    if (w === this.view.width && h === this.view.height) return false
+    this.view = { width: w, height: h }
+    return true
+  }
+
   async laidOut() {
     if (this.cdp === null || this.cdp === undefined) return
     const metrics = await this.cdp.send('Page.getLayoutMetrics').catch(() => null)
     const css = metrics === null || metrics === undefined ? null : metrics.cssLayoutViewport
-    const w = Math.round(Number(css === null || css === undefined ? 0 : css.clientWidth))
-    const h = Math.round(Number(css === null || css === undefined ? 0 : css.clientHeight))
-    if (!(w >= 200) || !(h >= 200) || w > 2560 || h > 2560) return
-    if (w === this.view.width && h === this.view.height) return
-    this.view = { width: w, height: h }
+    this.tookSize(
+      css === null || css === undefined ? 0 : css.clientWidth,
+      css === null || css === undefined ? 0 : css.clientHeight,
+    )
   }
 
   /**
