@@ -37,7 +37,15 @@ test('a file written sealed holds no readable value, and plain files are still r
   const text = readFileSync(path, 'utf8')
   assert.ok(!text.includes('another-secret'))
   assert.deepEqual(readSealed(path), { cookies: [{ value: 'another-secret' }] })
-  assert.equal(statSync(path).mode & 0o777, 0o600, 'only the owner can read a sign-in')
+  /* POSIX mode bits are the promise on Linux and macOS. Windows has no such
+     bits: chmod leaves 0o666 whatever the mode asked for, and the file is kept
+     by the folder's own access list, so asserting 0o600 there would only prove
+     the caller is not Windows. */
+  if (process.platform === 'win32') {
+    assert.equal(statSync(path).mode & 0o777, 0o666, 'Windows keeps the folder access list, not mode bits')
+  } else {
+    assert.equal(statSync(path).mode & 0o777, 0o600, 'only the owner can read a sign-in')
+  }
 
   const old = join(root, 'plain.json')
   writeFileSync(old, JSON.stringify([{ name: 'from-old-version' }]))
