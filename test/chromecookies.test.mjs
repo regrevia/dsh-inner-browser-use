@@ -96,6 +96,24 @@ test('a subdomain of the site imports too, and the site itself matches a parent 
   assert.deepEqual(cookiesFor(db, key, '').cookies, [])
 })
 
+test('a host whose Node has no SQLite of its own still reads the sealed values', { skip: sqlite === '' ? 'this host has no SQLite to build a store with' : false }, () => {
+  /* Node 22 keeps `node:sqlite` behind a flag, so the command line answers
+     instead. It writes a blob into JSON as text and loses bytes on the way,
+     which is how a store read fine on one host and came back unreadable on
+     another. Here the built-in driver is taken away on purpose. */
+  const db = makeStore('Cli Only')
+  const builtin = process.getBuiltinModule
+  try {
+    process.getBuiltinModule = () => undefined
+    const read = cookiesFor(db, key, 'example.com')
+    assert.deepEqual(read.cookies.map((row) => row.name).sort(), ['plain', 'session', 'sid'])
+    assert.equal(read.sealed, 1)
+    assert.equal(read.cookies.find((row) => row.name === 'sid').value, 'sealed-value')
+  } finally {
+    process.getBuiltinModule = builtin
+  }
+})
+
 test('profiles are found where the browser keeps them, newest use first, and junk is skipped', { skip: sqlite === '' ? 'this host has no SQLite to build a store with' : false }, () => {
   const rows = cookieStores('chrome')
   assert.ok(rows.length >= 2)

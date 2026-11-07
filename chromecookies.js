@@ -246,7 +246,11 @@ export function cookiesFor(db, key, host, cap = 80) { // ui-copy-ignore
   const site = String(host).replace(/^\./u, '').toLowerCase() // ui-copy-ignore
   if (site === '') return { cookies: [], sealed: 0 }
   const rows = onCopy(db, (copy) =>
-    query(copy, 'SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies'),
+    /* The sealed bytes travel as hex: a command-line driver writes a blob into
+       JSON as text and loses bytes that are not valid UTF-8, so a sign-in read
+       through it came back unreadable while the same store read through the
+       built-in driver worked. Hex is exact through either. */ // ui-copy-ignore
+    query(copy, 'SELECT host_key, name, value, hex(encrypted_value) AS enc_hex, path, expires_utc, is_secure, is_httponly, samesite FROM cookies'),
   )
   const cookies = []
   let sealed = 0
@@ -256,7 +260,10 @@ export function cookiesFor(db, key, host, cap = 80) { // ui-copy-ignore
     const raw = String(row?.name ?? '')
     if (raw === '') continue
     let value = String(row?.value ?? '')
-    if (value === '') value = unsealCookie(normalizeBlob(row?.encrypted_value), key, String(row?.host_key ?? ''))
+    if (value === '') {
+      const bytes = typeof row?.enc_hex === 'string' ? Buffer.from(row.enc_hex, 'hex') : normalizeBlob(row?.encrypted_value)
+      value = unsealCookie(bytes, key, String(row?.host_key ?? ''))
+    }
     if (value === '') {
       sealed += 1
       continue

@@ -1,3 +1,9 @@
+## 0.47.42 — 签名值的字节不能当文字过一遍
+
+同一个 Chrome 库，在 Node 24 上导得出来，在 Node 22 上一片空白。原因不在解密：Node 22 的 `node:sqlite` 要开标志，于是回落到命令行，而命令行把 BLOB 写进 JSON 时当文本处理，非 UTF-8 的字节在那一步就丢了。签名值全靠这些字节，丢一个就解不开，于是整站登录「导入成功但什么都没有」。
+
+现在封存值以十六进制过桥，两种驱动看到的完全一样。回归测试特意把内置驱动拿掉，只留命令行：这条路上解不出来就是失败。
+
 ## 0.47.41 — 一条路径是全平台的第一道关
 
 0.47.40 让 cookie 库按平台建、SQLite 从 PATH 找，但 Windows 上还剩最后一个红：最后一个测试自身还在用 `/usr/bin/sqlite3` 数行数。修掉之后，同类问题做成了守卫——`scripts/` 里不许出现 `/tmp/` 字面量，任何脚本不许 `spawnSync('/usr/bin/…')`，产品必须能从 `DSH_INNER_BROWSER_SQLITE3` 指定二进制。顺带修了三个只在 macOS 跑得动的开发脚本：`bench.mjs` 造 cookie 库的路径与 SQLite、`breadth.mjs` 两个上传用的临时文件、`check-flash.mjs` 的 Ruffle 默认位置。
