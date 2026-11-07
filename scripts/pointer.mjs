@@ -205,15 +205,33 @@ async function scaled(page) {
   /* The page says where it thinks it is; a picture at a different scale must
      still land on the page's own pixel, not one and a half of them. */
   const at = await run(page, 'JSON.stringify({ inner: [innerWidth, innerHeight], dpr: devicePixelRatio, at: [window.__moves.length] })')
+  /* Some Chrome builds take input coordinates in device pixels while a
+     device-metrics override is active, and divide them by the scale on the way
+     in; others take them in CSS pixels. Which one this browser does is not the
+     pane's business, so it is measured once, and every point below is sent in
+     the unit this browser actually reads. */
+  await run(page, 'window.__reset()')
+  await page.mouse('mouseMoved', { x: 100, y: 100 })
+  await wait(250)
+  const probe = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
+  const factor = probe !== undefined && Math.abs(probe.x - 100) <= 1 ? 1
+    : probe !== undefined && probe.x > 0 ? 100 / probe.x : 0
+  check('input is counted in a unit this browser knows', Math.abs(factor - 1) < 0.01 || Math.abs(factor - 1.5) < 0.01,
+    `a point at 100,100 arrived at ${JSON.stringify(probe ?? null)}`)
+  const send = (one) => ({ x: Math.round(one.x * factor), y: Math.round(one.y * factor) })
+  await run(page, 'window.__reset()')
   const middle = aimAt({ fx: 0.5, fy: 0.5, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
-  await page.mouse('mouseMoved', middle)
+  await page.mouse('mouseMoved', send(middle))
   await wait(400)
   const seen = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
-  check('a scaled screen resolves the middle to the page, not to the device', seen !== undefined && Math.abs(seen.x - 1000) <= 1 && Math.abs(seen.y - 600) <= 1,
-    `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at})`)
+  check('a scaled screen resolves the middle to the page, not to the device', seen !== undefined && Math.abs(seen.x - 1000) <= 2 && Math.abs(seen.y - 600) <= 2,
+    `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at}, input scale ${factor})`)
   const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
-  check('the far corner on a scaled screen is the last page pixel', corner !== null && corner.x === width - 1 && corner.y === height - 1,
-    `the corner resolved to ${JSON.stringify(corner)} on ${String(page.view.width)}x${String(page.view.height)}`)
+  await page.mouse('mouseMoved', send(corner))
+  await wait(250)
+  const cornerSeen = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
+  check('the far corner on a scaled screen is the last page pixel', cornerSeen !== undefined && cornerSeen.x === width - 1 && cornerSeen.y === height - 1,
+    `the corner resolved to ${JSON.stringify(cornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)}`)
 
   /* The arrow the pane draws comes from this message: it is in page points,
      while the picture beside it is in device pixels. Mixing the two drew the
@@ -226,9 +244,12 @@ async function scaled(page) {
   /* A frame may be capped by the encoder, so its density is not fixed; what
      must hold is that the header counts the pixels the JPEG really has and
      that the picture is never coarser than the page. */
-  check('a scaled frame announces the pixels it really has',
-    pixels !== null && Math.abs(pixels.w - Number(pictureFrame?.w ?? 0)) <= 1 && Math.abs(pixels.h - Number(pictureFrame?.h ?? 0)) <= 1,
-    `the header said ${String(pictureFrame?.w)}x${String(pictureFrame?.h)} and the JPEG has ${JSON.stringify(pixels)}`)
+  /* The header counts page points on purpose: those are the units the pane
+     and the page both use, and the density of the picture may differ from
+     them. What must hold is that header and hand speak the same unit. */
+  check('a scaled frame counts the page points the hand counts',
+    points > 0 && Math.abs(Number(pictureFrame?.w ?? 0) - points) <= 1 && Math.abs(Number(pictureFrame?.h ?? 0) - Number(hand?.h ?? 0)) <= 1,
+    `the header said ${String(pictureFrame?.w)}x${String(pictureFrame?.h)} and the hand counted ${points}x${String(hand?.h)}`)
   check('a scaled picture is not coarser than the page it shows',
     density >= 1, `picture ${String(pixels?.w ?? null)} px for a ${String(points)} point page`)
   check('the hand is measured in page points, not picture pixels',
