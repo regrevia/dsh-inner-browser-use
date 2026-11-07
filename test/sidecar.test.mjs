@@ -624,6 +624,43 @@ test('a screencast frame carries the person hold and cannot throw out of the CDP
   rmSync(join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-hold-broken'), { recursive: true, force: true })
 })
 
+test('a page that grows under a running cast is mirrored at its own size, once', async () => {
+  /* Frames are capped at the size the cast was started with, so a page that
+     grew comes back downsampled and the pane rescales a soft picture. The cast
+     follows the new size, but a window being dragged reports a size every few
+     frames: one restart is enough, and it happens once the window settles. */
+  const handlers = []
+  const sent = []
+  const cdp = { on: (handler) => handlers.push(handler), send: async (method, params) => { sent.push({ method, params }); return { data: 'still' } } }
+  const page = new SidecarPage(cdp, 'unit-grow', 0, () => 0)
+  await page.start()
+  page.casting = true
+  page.castQuality = 62
+  /* Freeze the quality ramp: this test counts restarts caused by the size. */
+  page.adaptAt = Date.now()
+  page.sentAt = 0
+  const cast = (data, width, height) => {
+    page.sentAt = 0
+    handlers[0]({ method: 'Page.screencastFrame', params: { data, sessionId: 31, metadata: { deviceWidth: width, deviceHeight: height } } })
+  }
+  cast('grow-a', 1920, 1080)
+  assert.deepEqual({ ...page.view }, { width: 1920, height: 1080 }, 'the size is adopted at once')
+  assert.equal(sent.filter((row) => row.method === 'Page.startScreencast').length, 0, 'the restart waits for the window to settle')
+  cast('grow-b', 1600, 900)
+  cast('grow-c', 1600, 900)
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  const started = sent.filter((row) => row.method === 'Page.startScreencast')
+  assert.equal(started.length, 1, 'one restart for the whole drag')
+  assert.equal(started[0].params.maxWidth, 1600)
+  assert.equal(started[0].params.maxHeight, 900)
+  /* A cast being stopped takes its pending restart with it. */
+  page.casting = true
+  cast('grow-d', 1800, 1000)
+  await page.stopCast()
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  assert.equal(sent.filter((row) => row.method === 'Page.startScreencast').length, 1, 'no restart after the cast stopped')
+})
+
 test('a frame that arrives at another size teaches the page its size', async () => {
   /* A window keeps its own size, and a display scale can change it at any
      time. The frame itself carries the size the page laid out at, so the one

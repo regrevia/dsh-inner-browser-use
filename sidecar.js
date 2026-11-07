@@ -730,6 +730,9 @@ export class SidecarPage {
        followed even though no call is waiting for it. */
     this.followUntil = 0
     this.followTimer = null
+    /* A page that changes size while casting needs the cast restarted at the
+       new size, once: a window being dragged asks for dozens of sizes. */
+    this.sizeClock = null
     /* When the address was last asked for: how long a failure took tells a
        browser still starting up apart from a network that said no. */
     this.navAt = 0
@@ -1240,7 +1243,7 @@ export class SidecarPage {
         /* Every frame says how big the page it shows was. A window resize or a
            display scale change arrives here first, so the picture and the size
            the input is mapped onto stay the same picture. */
-        this.tookSize(metadata?.deviceWidth, metadata?.deviceHeight)
+        if (this.tookSize(metadata?.deviceWidth, metadata?.deviceHeight)) this.followSize()
         this.latest = data
         this.lastFrameAt = Date.now()
         this.seq += 1
@@ -1390,6 +1393,22 @@ export class SidecarPage {
     } catch {
       /* a page that died mid-recast will be picked up by the next view */
     }
+  }
+
+  /**
+   * The page changed size under a running cast. Frames are capped at the size
+   * the cast was started with, so a page that grew comes back downsampled and
+   * the pane shows a rescaled picture. Follow the size once the window stops
+   * moving, instead of restarting the cast on every size in between.
+   * @returns {void}
+   */
+  followSize() {
+    if (this.sizeClock !== null) clearTimeout(this.sizeClock)
+    this.sizeClock = setTimeout(() => {
+      this.sizeClock = null
+      if (this.casting !== true) return
+      void this.recast(this.castQuality)
+    }, 250)
   }
 
   /** @returns {Promise<void>} resolves once the page is casting. */
@@ -1723,6 +1742,8 @@ export class SidecarPage {
   }
 
   async stopCast() {
+    if (this.sizeClock !== null) clearTimeout(this.sizeClock)
+    this.sizeClock = null
     if (!this.casting) return
     this.casting = false
     if (this.flashBridge === null) await this.cdp.send('Page.stopScreencast').catch(() => {})
@@ -3851,6 +3872,8 @@ export class Sidecar {
    * @returns {Promise<void>} done. */
   async putAway() {
     this.idleAt = 0
+    if (this.sizeClock !== null) clearTimeout(this.sizeClock)
+    this.sizeClock = null
     /* Nothing to wait for once the browser is going: a beat that fired into a
        stopped browser would try to put it away a second time. */
     this.sleepClock()
