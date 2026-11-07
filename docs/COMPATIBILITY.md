@@ -53,8 +53,14 @@ checked.
 
 ## Windows
 
-Not supported. There is no Windows path in the lookup list, and no installation of this plugin
-on Windows has been checked.
+The lookup list has a Windows entry: `Google\Chrome\Application\chrome.exe` under `Program Files`
+(and under `Program Files (x86)`). The browser is started without a console window, and input goes
+out as CDP pointer and key events, so nothing on that path depends on the platform. Two features do
+not exist there: the Flash canvas (macOS only) and importing a sign-in from the system keychain.
+
+No Windows machine has run the release test pass, and the layout fix in 0.47.31 was measured on
+macOS in a browser that keeps its own size instead. Treat the Windows path as code, not a checked
+claim, until such a run exists.
 
 ## When an assumption fails
 
@@ -64,7 +70,7 @@ on Windows has been checked.
 | Harness older than 0.2.0 | The plugin does not load. |
 | A Harness build with no right column | The tools still drive the browser; there is nowhere to show the mirror. |
 | A site that refuses headless | The user agent is replaced with an ordinary desktop Chrome string; a site that insists on a window can be opened with `headless: false`. |
-| A page wider than 1440×900 | The viewport is fixed, so the page lays out for 1440 wide; nothing is scaled. |
+| A page wider than 1440×900 | The page lays out at the column's size. The mirror measures the frame that actually arrives, so a browser that keeps its own size still maps a click onto the page it shows. |
 | Two plugin instances, one profile | The second adopts the Chrome already running on that profile rather than starting another. |
 | The debugging file left by a crashed Chrome | It is removed and the browser is started again. |
 

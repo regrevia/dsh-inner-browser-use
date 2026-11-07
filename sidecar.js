@@ -1419,6 +1419,24 @@ export class SidecarPage {
   }
 
   /**
+   * The size the page is really laid out at, as the browser itself reports it.
+   * A real window on a scaled display can keep its own size instead of the one
+   * that was asked for, and then both the picture and the pointer are measured
+   * against a shape the page never had. The report wins over the request.
+   * @returns {Promise<void>} leaves `view` alone when the report is unusable.
+   */
+  async laidOut() {
+    if (this.cdp === null || this.cdp === undefined) return
+    const metrics = await this.cdp.send('Page.getLayoutMetrics').catch(() => null)
+    const css = metrics === null || metrics === undefined ? null : metrics.cssLayoutViewport
+    const w = Math.round(Number(css === null || css === undefined ? 0 : css.clientWidth))
+    const h = Math.round(Number(css === null || css === undefined ? 0 : css.clientHeight))
+    if (!(w >= 200) || !(h >= 200) || w > 2560 || h > 2560) return
+    if (w === this.view.width && h === this.view.height) return
+    this.view = { width: w, height: h }
+  }
+
+  /**
    * The column changed size: lay the page out at that size so the picture fills
    * the frame instead of sitting letterboxed inside it.
    * @param {number} width - CSS pixels of the frame. @param {number} height - CSS pixels of the frame.
@@ -1453,6 +1471,11 @@ export class SidecarPage {
       deviceScaleFactor: 1,
       mobile: false, // ui-copy-ignore
     }).catch(() => {})
+    /* The answer to the override is the browser's, not ours: ask where the
+       page actually landed. A window that keeps its own size on a scaled
+       display would otherwise leave the mirror the wrong shape and the pointer
+       off the mark for every click. */
+    await this.laidOut()
     /* A Flash window is captured from a hidden app: there is no screencast to
        restart, and its own resize path owns the picture. */
     if (this.casting === true) {

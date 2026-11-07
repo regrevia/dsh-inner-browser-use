@@ -449,12 +449,34 @@ test('the picture fills the column even when the last measure was stale', () => 
   assert.ok(source.includes('const a = at.getBoundingClientRect()'))
   /* One scale for both axes, the smaller one: the picture keeps its shape and
      the leftover space becomes a letterbox instead of a distorted page. */
-  assert.ok(source.includes('const scale = Math.min(a.width / view.w, a.height / view.h)'))
+  assert.ok(source.includes('const scale = Math.min(a.width / fw, a.height / fh)'))
   /* The offset is the letterbox half, so a click maps back onto the page. */
-  assert.ok(source.includes('x: a.left - b.left + (a.width - view.w * scale) / 2'))
-  assert.ok(source.includes('y: a.top - b.top + (a.height - view.h * scale) / 2'))
+  assert.ok(source.includes('x: a.left - b.left + (a.width - fw * scale) / 2'))
+  assert.ok(source.includes('y: a.top - b.top + (a.height - fh * scale) / 2'))
   /* A frame that has no element yet cannot answer, and is not guessed at. */
   assert.ok(source.includes("if (at === null || at === undefined || areaEl === null || areaEl === undefined) return null"))
+})
+
+test('the picture is measured by the frame that arrived, not by the size the page claimed', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* A real browser window on a display that scales it can hand back frames at
+     the window's size while the viewport it reports never changed. Measuring
+     the letterbox with the reported size then cuts the picture short and every
+     click lands a little too far: on Windows at 125% the pointer misses what
+     the hand points at. The frame carries its own size, and that size wins. */
+  assert.ok(source.includes('const fw = at.naturalWidth > 1 ? at.naturalWidth : Math.max(1, Math.round(view.w))'),
+    'the frame says how wide it is')
+  assert.ok(source.includes('const fh = at.naturalHeight > 1 ? at.naturalHeight : Math.max(1, Math.round(view.h))'),
+    'and how tall')
+  /* The fraction of the picture, and the shape sent with it, both come from the
+     frame: the page side turns them back into pixels of the page that arrived. */
+  assert.ok(source.includes('const wide = spot.w'))
+  assert.ok(source.includes('const tall = spot.h'))
+  assert.ok(source.includes('const fw = spot.fw'))
+  assert.ok(source.includes('const fh = spot.fh'))
+  /* A frame that has not decoded yet has no size of its own: the reported one
+     is the fallback rather than zero. */
+  assert.ok(!source.includes('at.naturalWidth : 0'))
 })
 
 test('the sound switch is there only for a page that can make noise, and says what it did', () => {

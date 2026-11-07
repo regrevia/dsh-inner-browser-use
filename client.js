@@ -779,12 +779,22 @@ window.__ModuleLoader__.load({
         const a = at.getBoundingClientRect()
         const b = areaEl.getBoundingClientRect()
         if (!(a.width > 1) || !(a.height > 1)) return null
-        const scale = Math.min(a.width / view.w, a.height / view.h)
+        /* The picture's own size, not the size the page said it was. A display
+           that scales a real browser window hands back frames at that size, so
+           a box measured from the reported size cuts the picture short and
+           every click slides. The frame is the page: take its numbers. */
+        const fw = at.naturalWidth > 1 ? at.naturalWidth : Math.max(1, Math.round(view.w))
+        const fh = at.naturalHeight > 1 ? at.naturalHeight : Math.max(1, Math.round(view.h))
+        const scale = Math.min(a.width / fw, a.height / fh)
         if (!(scale > 0)) return null
         return {
           scale,
-          x: a.left - b.left + (a.width - view.w * scale) / 2,
-          y: a.top - b.top + (a.height - view.h * scale) / 2,
+          fw,
+          fh,
+          w: fw * scale,
+          h: fh * scale,
+          x: a.left - b.left + (a.width - fw * scale) / 2,
+          y: a.top - b.top + (a.height - fh * scale) / 2,
         }
       }
 
@@ -933,14 +943,16 @@ window.__ModuleLoader__.load({
         const box = el.getBoundingClientRect()
         const px = event.clientX - box.left - spot.x
         const py = event.clientY - box.top - spot.y
-        const wide = view.w * spot.scale
-        const tall = view.h * spot.scale
+        const wide = spot.w
+        const tall = spot.h
         if (!(wide > 0) || !(tall > 0)) return null
         if (px < -1 || py < -1 || px > wide + 1 || py > tall + 1) return null
         const fx = Math.min(1, Math.max(0, px / wide))
         const fy = Math.min(1, Math.max(0, py / tall))
-        const fw = Math.max(1, Math.round(view.w))
-        const fh = Math.max(1, Math.round(view.h))
+        /* The shape travels with the fraction: the page is the picture that
+           arrived, even when the size it reported was never applied. */
+        const fw = spot.fw
+        const fh = spot.fh
         return { fx, fy, fw, fh, x: Math.round(fx * (fw - 1)), y: Math.round(fy * (fh - 1)) }
       }
       const ime = React.useRef(null)

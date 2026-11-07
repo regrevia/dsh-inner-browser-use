@@ -120,6 +120,36 @@ test('a picture keeps its shape, and the leftover becomes bars', () => {
   assert.equal(pictureBox(1440, 900, 0, 0), null)
 })
 
+test('a picture measured by the page\'s claim is measured wrong, and the real frame fixes it', () => {
+  /* Measured on a real Chrome: a window can lay the page out at 1000x700 while
+     the pane still remembers asking for 1440x900, and the frame that arrives is
+     1000x700. With the frame's own size the middle of the picture is the middle
+     of the page; with the claimed size the same hand lands 100 pixels lower. */
+  const real = pictureBox(1000, 700, 480, 640)
+  assert.equal(real.scale, 0.48)
+  assert.equal(real.w, 480)
+  assert.equal(real.y, 152)
+  const middle = fractionAt(real.x + real.w / 2, real.y + real.h / 2, real)
+  assert.deepEqual(pointAt(middle.fx, middle.fy, 1000, 700), { x: 500, y: 350 })
+  /* The old measurement, for the number this replaces: 1440x900 in the same
+     box draws the picture 300 tall starting at 170, so the same hand reads as
+     a fraction of a picture that is not the one on screen. */
+  const claimed = pictureBox(1440, 900, 480, 640)
+  assert.equal(claimed.y, 170)
+  assert.equal(claimed.h, 300)
+  const hand = real.y + real.h / 2
+  assert.equal(hand, 320)
+  const oldFy = (hand - claimed.y) / claimed.h
+  assert.equal(oldFy, 0.5)
+  assert.deepEqual(pointAt(0.5, oldFy, 1440, 900), { x: 720, y: 450 })
+  /* Every click below the middle drifts further: the bottom of the picture is
+     the bottom of the page, and the claimed box ends above it. */
+  const bottom = fractionAt(real.x + real.w / 2, real.y + real.h - 1, real)
+  assert.deepEqual(pointAt(bottom.fx, bottom.fy, 1000, 700), { x: 500, y: 697 })
+  const oldBottom = (real.y + real.h - 1 - claimed.y) / claimed.h
+  assert.ok(oldBottom > 1, 'the claimed box has already ended')
+})
+
 test('a click travels as a fraction of the picture, and comes back as the same pixel', () => {
   const box = pictureBox(1440, 900, 700, 900)
   for (const [fx, fy] of [[0, 0], [0.1, 0.15], [0.5, 0.5], [0.85, 0.75], [1, 1]]) {

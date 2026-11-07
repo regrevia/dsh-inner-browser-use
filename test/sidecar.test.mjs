@@ -811,9 +811,40 @@ test('the page lays out at the size of its column, so the mirror fills the frame
   page.still = async () => {}
   sent.length = 0
   await page.setViewport(700, 860)
-  assert.deepEqual(sent.map((call) => call.method).slice(0, 2), ['Emulation.setDeviceMetricsOverride', 'Page.stopScreencast'])
+  assert.deepEqual(sent.map((call) => call.method).filter((method) => method !== 'Page.getLayoutMetrics').slice(0, 2), ['Emulation.setDeviceMetricsOverride', 'Page.stopScreencast'])
   const started = sent.find((call) => call.method === 'Page.startScreencast')
   assert.deepEqual({ w: started.params.maxWidth, h: started.params.maxHeight }, { w: 700, h: 860 })
+})
+
+test('a size the browser did not take is replaced by the size it reports', async () => {
+  /* The pane asks for the column's shape, and the browser answers with where
+     the page really landed. A real window on a scaled display can keep its own
+     size: believing the request then draws the mirror at one shape and sends
+     the pointer at another, which is a click that misses its mark. */
+  const asked = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method) => {
+      asked.push(method)
+      if (method === 'Page.getLayoutMetrics') return { cssLayoutViewport: { clientWidth: 1250, clientHeight: 875 } }
+      return {}
+    },
+  }, 'default')
+  const view = await page.setViewport(1000, 700)
+  assert.deepEqual(view, { width: 1250, height: 875 }, 'the report wins over the request')
+  assert.ok(asked.includes('Page.getLayoutMetrics'), 'the page was asked, not assumed')
+
+  /* A report that cannot be a browser, and a page that cannot answer at all,
+     both leave the size in hand alone instead of throwing on a resize. */
+  page.cdp = { send: async () => ({ cssLayoutViewport: { clientWidth: 12, clientHeight: 9 } }) }
+  await page.laidOut()
+  assert.deepEqual(page.view, { width: 1250, height: 875 })
+  page.cdp = { send: async () => { throw new Error('the page is gone') } }
+  await page.laidOut()
+  assert.deepEqual(page.view, { width: 1250, height: 875 })
+  page.cdp = null
+  await page.laidOut()
+  assert.deepEqual(page.view, { width: 1250, height: 875 })
 })
 
 test('a polled mirror sends a still picture once, not once per poll', async () => {
