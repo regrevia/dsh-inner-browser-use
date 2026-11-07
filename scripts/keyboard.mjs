@@ -11,12 +11,15 @@
  * Exit code 0 means every key matched and every shortcut changed the field the
  * way the same shortcut does in Chrome. Another platform runs the same file.
  */
+import { mkdtempSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Sidecar } from '../sidecar.js?v=1'
 import { KEYS, pressKey, modifierBits } from '../tools.js?v=1'
 
-process.env.DSH_INNER_BROWSER_STATE_DIR ??= '/tmp/dsh-keys-state'
+process.env.DSH_INNER_BROWSER_STATE_DIR ??= mkdtempSync(join(tmpdir(), 'dsh-keys-state-'))
 
 const PAGE = `<!doctype html><meta charset="utf-8"><title>keys</title>
 <style>body{font:16px system-ui;padding:20px}textarea,input{font:inherit;width:260px;margin:8px 0;display:block}</style>

@@ -1,3 +1,9 @@
+## 0.47.39 — 存在的测试文件现在都会跑，Windows 上的按键作业也能启动浏览器
+
+`npm test` 一直是一张手写清单，`test/` 里 31 个文件只列了 27 个；`pixels.test.mjs`（超宽页落点换算）、`tactics.test.mjs`、`flash-check.test.mjs`、`chromecookies.test.mjs` 从未进过 CI，几何换算改坏了也没人知道。现在 `scripts/unit.mjs` 读目录，31 个文件、356 项全跑，另加一条测试钉住「清单不能回来」。
+
+上一版让 Windows 的 `keys` 作业真的跑起来后，它立刻红了：`Chrome did not open a debugging port`。原因是 `keyboard.mjs` 把状态目录写死成 `/tmp/dsh-keys-state`，Windows 上没有 `/tmp`。改用 `mkdtempSync(tmpdir())`，和 `pointer.mjs` 一致。
+
 ## 0.47.38 — Windows 上的真 Chrome 检查真的跑起来了
 
 上一版加的 `pointer` 作业在 Windows 上是绿的，但一行输出都没有：三个脚本都用 `` `file://${process.argv[1]}` `` 判断「我是不是被直接运行的」，Windows 的盘符路径拼出来不是 URL，判断永远为假，`main()` 从未执行，进程照样退出 0。`keys` 作业在 Windows 上从加上那天起就是这样——绿了，什么都没验。

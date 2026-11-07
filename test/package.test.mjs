@@ -163,3 +163,13 @@ test('a script that decides it is the entry runs on Windows too', () => {
     assert.ok(!source.includes('`file://${process.argv[1]}`'), `${name} still compares against a hand-built file URL`)
   }
 })
+
+test('a test file that exists is a test file that runs', () => {
+  /* Four suites sat in test/ while `npm test` ran a hand-kept list of the
+     others, so a regression in the page geometry could not fail the build.
+     The suite reads the directory now, and this holds it to that. */
+  assert.match(pkg.scripts.test, /scripts\/unit\.mjs/)
+  const runner = readFileSync(join(root, 'scripts', 'unit.mjs'), 'utf8')
+  assert.ok(runner.includes("readdirSync(join(root, 'test'))"), 'the runner lists tests by reading the folder')
+  assert.ok(!/test\/[\w.-]+\.test\.mjs/.test(pkg.scripts.test), 'npm test does not keep its own list of files')
+})
