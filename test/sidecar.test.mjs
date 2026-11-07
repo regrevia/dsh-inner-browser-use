@@ -819,6 +819,41 @@ test('a frame that only repeats the cast cap does not shrink the page', async ()
   assert.equal(cap.params.maxHeight, 1800)
 })
 
+test('a frame that says the page changed shape waits for the measurement', async () => {
+  /* A resize frame is drawn at the old shape while its header is about to be
+     replaced. Shown at once, the picture and the hand disagree for exactly the
+     moment the person is dragging the window; holding it back for one
+     measurement costs a frame, not the pointer. */
+  const own = []
+  const sent = []
+  const cdp = {
+    on: (handler) => own.push(handler),
+    send: async (method) => {
+      sent.push(method)
+      if (method === 'Runtime.evaluate') return { result: { value: [2400, 1400, 1] } }
+      if (method === 'Page.captureScreenshot') return { data: 'after' }
+      return {}
+    },
+  }
+  const page = new SidecarPage(cdp, 'unit-resize', 0, () => 0)
+  await page.start()
+  page.view = { width: 2000, height: 1200 }
+  page.dpr = 1
+  const frames = []
+  page.frames.add((message) => frames.push(message))
+  page.sentAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'old-shape', sessionId: 71, metadata: { deviceWidth: 3000, deviceHeight: 1800 } },
+  })
+  assert.equal(frames.length, 0, 'the frame drawn at the old shape is not shown')
+  await settle()
+  assert.deepEqual({ ...page.view }, { width: 2400, height: 1400 }, 'the page is measured before it is shown')
+  assert.equal(frames.length, 1, 'one fresh picture goes out after the measurement')
+  assert.equal(frames[0].w, 2400, 'and it carries the measured shape')
+  assert.equal(frames[0].jpeg, 'after', 'taken after the page changed shape, not before')
+})
+
 test('the display scale is measured with the page, not guessed from a frame', async () => {
   /* Windows at 150%: a 3000x1800 frame is a page laid out at 2000x1200, so
      the scale has to come from the page along with its size. */

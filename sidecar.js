@@ -679,6 +679,9 @@ export class SidecarPage {
     this.crashed = false
     this.title = ''
     this.casting = false
+    /* A frame that says the page changed shape is held back until the page has
+       been asked its new shape: the two must never disagree in the pane. */
+    this.resizing = false
     /* The cast quality moves with what the page costs to transport. */
     /* A big viewport carries more pixels per frame; it starts lighter and the
        first heavy frame settles the rest. */
@@ -1260,14 +1263,27 @@ export class SidecarPage {
            page would shrink the mirror and put the hand somewhere else, so a
            frame that only repeats the cast's own cap teaches nothing. */
         const echoedCap = metaWidth === Math.round(this.view.width) && metaHeight === Math.round(this.view.height)
-        if (echoedCap !== true && (this.seenFrame === null || this.seenFrame.width !== metaWidth || this.seenFrame.height !== metaHeight)) {
+        const shaped = Number.isFinite(metaWidth) && Number.isFinite(metaHeight)
+        if (shaped && echoedCap !== true && (this.seenFrame === null || this.seenFrame.width !== metaWidth || this.seenFrame.height !== metaHeight)) {
           this.seenFrame = Number.isFinite(metaWidth) && Number.isFinite(metaHeight) ? { width: metaWidth, height: metaHeight } : null
+          /* This frame was drawn at a size the page may no longer be laid out
+             at, and the shape in its header is being re-measured right now.
+             Showing it would put the picture and the hand in different shapes
+             for a moment — the one moment a resize is most visible — so the
+             measurement finishes first and a fresh picture goes out then. */
+          this.resizing = true
           void this.remeasure(metaWidth, metaHeight)
+            .catch(() => {})
+            .then(() => {
+              this.resizing = false
+              void this.still()
+            })
         }
         this.latest = data
         this.lastFrameAt = Date.now()
         this.seq += 1
         this.bytes += data.length
+        if (this.resizing === true) return
         /* Every so often, let the weight of the last frame decide the quality
            of the next one. Restarting the cast is cheap and rare; a heavy
            page pays for itself in every frame of every later action. */
@@ -1446,6 +1462,7 @@ export class SidecarPage {
 
   /** @returns {Promise<void>} resolves once the page is casting. */
   async cast() {
+    this.resizing = false
     if (this.flashBridge !== null) {
       if (this.casting) return
       this.casting = true
