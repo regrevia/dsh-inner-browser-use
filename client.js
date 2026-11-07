@@ -980,6 +980,15 @@ window.__ModuleLoader__.load({
         const held = pressed.current
         if (held === null) return
         pressed.current = null
+        /* A move still waiting in the queue would leave after the release with
+           the button mask on it: the page reads a button that went down again
+           and keeps dragging after the hand let go. The release itself carries
+           the last point, so the waiting one has nothing left to say. */
+        moving.current = null
+        if (moveClock.current !== 0) {
+          clearTimeout(moveClock.current)
+          moveClock.current = 0
+        }
         const point = event === null || event === undefined ? held : toView(event) ?? held
         /* An app that never learned press and release would swallow both and
            the hand would never click: fall back to the one event it knows. */

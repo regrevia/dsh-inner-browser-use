@@ -1,3 +1,14 @@
+## 0.47.34 — 松手之后，那只还在队列里的手不再按住按钮
+
+- **症状**：拖滑块、在画布上画线、拖选文字时，手已经松开，页面里那条线/选中区域还会自己再动一下，看起来像慢半拍；个别画布应用（按 `buttons` 判断按下状态的）松手后仍当你在拖。
+- **根因**：移动事件为了「只发最新的一点」会进一个 40 ms 的队列。手在队列还没发出去时松开，`release()` 只清 `pressed.current` 并发 `up`，没管队列里那个点——它带着 `pressed: true` 在 `up` **之后**才发出去。服务端翻译成 `mouseMoved` 时按 `pressed` 填 `buttons` 掩码，于是页面在 `mouseup` 之后收到一个 `buttons=1` 的 `mousemove`。
+- **修法**：`release()` 里先清掉待发的点与它的定时器（`moving.current = null`、`clearTimeout(moveClock.current)`），再发 `up`。松手那一下本来就把最后位置随 `up` 一起发，队列里那个点没有信息可补。
+- **实测**（真实 Chrome、headless、`/tmp/probe30.mjs`；页面用捕获阶段记 `mousedown/mousemove/mouseup` 的 `buttons`）：
+  - 修复前的顺序（press → 队列里的 pressed move → release）：页面日志 `down:1 → move:1 → up:0 → move:1`，松手后仍有 **1 个 `buttons=1` 的移动**。
+  - 修复后的顺序（release 前丢掉待发的点）：`down:1 → move:1 → up:0`，松手后 **0 个**按住状态的移动。
+- **测试**：**326 项，324 通过，2 项按环境跳过，0 失败**。新增 1 项：松手会清掉待发的点、清掉它的定时器，且这两步在 `up` 之前。
+- **诚实边界**：macOS 上真实 Chrome 实测；Windows 真机仍未跑过发布测试。窗口失焦（`blur`/`visibilitychange`）走的是同一个 `release()`，一并修好。
+
 ## 0.47.33 — 页面变大了，镜子跟着提高拍摄尺寸
 
 - **症状**：窗口拖大（或系统缩放调小、页面按更大的视口重排）之后，右栏画面整体发软，小字糊成一团；越放大越明显，但点位、滚动位置都还对。

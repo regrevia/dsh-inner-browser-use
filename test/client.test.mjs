@@ -535,6 +535,19 @@ test('a click names a fraction of the picture, not a pixel of a stale one', () =
   assert.ok(source.includes('const spot = pointer === null ? null : picture()'))
 })
 
+test('a move still waiting to leave does not leave after the release', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* A move waits up to 40 ms to be the newest of its burst. If the hand lets go
+     inside that window, the waiting one used to leave after the release with
+     the button mask on it: real Chrome then reports a held move after the
+     mouseup, and a slider or a canvas keeps dragging on its own. The release
+     carries the last point itself, so the waiting one is dropped. */
+  assert.ok(source.includes('moving.current = null\n        if (moveClock.current !== 0) {'), 'the queue is emptied on release')
+  assert.ok(source.includes('clearTimeout(moveClock.current)'), 'and its pending clock is cleared')
+  const release = source.slice(source.indexOf('const release = (event) =>'), source.indexOf('const onPointerDown = (event) =>'))
+  assert.ok(release.indexOf('moveClock.current = 0') < release.indexOf("kind: 'up'"), 'before the release is sent, not after')
+})
+
 test('a press stays down until the hand lets go, so a drag can drag', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* The picture used to send a click on the way down, which is press and
