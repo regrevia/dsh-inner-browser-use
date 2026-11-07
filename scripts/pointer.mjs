@@ -152,6 +152,34 @@ async function dragged(page) {
   return { moves: moves.length, wheels: wheels.length }
 }
 
+/** A screen that scales by 150% is how Windows usually arrives. */
+async function scaled(page) {
+  const width = 2000
+  const height = 1200
+  await page.cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1.5, mobile: false })
+  await page.stopCast()
+  await page.cast()
+  const deadline = Date.now() + 6000
+  while (Date.now() < deadline) {
+    await wait(150)
+    if (page.view?.width === width && page.view?.height === height && Number(page.seq ?? 0) > 0) break
+  }
+  await run(page, 'window.__reset()')
+  /* The page says where it thinks it is; a picture at a different scale must
+     still land on the page's own pixel, not one and a half of them. */
+  const at = await run(page, 'JSON.stringify({ inner: [innerWidth, innerHeight], dpr: devicePixelRatio, at: [window.__moves.length] })')
+  const middle = aimAt({ fx: 0.5, fy: 0.5, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
+  await page.mouse('mouseMoved', middle)
+  await wait(400)
+  const seen = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
+  check('a scaled screen resolves the middle to the page, not to the device', seen !== undefined && Math.abs(seen.x - 1000) <= 1 && Math.abs(seen.y - 600) <= 1,
+    `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at})`)
+  const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
+  check('the far corner on a scaled screen is the last page pixel', corner !== null && corner.x === width - 1 && corner.y === height - 1,
+    `the corner resolved to ${JSON.stringify(corner)} on ${String(page.view.width)}x${String(page.view.height)}`)
+  return { at: JSON.parse(at), corner }
+}
+
 /** The pane sends one ask per half of a double; the page has to see a double. */
 async function doubleClicked(page) {
   await run(page, 'window.__reset()')
@@ -194,6 +222,9 @@ async function main() {
     summary.drag = await dragged(page)
     summary.dragMs = Date.now() - drag
     summary.dbl = await doubleClicked(page)
+    const zoom = await scaled(page)
+    summary.scaled = zoom.at
+    summary.scaledCorner = zoom.corner ?? null
   } finally {
     await sidecar.shutdown().catch(() => {})
     server.close()

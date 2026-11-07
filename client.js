@@ -1073,10 +1073,23 @@ window.__ModuleLoader__.load({
         if (point === null) return
         void input({ kind: 'click', button: 'right', ...point })
       }
+      /* A wheel beside the picture still scrolls the page that is there: the
+         point is pulled to the nearest edge of the picture rather than thrown
+         at the middle, which used to jump the page sideways from the bars. */
+      const besidePicture = (event) => {
+        const el = stage.current
+        const spot = picture()
+        if (el === null || spot === null) return null
+        const box = el.getBoundingClientRect()
+        const across = Math.min(1, Math.max(0, (event.clientX - box.left - spot.x) / spot.w))
+        const down = Math.min(1, Math.max(0, (event.clientY - box.top - spot.y) / spot.h))
+        return { fx: across, fy: down, fw: spot.fw, fh: spot.fh, pw: view.w, ph: view.h, x: Math.round(across * view.w), y: Math.round(down * view.h) }
+      }
       const onWheel = (event) => {
         touched()
         event.preventDefault()
-        const point = toView(event) ?? { x: Math.round(view.w / 2), y: Math.round(view.h / 2) }
+        const point = toView(event) ?? besidePicture(event)
+        if (point === null) return
         void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })
       }
       /* A pane that is hidden or loses focus may never see the release; the

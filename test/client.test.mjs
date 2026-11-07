@@ -585,6 +585,16 @@ test('a pane served by a host that predates press and release still clicks', () 
   assert.ok(source.includes("void input({ kind: 'click', button: 'right', ...point })"), 'a right click asks the page for its menu')
 })
 
+test('a wheel beside the picture scrolls the page there, not from its middle', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The bars around a picture that does not fill the pane are not a place to
+     scroll from: the point is pulled to the nearest edge of the picture. */
+  assert.ok(source.includes('const besidePicture = (event) => {'), 'a point beside the picture is pulled onto it')
+  assert.ok(source.includes('const point = toView(event) ?? besidePicture(event)'), 'the wheel uses that point')
+  assert.ok(source.includes("(event.clientX - box.left - spot.x) / spot.w"), 'the pull measures the picture, not the pane')
+  assert.ok(source.includes('Math.round(across * view.w)'), 'the pulled point is a page pixel')
+})
+
 test('a fast hand cannot queue stale hover positions', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* One ask in the air at a time; the newest point replaces the waiting one. */
