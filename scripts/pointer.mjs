@@ -35,6 +35,10 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>pointer</title>
 window.__moves = []
 window.__wheels = []
 window.__presses = []
+window.__dbl = []
+addEventListener('dblclick', (event) => {
+  window.__dbl.push({ x: event.clientX, y: event.clientY, detail: event.detail, target: (event.target && event.target.id) || '' })
+}, true)
 addEventListener('mousemove', (event) => {
   window.__moves.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, target: (event.target && event.target.id) || '' })
 }, true)
@@ -44,7 +48,7 @@ addEventListener('mousedown', (event) => {
 addEventListener('wheel', (event) => {
   window.__wheels.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, button: event.button, dy: Math.round(event.deltaY) })
 }, true)
-window.__reset = () => { window.__moves = []; window.__wheels = []; window.__presses = []; return true }
+window.__reset = () => { window.__moves = []; window.__wheels = []; window.__presses = []; window.__dbl = []; return true }
 </script>`
 
 const wait = (ms) => new Promise((settle) => setTimeout(settle, ms))
@@ -148,6 +152,27 @@ async function dragged(page) {
   return { moves: moves.length, wheels: wheels.length }
 }
 
+/** The pane sends one ask per half of a double; the page has to see a double. */
+async function doubleClicked(page) {
+  await run(page, 'window.__reset()')
+  const spot = point(page, 0.5, 0.5, WIDE, TALL)
+  /* Exactly the body the pane sends: a click, then a click that says it is the
+     second half. Two single clicks would leave the page's double unopened. */
+  await page.mouse('mouseMoved', spot)
+  await page.mouse('mousePressed', { x: spot.x, y: spot.y, button: 'left', clickCount: 1 })
+  await page.mouse('mouseReleased', { x: spot.x, y: spot.y, button: 'left', clickCount: 1 })
+  await wait(60)
+  await page.mouse('mousePressed', { x: spot.x, y: spot.y, button: 'left', clickCount: 2 })
+  await page.mouse('mouseReleased', { x: spot.x, y: spot.y, button: 'left', clickCount: 2 })
+  await wait(300)
+  const seen = JSON.parse(await run(page, 'JSON.stringify(window.__dbl)'))
+  check('two quick clicks are one double click', seen.length === 1 && seen[0].detail === 2,
+    `the page saw ${String(seen.length)} double clicks ${JSON.stringify(seen)}`)
+  check('the double click landed where the hand was', seen[0] !== undefined && Math.abs(seen[0].x - spot.x) <= 1 && Math.abs(seen[0].y - spot.y) <= 1,
+    `the page saw ${JSON.stringify(seen[0] ?? null)} at ${String(spot.x)},${String(spot.y)}`)
+  return { doubles: seen.length }
+}
+
 /** Run the whole probe. */
 async function main() {
   const server = createServer((req, res) => {
@@ -168,6 +193,7 @@ async function main() {
     const drag = Date.now()
     summary.drag = await dragged(page)
     summary.dragMs = Date.now() - drag
+    summary.dbl = await doubleClicked(page)
   } finally {
     await sidecar.shutdown().catch(() => {})
     server.close()
@@ -182,7 +208,7 @@ async function main() {
     console.log(JSON.stringify(summary))
   } else {
     for (const row of failed) console.log(`FAIL ${row.label}: ${row.detail ?? ''}`)
-    console.log(`pointer ${summary.matched}/${summary.checked} · view ${String(summary.frame?.w)}x${String(summary.frame?.h)} · map ${String(summary.mapMs)} ms · ${summary.drag.moves} moves / ${summary.drag.wheels} wheel · ${String(summary.ms)} ms total`)
+    console.log(`pointer ${summary.matched}/${summary.checked} · view ${String(summary.frame?.w)}x${String(summary.frame?.h)} · map ${String(summary.mapMs)} ms · ${summary.drag.moves} moves / ${summary.drag.wheels} wheel / ${summary.dbl.doubles} double · ${String(summary.ms)} ms total`)
   }
   process.exitCode = summary.ok === true ? 0 : 1
 }

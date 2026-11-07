@@ -1002,7 +1002,9 @@ window.__ModuleLoader__.load({
         /* An app that never learned press and release would swallow both and
            the hand would never click: fall back to the one event it knows. */
         if (pressOn.current === true) void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })
-        else void input({ kind: 'click', ...point })
+        /* The second half of a double carries the count, or the page sees two
+           single clicks and never opens what it should have opened. */
+        else void input({ kind: 'click', clickCount: held.clicks, ...point })
       }
       const onPointerDown = (event) => {
         touched()

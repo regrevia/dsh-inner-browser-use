@@ -580,7 +580,7 @@ test('a pane served by a host that predates press and release still clicks', () 
      the hand stopped clicking. The pane now asks the host what it takes. */
   assert.ok(source.includes('const pressOn = React.useRef(false)'), 'the pane starts out not knowing')
   assert.ok(source.includes('pressOn.current = info?.press === true'), 'the state poll says what this host takes')
-  assert.ok(source.includes("else void input({ kind: 'click', ...point })"), 'an older host gets the one event it knows')
+  assert.ok(source.includes("else void input({ kind: 'click', clickCount: held.clicks, ...point })"), 'an older host gets the one event it knows, and the count that makes a double a double')
   assert.ok(source.includes('onContextMenu,'), 'the right button reaches the page')
   assert.ok(source.includes("void input({ kind: 'click', button: 'right', ...point })"), 'a right click asks the page for its menu')
 })

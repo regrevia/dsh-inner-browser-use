@@ -784,7 +784,9 @@ export function apply(ctx) {
           if (kind === 'up') return (await page.mouse('mouseReleased', { x, y, button, clickCount: Number(body.clickCount ?? 1) })) !== false
           if (kind === 'move') return (await page.mouse('mouseMoved', { x, y })) !== false
           if (kind === 'click') {
-            const clickCount = body.double === true ? 2 : 1
+            /* A hand that clicked twice quickly says so in the count it sends;
+               two single clicks would never reach a page's double click. */
+            const clickCount = body.double === true ? 2 : Math.max(1, Math.min(3, Number(body.clickCount ?? 1)))
             const moved = await page.mouse('mouseMoved', { x, y })
             const pressed = await page.mouse('mousePressed', { x, y, button, clickCount })
             const released = await page.mouse('mouseReleased', { x, y, button, clickCount })
