@@ -52,6 +52,21 @@ window.__reset = () => { window.__moves = []; window.__wheels = []; window.__pre
 </script>`
 
 const wait = (ms) => new Promise((settle) => setTimeout(settle, ms))
+
+/** The size a JPEG carries, read from its own header rather than a decoder. */
+function jpegSize(jpeg) {
+  const bytes = Buffer.from(jpeg, 'base64')
+  let at = 2
+  while (at + 9 < bytes.length) {
+    if (bytes[at] !== 0xff) { at += 1; continue }
+    const marker = bytes[at + 1]
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { w: bytes.readUInt16BE(at + 7), h: bytes.readUInt16BE(at + 5) }
+    }
+    at += 2 + bytes.readUInt16BE(at + 2)
+  }
+  return null
+}
 const rows = []
 const startedAt = Date.now()
 
@@ -83,11 +98,19 @@ async function layWide(sidecar) {
     mobile: false,
   })
   await page.stopCast()
-  await page.cast()
+  /* The browser's own report is the size to trust: ask until it agrees with
+     the request instead of assuming the override landed before the cast. */
   const deadline = Date.now() + 6000
   while (Date.now() < deadline) {
+    await page.remeasure()
+    if (page.view?.width === WIDE && page.view?.height === TALL) break
+    await wait(100)
+  }
+  await page.cast()
+  const settled = Date.now() + 6000
+  while (Date.now() < settled) {
     await wait(150)
-    if (page.view?.width === WIDE && page.view?.height === TALL && Number(page.seq ?? 0) > 0) break
+    if (Number(page.seq ?? 0) > 0) break
   }
   return page
 }
@@ -157,12 +180,26 @@ async function scaled(page) {
   const width = 2000
   const height = 1200
   await page.cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1.5, mobile: false })
+  /* The scale the display reports is what caps the cast: ask for it until the
+     browser agrees, because a measure taken mid-resize says 1 and the picture
+     then arrives at the page's size instead of the display's. */
+  const scaleDeadline = Date.now() + 4000
+  while (Date.now() < scaleDeadline) {
+    await page.remeasure()
+    if (Math.abs(Number(page.dpr ?? 0) - 1.5) < 0.01) break
+    await wait(100)
+  }
   await page.stopCast()
+  let pictureFrame = null
+  let hand = null
+  page.frames.add((message) => { if (typeof message.jpeg === 'string') pictureFrame = message })
+  page.pointerSinks.add((message) => { hand = message })
   await page.cast()
-  const deadline = Date.now() + 6000
-  while (Date.now() < deadline) {
+  const densityDeadline = Date.now() + 6000
+  while (Date.now() < densityDeadline) {
     await wait(150)
-    if (page.view?.width === width && page.view?.height === height && Number(page.seq ?? 0) > 0) break
+    const size = pictureFrame === null ? null : jpegSize(pictureFrame.jpeg)
+    if (size !== null && Math.abs(size.w - Math.round(page.view.width * Number(page.dpr ?? 1))) <= 2) break
   }
   await run(page, 'window.__reset()')
   /* The page says where it thinks it is; a picture at a different scale must
@@ -177,7 +214,27 @@ async function scaled(page) {
   const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
   check('the far corner on a scaled screen is the last page pixel', corner !== null && corner.x === width - 1 && corner.y === height - 1,
     `the corner resolved to ${JSON.stringify(corner)} on ${String(page.view.width)}x${String(page.view.height)}`)
-  return { at: JSON.parse(at), corner }
+
+  /* The arrow the pane draws comes from this message: it is in page points,
+     while the picture beside it is in device pixels. Mixing the two drew the
+     hand a third of the way short of the click on a 150% display. */
+  page.movePointer({ x: Math.round(width / 2), y: Math.round(height / 2) })
+  await wait(300)
+  const pixels = pictureFrame === null ? null : jpegSize(pictureFrame.jpeg)
+  const points = Number(hand?.w ?? 0)
+  const density = points > 0 && pixels !== null ? pixels.w / points : 0
+  /* A frame may be capped by the encoder, so its density is not fixed; what
+     must hold is that the header counts the pixels the JPEG really has and
+     that the picture is never coarser than the page. */
+  check('a scaled frame announces the pixels it really has',
+    pixels !== null && Math.abs(pixels.w - Number(pictureFrame?.w ?? 0)) <= 1 && Math.abs(pixels.h - Number(pictureFrame?.h ?? 0)) <= 1,
+    `the header said ${String(pictureFrame?.w)}x${String(pictureFrame?.h)} and the JPEG has ${JSON.stringify(pixels)}`)
+  check('a scaled picture is not coarser than the page it shows',
+    density >= 1, `picture ${String(pixels?.w ?? null)} px for a ${String(points)} point page`)
+  check('the hand is measured in page points, not picture pixels',
+    hand?.pointer !== undefined && points > 0 && Math.abs(Number(hand?.pointer?.x) / points - 0.5) < 0.01,
+    `the hand said ${JSON.stringify(hand?.pointer ?? null)} in a ${String(points)} wide space`)
+  return { at: JSON.parse(at), corner, hand: { points, pixels: pixels?.w ?? null, density, pointer: hand?.pointer ?? null } }
 }
 
 /** The pane sends one ask per half of a double; the page has to see a double. */
@@ -225,6 +282,7 @@ async function main() {
     const zoom = await scaled(page)
     summary.scaled = zoom.at
     summary.scaledCorner = zoom.corner ?? null
+    summary.scaledHand = zoom.hand ?? null
   } finally {
     await sidecar.shutdown().catch(() => {})
     server.close()

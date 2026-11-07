@@ -1157,6 +1157,13 @@ window.__ModuleLoader__.load({
       }
       const pointer = person === true || hand === true ? null : ptr
       const spot = pointer === null ? null : picture()
+      /* The hand arrives in page points, the picture in frame pixels: on a
+         display at 150% the arrow used to be drawn a third of the way short
+         of the point the click lands on. Box the point against the page. */
+      const handAt = spot === null ? null : {
+        left: `${spot.x + ((Number(pointer.x) || 0) / (Number(view.w) > 0 ? Number(view.w) : spot.fw)) * spot.w}px`,
+        top: `${spot.y + ((Number(pointer.y) || 0) / (Number(view.h) > 0 ? Number(view.h) : spot.fh)) * spot.h}px`,
+      }
       const noteText = phase === 'failed' ? note || L('side.failed') : phase === 'live' ? L('side.empty') : L('side.connecting')
       return h('div', { className: 'dshib-side' },
         h('div', { className: 'dshib-side-bar' },
@@ -1246,7 +1253,7 @@ window.__ModuleLoader__.load({
             tabIndex: 0,
             spellCheck: false,
             'aria-label': L('side.type'),
-            style: pointer === null || spot === null ? undefined : { left: `${spot.x + pointer.x * spot.scale}px`, top: `${spot.y + pointer.y * spot.scale}px` },
+            style: handAt === null ? undefined : handAt,
             onCompositionStart: () => {
               composing.current = true
             },
@@ -1276,7 +1283,7 @@ window.__ModuleLoader__.load({
             className: 'dshib-side-ptr',
             src: SIDE_POINTER, // ui-copy-ignore
             alt: '', // ui-copy-ignore
-            style: spot === null ? undefined : { left: `${spot.x + pointer.x * spot.scale}px`, top: `${spot.y + pointer.y * spot.scale}px` },
+            style: handAt === null ? undefined : handAt,
           }),
           dead === '' ? null : h('button', {
             className: 'dshib-side-dead',
