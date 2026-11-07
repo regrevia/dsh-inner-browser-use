@@ -9,6 +9,7 @@
  * Every number is one JSON line, so a run can be diffed against the last.
  */
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -1041,4 +1042,7 @@ document.cookie = 'bench_session=bench-cookie-secret; path=/'
 }
 
 /* Run as a program; imported, it is a page generator and nothing else. */
-if (import.meta.url === `file://${process.argv[1]}`) await main()
+/* The entry guard has to survive a Windows path: `file://C:\…` is not a URL,
+   and a script that never runs still exits 0, which is a green job proving
+   nothing. */
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) await main()

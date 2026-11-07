@@ -14,6 +14,7 @@
  * real hand would hold. Another platform runs the same file.
  */
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -186,4 +187,7 @@ async function main() {
   process.exitCode = summary.ok === true ? 0 : 1
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) await main()
+/* The entry guard has to survive a Windows path: `file://C:\…` is not a URL,
+   and a script that never runs still exits 0, which is a green job proving
+   nothing. */
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) await main()

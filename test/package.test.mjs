@@ -149,3 +149,17 @@ test('a run that finds something wrong says so through its exit code, not a hard
   assert.equal(refused.status, 1)
   assert.match(refused.stderr, /empty input: refused/)
 })
+
+test('a script that decides it is the entry runs on Windows too', () => {
+  /* `file://${process.argv[1]}` never matches on Windows, and a script that
+     decides it is not the entry still exits 0: the job is green and has
+     checked nothing. The guard has to go through pathToFileURL. */
+  const scripts = readdirSync(join(root, 'scripts')).filter((one) => one.endsWith('.mjs'))
+  assert.ok(scripts.length >= 2)
+  for (const name of scripts) {
+    const source = readFileSync(join(root, 'scripts', name), 'utf8')
+    if (!source.includes('await main()')) continue
+    assert.ok(source.includes('pathToFileURL(process.argv[1]).href === import.meta.url'), `${name} decides it is the entry with a path, not a URL`)
+    assert.ok(!source.includes('`file://${process.argv[1]}`'), `${name} still compares against a hand-built file URL`)
+  }
+})
