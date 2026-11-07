@@ -640,6 +640,9 @@ test('a screencast frame carries the person hold and cannot throw out of the CDP
   rmSync(join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-hold-broken'), { recursive: true, force: true })
 })
 
+/** A frame asks the page its size in a later turn; these tests read after it answers. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 40))
+
 test('a page that grows under a running cast is mirrored at its own size, once', async () => {
   /* Frames are capped at the size the cast was started with, so a page that
      grew comes back downsampled and the pane rescales a soft picture. The cast
@@ -660,7 +663,8 @@ test('a page that grows under a running cast is mirrored at its own size, once',
     handlers[0]({ method: 'Page.screencastFrame', params: { data, sessionId: 31, metadata: { deviceWidth: width, deviceHeight: height } } })
   }
   cast('grow-a', 1920, 1080)
-  assert.deepEqual({ ...page.view }, { width: 1920, height: 1080 }, 'the size is adopted at once')
+  await settle()
+  assert.deepEqual({ ...page.view }, { width: 1920, height: 1080 }, 'the size is adopted as soon as the page answers')
   assert.equal(sent.filter((row) => row.method === 'Page.startScreencast').length, 0, 'the restart waits for the window to settle')
   cast('grow-b', 1600, 900)
   cast('grow-c', 1600, 900)
@@ -693,9 +697,15 @@ test('a frame that arrives at another size teaches the page its size', async () 
     method: 'Page.screencastFrame',
     params: { data: 'sized-one', sessionId: 21, metadata: { deviceWidth: 1000, deviceHeight: 700 } },
   })
+  await settle()
   assert.deepEqual({ ...sized.view }, { width: 1000, height: 700 }, 'the frame wins over the request')
-  assert.equal(sizedSeen[0].w, 1000)
-  assert.equal(sizedSeen[0].h, 700)
+  sized.sentAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'sized-one-b', sessionId: 25, metadata: { deviceWidth: 1000, deviceHeight: 700 } },
+  })
+  assert.equal(sizedSeen.at(-1).w, 1000, 'the next frame header is the size the page reports')
+  assert.equal(sizedSeen.at(-1).h, 700)
   /* A size no screen has is noise from a frame, not a layout. */
   sized.sentAt = 0
   sized.lastShotAt = 0
@@ -703,6 +713,7 @@ test('a frame that arrives at another size teaches the page its size', async () 
     method: 'Page.screencastFrame',
     params: { data: 'sized-two', sessionId: 22, metadata: { deviceWidth: 12, deviceHeight: 9 } },
   })
+  await settle()
   assert.deepEqual({ ...sized.view }, { width: 1000, height: 700 }, 'a bad size changes nothing')
   /* A 4K display at 100% zoom lays a page out wider than any mirror picture:
      the picture is capped in pixels, the page is not. */
@@ -712,8 +723,8 @@ test('a frame that arrives at another size teaches the page its size', async () 
     method: 'Page.screencastFrame',
     params: { data: 'sized-three', sessionId: 23, metadata: { deviceWidth: 3000, deviceHeight: 1600 } },
   })
+  await settle()
   assert.deepEqual({ ...sized.view }, { width: 3000, height: 1600 }, 'a wide page is still a page')
-  assert.equal(sizedSeen.at(-1).w, 3000)
   /* Beyond any window a browser can lay out, a number is noise. */
   sized.sentAt = 0
   sized.lastShotAt = 0
@@ -721,7 +732,53 @@ test('a frame that arrives at another size teaches the page its size', async () 
     method: 'Page.screencastFrame',
     params: { data: 'sized-four', sessionId: 24, metadata: { deviceWidth: 9000, deviceHeight: 1600 } },
   })
+  await settle()
   assert.deepEqual({ ...sized.view }, { width: 3000, height: 1600 }, 'a size no window has is not a page')
+})
+
+test('a scaled display is measured in the page pixels its input is counted in', async () => {
+  /* Windows at 150%: the screencast reports its frame in device pixels, so a
+     3000x1800 frame is a page laid out at 2000x1200. Believing the frame makes
+     the mirror the wrong shape and puts every click half again as far from the
+     corner as the hand went; the page's own layout is the size to trust. */
+  const own = []
+  let layout = { cssLayoutViewport: { clientWidth: 2000, clientHeight: 1200 } }
+  const scaled = new SidecarPage({
+    on: (handler) => own.push(handler),
+    send: async (method) => (method === 'Page.getLayoutMetrics' ? layout : {}),
+  }, 'unit-scaled', 0, () => 0)
+  await scaled.start()
+  const frames = []
+  scaled.frames.add((message) => frames.push(message))
+  scaled.sentAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'scaled-one', sessionId: 41, metadata: { deviceWidth: 3000, deviceHeight: 1800 } },
+  })
+  await settle()
+  assert.deepEqual({ ...scaled.view }, { width: 2000, height: 1200 }, 'the layout wins over the device frame size')
+  /* The frame that taught the size was already on its way out with the old
+     header; the next one, and every one after it, carries the page pixels the
+     input is mapped onto. */
+  scaled.sentAt = 0
+  scaled.lastShotAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'scaled-one-b', sessionId: 43, metadata: { deviceWidth: 3000, deviceHeight: 1800 } },
+  })
+  assert.equal(frames.at(-1).w, 2000, 'the picture header is in page pixels too')
+  assert.equal(frames.at(-1).h, 1200)
+  /* A page that cannot say how it is laid out still gets followed, or a window
+     resize on a browser that refuses the call would stop moving the mirror. */
+  layout = {}
+  scaled.sentAt = 0
+  scaled.lastShotAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'scaled-two', sessionId: 42, metadata: { deviceWidth: 1600, deviceHeight: 1000 } },
+  })
+  await settle()
+  assert.deepEqual({ ...scaled.view }, { width: 1600, height: 1000 }, 'no answer means the frame is all there is')
 })
 
 test('a control from the last read is found without reading the page again', async () => {

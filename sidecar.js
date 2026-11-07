@@ -640,6 +640,10 @@ export class SidecarPage {
        fixed desktop size: a mirror with letterbox bands is a page that does
        not fill its frame. */
     this.view = { width: VIEW.width, height: VIEW.height }
+    /* The last size a frame announced, in device pixels: the same size twice
+       in a row is the same layout, and asking again would spend a round trip
+       per frame. */
+    this.seenFrame = /** @type {{width: number, height: number}|null} */ (null)
     /* What the pane already has: an unchanged picture is not worth a second
        copy, but silence still needs a heartbeat or the pane thinks the stream
        died. */
@@ -1240,10 +1244,17 @@ export class SidecarPage {
         const { data, sessionId, metadata } = message.params ?? {}
         void this.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
         if (typeof data !== 'string' || data === '') return
-        /* Every frame says how big the page it shows was. A window resize or a
-           display scale change arrives here first, so the picture and the size
-           the input is mapped onto stay the same picture. */
-        if (this.tookSize(metadata?.deviceWidth, metadata?.deviceHeight)) this.followSize()
+        /* Every frame says how big the page it shows was, in device pixels. On
+           a display that scales, that is not the size the page is laid out at:
+           measured in device pixels the mirror is the wrong shape and every
+           click is off by the scale. The frame only says when to ask, and the
+           page answers in the pixels its own input is counted in. */
+        const metaWidth = Math.round(Number(metadata?.deviceWidth))
+        const metaHeight = Math.round(Number(metadata?.deviceHeight))
+        if (this.seenFrame === null || this.seenFrame.width !== metaWidth || this.seenFrame.height !== metaHeight) {
+          this.seenFrame = Number.isFinite(metaWidth) && Number.isFinite(metaHeight) ? { width: metaWidth, height: metaHeight } : null
+          void this.remeasure(metaWidth, metaHeight)
+        }
         this.latest = data
         this.lastFrameAt = Date.now()
         this.seq += 1
@@ -1448,6 +1459,41 @@ export class SidecarPage {
    * against a shape the page never had. The report wins over the request.
    * @returns {Promise<void>} leaves `view` alone when the report is unusable.
    */
+  /**
+   * A frame announced a new size: ask the page for the size it is laid out at.
+   * A screencast counts its frame in device pixels while the page counts in
+   * CSS pixels, and on a scaled display those differ by exactly that scale.
+   * The frame's own numbers are only used when the page cannot answer, so a
+   * window that keeps its own size is still followed.
+   * @param {number} deviceWidth - device pixels the frame announced.
+   * @param {number} deviceHeight - device pixels the frame announced.
+   * @returns {Promise<void>} settles the size and the cast that follows it.
+   */
+  async remeasure(deviceWidth, deviceHeight) {
+    if (this.cdp === null || this.cdp === undefined) {
+      if (this.tookSize(deviceWidth, deviceHeight)) this.followSize()
+      return
+    }
+    /* The viewport the hand counts in is the window's, scrollbar and all: a
+       layout viewport that leaves the scrollbar out would put the last column
+       of pixels out of reach. */
+    const answered = await this.cdp
+      .send('Runtime.evaluate', { expression: '[window.innerWidth, window.innerHeight]', returnByValue: true })
+      .catch(() => null)
+    const told = answered === null || answered === undefined ? null : answered.result
+    const pair = told === null || told === undefined ? null : told.value
+    let width = Array.isArray(pair) === true ? Number(pair[0]) : NaN
+    let height = Array.isArray(pair) === true ? Number(pair[1]) : NaN
+    if (!(Number.isFinite(width) && Number.isFinite(height) && width >= 200 && height >= 200)) {
+      const metrics = await this.cdp.send('Page.getLayoutMetrics').catch(() => null)
+      const css = metrics === null || metrics === undefined ? null : metrics.cssLayoutViewport
+      width = Number(css === null || css === undefined ? NaN : css.clientWidth)
+      height = Number(css === null || css === undefined ? NaN : css.clientHeight)
+    }
+    const known = Number.isFinite(width) && Number.isFinite(height) && width >= 200 && height >= 200
+    if (this.tookSize(known ? width : deviceWidth, known ? height : deviceHeight)) this.followSize()
+  }
+
   /**
    * Believe the size the page reports over the size anyone asked for.
    * A window keeps its own size, a display scale changes it, and a request the
