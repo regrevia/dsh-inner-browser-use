@@ -18,10 +18,10 @@ import { spawnSync } from 'node:child_process'
 
 /** The browsers this can read, most likely first. */
 export const BROWSERS = [
-  { id: 'chrome', label: 'Chrome', root: 'Google/Chrome' },
-  { id: 'brave', label: 'Brave', root: 'BraveSoftware/Brave-Browser' },
-  { id: 'edge', label: 'Edge', root: 'Microsoft Edge' },
-  { id: 'chromium', label: 'Chromium', root: 'Chromium' },
+  { id: 'chrome', label: 'Chrome', root: 'Google/Chrome', linux: 'google-chrome' },
+  { id: 'brave', label: 'Brave', root: 'BraveSoftware/Brave-Browser', linux: 'BraveSoftware/Brave-Browser' },
+  { id: 'edge', label: 'Edge', root: 'Microsoft Edge', linux: 'microsoft-edge' },
+  { id: 'chromium', label: 'Chromium', root: 'Chromium', linux: 'chromium' },
 ]
 
 /**
@@ -41,14 +41,25 @@ const NOT_A_PROFILE = new Set(['System Profile', 'Guest Profile', 'Crashpad', 'S
  * @returns {string} where its profiles live, or '' on a platform this cannot read.
  */
 export function browserRoot(id = 'chrome') {
+  const home = String(process.env.DSH_INNER_BROWSER_CHROME_HOME ?? (process.platform === 'win32' ? process.env.LOCALAPPDATA : process.env.HOME) ?? '')
+  return browserRootOn(id, process.platform, home)
+}
+
+/**
+ * Where one browser keeps its profiles on one platform. Each platform names the
+ * folder differently and Windows adds a level, so each answer gets its own
+ * column rather than one name being folded into another.
+ * @param {string} id - a browser id.
+ * @param {string} platform - process.platform, or another one when checking.
+ * @param {string} home - the folder that platform calls home.
+ * @returns {string} the profile root, or '' for a browser id this cannot read.
+ */
+export function browserRootOn(id, platform, home) {
   const one = BROWSERS.find((row) => row.id === id)
   if (one === undefined) return ''
-  /* A profile root other than the standard one is only ever set by someone
-     testing this, or by a person who moved their browser data. */
-  const home = String(process.env.DSH_INNER_BROWSER_CHROME_HOME ?? process.env.HOME ?? '')
-  if (process.platform === 'darwin') return join(home, 'Library', 'Application Support', one.root)
-  if (process.platform === 'win32') return join(String(process.env.LOCALAPPDATA ?? ''), one.root.replace(/\//gu, '\\'))
-  return join(home, '.config', one.root.replace('Google/', 'google-').replace('BraveSoftware/Brave-Browser', 'BraveSoftware/Brave-Browser'))
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', one.root)
+  if (platform === 'win32') return join(home, one.root.replace(/\//gu, '\\'), 'User Data')
+  return join(home, '.config', one.linux)
 }
 
 /**

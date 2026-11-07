@@ -17,7 +17,7 @@ process.env.DSH_INNER_BROWSER_COOKIE_KEY = KEY_PASSWORD
 /* Windows reads its browser data from LOCALAPPDATA, not from a home folder. */
 if (process.platform === 'win32') process.env.LOCALAPPDATA = home
 
-const { storeKey, unsealCookie, cookiesFor, cookieStores, readBrowserCookies, siteOf, browserRoot, sqliteCli, BROWSERS } =
+const { storeKey, unsealCookie, cookiesFor, cookieStores, readBrowserCookies, siteOf, browserRoot, browserRootOn, sqliteCli, BROWSERS } =
   await import(new URL('../chromecookies.js', import.meta.url).href)
 
 /* A store is a real SQLite file, so building one needs a SQLite. Node 22+ has
@@ -114,6 +114,27 @@ test('a host whose Node has no SQLite of its own still reads the sealed values',
   }
 })
 
+test('each platform names the profile folder its own way, and the answers are not one name bent three ways', () => {
+  /* Reading a folder the browser never writes to is indistinguishable from a
+     person having no cookies, so the three answers are checked as themselves. */
+  const unix = (rel) => join('/h', rel)
+  assert.equal(browserRootOn('chrome', 'linux', '/h'), unix('.config/google-chrome'))
+  assert.equal(browserRootOn('edge', 'linux', '/h'), unix('.config/microsoft-edge'))
+  assert.equal(browserRootOn('brave', 'linux', '/h'), unix('.config/BraveSoftware/Brave-Browser'))
+  assert.equal(browserRootOn('chromium', 'linux', '/h'), unix('.config/chromium'))
+  /* This host joins with its own separator, so a Windows answer is compared
+     with the separator read out of it rather than the one here. */
+  const slashed = (one) => one.split('\\').join('/')
+  assert.equal(slashed(browserRootOn('chrome', 'win32', 'C:/u')), 'C:/u/Google/Chrome/User Data')
+  assert.equal(slashed(browserRootOn('edge', 'win32', 'C:/u')), 'C:/u/Microsoft Edge/User Data')
+  assert.ok(BROWSERS.every((one) => browserRootOn(one.id, 'win32', 'C:/u').endsWith('User Data')))
+  assert.ok(BROWSERS.every((one) => !browserRootOn(one.id, 'darwin', '/h').includes('User Data')))
+  assert.equal(browserRootOn('chrome', 'darwin', '/h'), unix('Library/Application Support/Google/Chrome'))
+  assert.equal(browserRootOn('nope', 'linux', '/h'), '')
+  const roots = BROWSERS.map((one) => browserRootOn(one.id, 'linux', '/h'))
+  assert.equal(new Set(roots).size, roots.length, 'no two browsers share a folder')
+})
+
 test('profiles are found where the browser keeps them, newest use first, and junk is skipped', { skip: sqlite === '' ? 'this host has no SQLite to build a store with' : false }, () => {
   const rows = cookieStores('chrome')
   assert.ok(rows.length >= 2)
@@ -121,7 +142,7 @@ test('profiles are found where the browser keeps them, newest use first, and jun
   assert.ok(!rows.some((row) => row.profile === 'Crashpad'))
   const expected = process.platform === 'darwin'
     ? join(home, 'Library', 'Application Support', 'Google', 'Chrome')
-    : process.platform === 'win32' ? join(home, 'Google', 'Chrome') : join(home, '.config', 'google-chrome')
+    : process.platform === 'win32' ? join(home, 'Google', 'Chrome', 'User Data') : join(home, '.config', 'google-chrome')
   assert.equal(browserRoot('chrome'), expected, 'the browser keeps its profiles where this platform keeps them')
   assert.ok(BROWSERS.some((one) => one.id === 'chrome'))
 })
