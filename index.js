@@ -24,7 +24,7 @@
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { pointAt } from './pixels.js?v=1'
+import { aimAt } from './pixels.js?v=1'
 import { Sidecar } from './sidecar.js?v=1'
 
 /** Where the mirror's owner is remembered across a reload: the column should not go dark because the code reloaded. */
@@ -746,16 +746,9 @@ export function apply(ctx) {
         const kind = String(body.kind ?? '')
         let x = Number(body.x ?? 0)
         let y = Number(body.y ?? 0)
-        /* A point can arrive as a fraction of the picture with the shape that
-           picture was drawn at. It is turned into page pixels here, against that
-           same shape, so a pane that is a moment behind the page still names the
-           spot the person pointed at. */
-        const at = pointAt(
-          Number(body.fx ?? NaN),
-          Number(body.fy ?? NaN),
-          Number(body.fw ?? 0) > 0 ? Number(body.fw) : Number(sidecar?.view?.width ?? 0),
-          Number(body.fh ?? 0) > 0 ? Number(body.fh) : Number(sidecar?.view?.height ?? 0),
-        )
+        /* The fraction is of the page's own coordinates: the picture can be
+           smaller than the page, so its width is the last resort. */
+        const at = aimAt(body, sidecar?.view ?? null)
         if (at !== null) {
           x = at.x
           y = at.y

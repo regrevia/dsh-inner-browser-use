@@ -258,6 +258,29 @@ export function fractionAt(px, py, box) {
 }
 
 /**
+ * The page point a pane's fraction names, choosing the size it is a fraction of.
+ * A picture capped in pixels (a screencast is capped) is smaller than the page
+ * it shows, so the picture's own width would shrink every point toward the
+ * corner. The page size the pane saw with that picture wins; the size this side
+ * believes comes next; the picture is the last resort.
+ * @param {{fx?: number, fy?: number, pw?: number, ph?: number, fw?: number, fh?: number}} body - one input event.
+ * @param {{width?: number, height?: number}|null} view - the size this side believes.
+ * @returns {{x: number, y: number}|null} the point, or null when no size is known.
+ */
+export function aimAt(body, view) {
+  const pick = (named, believed, drawn) => {
+    const numbers = [named, believed, drawn].map((value) => Number(value ?? 0))
+    return numbers.find((value) => value > 0) ?? 0
+  }
+  return pointAt(
+    Number(body?.fx ?? NaN),
+    Number(body?.fy ?? NaN),
+    pick(body?.pw, view?.width, body?.fw),
+    pick(body?.ph, view?.height, body?.fh),
+  )
+}
+
+/**
  * The page point a fraction names, inside the page's own viewport.
  * @param {number} fx - 0..1 across.
  * @param {number} fy - 0..1 down.

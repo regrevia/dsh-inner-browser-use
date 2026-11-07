@@ -953,7 +953,16 @@ window.__ModuleLoader__.load({
            arrived, even when the size it reported was never applied. */
         const fw = spot.fw
         const fh = spot.fh
-        return { fx, fy, fw, fh, x: Math.round(fx * (fw - 1)), y: Math.round(fy * (fh - 1)) }
+        /* fw/fh are the picture's own pixels; pw/ph are the page's. A picture
+           capped in pixels is not the page, and a fraction of it is not a
+           fraction of the page. */
+        return {
+          fx, fy, fw, fh,
+          pw: Math.max(1, Math.round(view.w)),
+          ph: Math.max(1, Math.round(view.h)),
+          x: Math.round(fx * (fw - 1)),
+          y: Math.round(fy * (fh - 1)),
+        }
       }
       const ime = React.useRef(null)
       const composing = React.useRef(false)

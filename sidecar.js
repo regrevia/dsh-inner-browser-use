@@ -1460,7 +1460,10 @@ export class SidecarPage {
   tookSize(width, height) {
     const w = Math.round(Number(width))
     const h = Math.round(Number(height))
-    if (!(w >= 200) || !(h >= 200) || w > 2560 || h > 2560) return false
+    /* A window can be wider than the mirror's own picture: a 4K display at
+       100% zoom lays a page out at 3840 CSS pixels, and a screencast is
+       capped in pixels, not in the page's own coordinates. */
+    if (!(w >= 200) || !(h >= 200) || w > 8192 || h > 8192) return false
     if (w === this.view.width && h === this.view.height) return false
     this.view = { width: w, height: h }
     return true

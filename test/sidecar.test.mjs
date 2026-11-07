@@ -688,6 +688,24 @@ test('a frame that arrives at another size teaches the page its size', async () 
     params: { data: 'sized-two', sessionId: 22, metadata: { deviceWidth: 12, deviceHeight: 9 } },
   })
   assert.deepEqual({ ...sized.view }, { width: 1000, height: 700 }, 'a bad size changes nothing')
+  /* A 4K display at 100% zoom lays a page out wider than any mirror picture:
+     the picture is capped in pixels, the page is not. */
+  sized.sentAt = 0
+  sized.lastShotAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'sized-three', sessionId: 23, metadata: { deviceWidth: 3000, deviceHeight: 1600 } },
+  })
+  assert.deepEqual({ ...sized.view }, { width: 3000, height: 1600 }, 'a wide page is still a page')
+  assert.equal(sizedSeen.at(-1).w, 3000)
+  /* Beyond any window a browser can lay out, a number is noise. */
+  sized.sentAt = 0
+  sized.lastShotAt = 0
+  own[0]({
+    method: 'Page.screencastFrame',
+    params: { data: 'sized-four', sessionId: 24, metadata: { deviceWidth: 9000, deviceHeight: 1600 } },
+  })
+  assert.deepEqual({ ...sized.view }, { width: 3000, height: 1600 }, 'a size no window has is not a page')
 })
 
 test('a control from the last read is found without reading the page again', async () => {

@@ -525,7 +525,8 @@ test('a gone note marks the pane instead of waiting for a frame that never comes
 test('a click names a fraction of the picture, not a pixel of a stale one', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.ok(source.includes('const fx = Math.min(1, Math.max(0, px / wide))'))
-  assert.ok(source.includes('return { fx, fy, fw, fh, x: Math.round(fx * (fw - 1)), y: Math.round(fy * (fh - 1)) }'))
+  assert.ok(source.includes('x: Math.round(fx * (fw - 1)),'))
+  assert.ok(source.includes('y: Math.round(fy * (fh - 1)),'))
   assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })"))
   assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })"))
   assert.ok(source.includes("void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })"))
@@ -546,6 +547,15 @@ test('a move still waiting to leave does not leave after the release', () => {
   assert.ok(source.includes('clearTimeout(moveClock.current)'), 'and its pending clock is cleared')
   const release = source.slice(source.indexOf('const release = (event) =>'), source.indexOf('const onPointerDown = (event) =>'))
   assert.ok(release.indexOf('moveClock.current = 0') < release.indexOf("kind: 'up'"), 'before the release is sent, not after')
+})
+
+test('a pane tells the page size apart from the picture size', () => {
+  /* The picture can be smaller than the page it shows, and a fraction of the
+     picture is not a fraction of the page: the pane sends both numbers. */
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const toView = source.slice(source.indexOf('const toView ='))
+  assert.ok(toView.includes('pw: Math.max(1, Math.round(view.w))'))
+  assert.ok(toView.includes('ph: Math.max(1, Math.round(view.h))'))
 })
 
 test('a press stays down until the hand lets go, so a drag can drag', () => {

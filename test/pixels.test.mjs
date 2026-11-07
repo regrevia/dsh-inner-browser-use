@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { deflateSync } from 'node:zlib'
-import { around, decodePng, diffGrid, fractionAt, gridOf, pictureBox, pointAt, quantize } from '../pixels.js'
+import { aimAt, around, decodePng, diffGrid, fractionAt, gridOf, pictureBox, pointAt, quantize } from '../pixels.js'
 
 /** CRC-32 as PNG wants it, kept here so the test makes its own image. */
 function crc32(bytes) {
@@ -179,4 +179,19 @@ test('the same fraction lands on the same spot after the page changes size', () 
   assert.equal(pointAt(Number.NaN, 0.5, 800, 450), null)
   /* A fraction outside 0..1 is the edge of the page, never a point beyond it. */
   assert.deepEqual(pointAt(-3, 7, 800, 450), { x: 0, y: 449 })
+})
+
+test('a fraction of the picture is not a fraction of a smaller page', () => {
+  /* A 3000-wide page shot at 1440 pixels: the middle of the picture is the
+     middle of the page, and a route that multiplies the fraction by the
+     picture's pixels lands two thirds of the way left. */
+  assert.deepEqual(aimAt({ fx: 0.5, fy: 0.5, fw: 1440, fh: 768, pw: 3000, ph: 1600 }, null), { x: 1500, y: 800 })
+  /* The size the pane saw with that picture is the first answer. */
+  assert.deepEqual(aimAt({ fx: 0.5, fy: 0.5, fw: 1440, fh: 768, pw: 3000, ph: 1600 }, { width: 1000, height: 700 }), { x: 1500, y: 800 })
+  /* Without it, the size this side believes comes next. */
+  assert.deepEqual(aimAt({ fx: 0.5, fy: 0.5, fw: 1440, fh: 768 }, { width: 1000, height: 700 }), { x: 500, y: 350 })
+  /* The picture is the last resort: it is all an old pane sends. */
+  assert.deepEqual(aimAt({ fx: 0.5, fy: 0.5, fw: 1000, fh: 700 }, null), { x: 500, y: 350 })
+  assert.deepEqual(aimAt({ fx: 0.5, fy: 0.5 }, { width: 800, height: 600 }), { x: 400, y: 300 })
+  assert.equal(aimAt({ fy: 0.5, fw: 800, fh: 600 }, null), null, 'no across is no point')
 })

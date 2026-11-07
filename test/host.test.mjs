@@ -1009,13 +1009,15 @@ test('the input route answers honestly when the tab moved or refused the act', (
   assert.ok(source.includes('page.answeredAt = 0'), 'and the look again is a real one, not the cached answer')
 })
 
-test('a click named as a fraction of the picture is resolved against the picture it came from', () => {
+test('a click named as a fraction of the picture is resolved as a point on the page', () => {
   const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  /* The pane sends where on the picture the hand was, plus the shape that
-     picture was drawn at. The host owns the page's real size, so the turn from
-     fraction to pixel happens here, once, against a known shape. */
-  assert.ok(source.includes("import { pointAt } from './pixels.js?v=1'"))
-  assert.ok(source.includes('const at = pointAt('))
-  assert.ok(source.includes('Number(body.fw ?? 0) > 0 ? Number(body.fw) : Number(sidecar?.view?.width ?? 0)'))
+  /* The pane sends where on the picture the hand was, and both sizes it knows:
+     the picture's own pixels and the page's. The host turns the fraction into a
+     point on the page here, once, against the most trustworthy of the three. */
+  assert.ok(source.includes("import { aimAt } from './pixels.js?v=1'"))
+  assert.ok(source.includes('const at = aimAt(body, sidecar?.view ?? null)'))
   assert.ok(source.includes('if (at !== null) {'))
+  const pixels = readFileSync(new URL('../pixels.js', import.meta.url), 'utf8')
+  assert.ok(pixels.includes('pick(body?.pw, view?.width, body?.fw)'))
+  assert.ok(pixels.includes('pick(body?.ph, view?.height, body?.fh)'))
 })
