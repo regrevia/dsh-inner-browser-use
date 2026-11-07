@@ -155,6 +155,34 @@ function onCopy(db, work) {
   }
 }
 
+/* Where a SQLite command line lives. It is not always /usr/bin/sqlite3: a
+   Windows machine has no such folder, and a Mac with Homebrew may only have
+   the one under /opt. Ask PATH first, then the usual places, and let the
+   caller name its own binary. */
+const SQLITE_PLACES = ['/usr/bin/sqlite3', '/opt/homebrew/bin/sqlite3', '/usr/local/bin/sqlite3']
+let sqliteFound
+
+/**
+ * @returns {string} a SQLite command line that answers, or '' when there is none.
+ */
+export function sqliteCli() {
+  if (sqliteFound !== undefined) return sqliteFound
+  const asked = String(process.env.DSH_INNER_BROWSER_SQLITE3 ?? '')
+  if (asked !== '') {
+    sqliteFound = asked
+    return asked
+  }
+  for (const one of ['sqlite3', ...SQLITE_PLACES]) {
+    const probe = spawnSync(one, ['-version'], { encoding: 'utf8', timeout: 4000 })
+    if (probe.status === 0) {
+      sqliteFound = one
+      return one
+    }
+  }
+  sqliteFound = ''
+  return ''
+}
+
 /**
  * @param {string} copy - the store copy.
  * @param {string} sql - one SELECT.
@@ -175,7 +203,9 @@ function query(copy, sql) {
   } catch {
     /* fall through to the command line */
   }
-  const out = spawnSync('/usr/bin/sqlite3', ['-readonly', '-json', copy, sql], { encoding: 'utf8', timeout: 8000, maxBuffer: 4_000_000 })
+  const cli = sqliteCli()
+  if (cli === '') return []
+  const out = spawnSync(cli, ['-readonly', '-json', copy, sql], { encoding: 'utf8', timeout: 8000, maxBuffer: 4_000_000 })
   if (out.status !== 0) return []
   try {
     const rows = JSON.parse(String(out.stdout ?? '[]'))

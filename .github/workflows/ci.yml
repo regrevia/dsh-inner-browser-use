@@ -48,6 +48,14 @@ jobs:
           Start-Process -FilePath $installer -ArgumentList '/silent', '/install' -Wait
           if (-not (Test-Path $setup)) { throw "Chrome did not install to $setup" }
 
+      # Importing a browser's sign-ins reads its SQLite store. A Windows runner
+      # has no SQLite command line, and the fallback path is not /usr/bin there,
+      # so it is installed here rather than skipped.
+      - name: Install a SQLite command line on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install sqlite --no-progress -y
+
       - run: npm install --no-audit --no-fund
       - run: npm test
 

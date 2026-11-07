@@ -1,3 +1,9 @@
+## 0.47.40 — Windows 上真的能导入浏览器登录了
+
+上一版让 31 个测试文件全部进 CI 后，`chromecookies.test.mjs` 在 Windows 上红了，红的是产品本身：读 Chrome 的 cookie 库时写死了 `/usr/bin/sqlite3`。Windows 没有这个路径，所以「从浏览器导入登录」在 Windows 上一直读不到任何东西——不是测试太严，是功能没通。现在先问 PATH，再试 `/usr/bin`、`/opt/homebrew/bin`、`/usr/local/bin`，也接受 `DSH_INNER_BROWSER_SQLITE3` 指定；找不到就明确返回空而不是静默当成没有登录。
+
+测试也不再假设 macOS 的目录形状：cookie 库按 `browserRoot()` 自己的规则建（Windows 走 `LOCALAPPDATA`），SQLite 由产品同一个解析器提供；CI 在 Windows 上装一个 SQLite 命令行，让这条路径真跑，而不是跳过。
+
 ## 0.47.39 — 存在的测试文件现在都会跑，Windows 上的按键作业也能启动浏览器
 
 `npm test` 一直是一张手写清单，`test/` 里 31 个文件只列了 27 个；`pixels.test.mjs`（超宽页落点换算）、`tactics.test.mjs`、`flash-check.test.mjs`、`chromecookies.test.mjs` 从未进过 CI，几何换算改坏了也没人知道。现在 `scripts/unit.mjs` 读目录，31 个文件、356 项全跑，另加一条测试钉住「清单不能回来」。
