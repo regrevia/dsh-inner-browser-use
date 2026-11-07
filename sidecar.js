@@ -2075,12 +2075,17 @@ export class SidecarPage {
     await this.revive()
     this.movePointer(args)
     if (this.flashBridge !== null && (await this.flashInput('mouseWheel', args)) === true) return true
+    /* A wheel turned while the button is down is still a drag: the page reads
+       the held button off every event it gets, and a wheel that says no button
+       is down cancels the drag the hand never let go of. */
     return await this.input('Input.dispatchMouseEvent', {
       type: 'mouseWheel', // ui-copy-ignore
       x: args.x, // ui-copy-ignore
       y: args.y, // ui-copy-ignore
       deltaX: args.dx ?? 0, // ui-copy-ignore
       deltaY: args.dy ?? 0, // ui-copy-ignore
+      button: 'none', // ui-copy-ignore
+      buttons: this.buttons, // ui-copy-ignore
       pointerType: 'mouse',
     })
   }

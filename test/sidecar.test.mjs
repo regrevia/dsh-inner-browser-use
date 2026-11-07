@@ -120,6 +120,22 @@ test('a drag carries the held button on every move between press and release', a
   assert.equal(page.buttons, 0, 'the release leaves nothing held')
 })
 
+test('a wheel turned mid-drag keeps the button the hand still holds', async () => {
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+
+  await page.mouse('mousePressed', { x: 10, y: 20 })
+  await page.wheel({ x: 12, y: 24, dx: 0, dy: 120 })
+  await page.mouse('mouseReleased', { x: 10, y: 20 })
+
+  const events = cdp.sent.filter(([method]) => method === 'Input.dispatchMouseEvent').map(([, params]) => params)
+  const wheel = events.find((event) => event.type === 'mouseWheel')
+  assert.equal(wheel.buttons, 1, 'a wheel that says no button is down ends a drag the hand never ended')
+  assert.equal(wheel.button, 'none', 'the button that turned is not the one that was held')
+  assert.deepEqual({ x: wheel.x, y: wheel.y, dy: wheel.deltaY }, { x: 12, y: 24, dy: 120 })
+  assert.equal(page.buttons, 0, 'the release after the wheel still leaves nothing held')
+})
+
 test('a move no press preceded holds no button, so a page never sees a phantom drag', async () => {
   const cdp = fakeCdp()
   const page = new SidecarPage(cdp, 'default')
