@@ -122,9 +122,9 @@ test('importing says what it found and refuses with a reason when there is nothi
 
 test('the store is read from a copy, so nothing is left behind and the original is untouched', { skip: sqlite === '' ? 'this host has no SQLite to build a store with' : false }, () => {
   const db = cookieStores('chrome')[0].db
-  const before = spawnSync('/usr/bin/sqlite3', [db, 'SELECT COUNT(*) FROM cookies'], { encoding: 'utf8' }).stdout.trim()
+  const before = spawnSync(sqlite, [db, 'SELECT COUNT(*) FROM cookies'], { encoding: 'utf8' }).stdout.trim()
   cookiesFor(db, key, 'example.com')
-  const after = spawnSync('/usr/bin/sqlite3', [db, 'SELECT COUNT(*) FROM cookies'], { encoding: 'utf8' }).stdout.trim()
+  const after = spawnSync(sqlite, [db, 'SELECT COUNT(*) FROM cookies'], { encoding: 'utf8' }).stdout.trim()
   assert.equal(after, before)
 })
 

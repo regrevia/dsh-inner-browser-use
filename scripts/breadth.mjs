@@ -7,6 +7,8 @@
  */
 import { createServer } from 'node:http'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { deflateSync } from 'node:zlib'
 
 import { readPage, renderPage, locate, contextFor, REF_GONE } from '../read.js'
@@ -572,7 +574,7 @@ try {
   const fileRoute = partnerFile === undefined ? null : await contextFor(page, partnerFile.ref)
   if (fileRoute === null) line('frame-cross-upload', false, 'file input not numbered')
   else {
-    const chosen = '/tmp/breadth-partner.txt'
+    const chosen = join(tmpdir(), 'breadth-partner.txt')
     writeFileSync(chosen, 'handed over')
     const evaluate = { expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${fileRoute.local}); return hit ? hit.el : null })()` }
     if (fileRoute.contextId !== undefined) evaluate.contextId = fileRoute.contextId
@@ -617,7 +619,7 @@ try {
   const pick = control(uploadForm, 'Pick file')
   if (pick === undefined) line('upload-file', false, 'file input not numbered')
   else {
-    const chosen = '/tmp/breadth-upload.txt'
+    const chosen = join(tmpdir(), 'breadth-upload.txt')
     writeFileSync(chosen, 'picked')
     const handle = await page.cdp.send('Runtime.evaluate', {
       expression: `(() => { const reg = window.__dshRead; const hit = reg && reg.find(${pick.ref}); return hit ? hit.el : null })()`,

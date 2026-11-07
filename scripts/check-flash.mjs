@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const url = process.argv[2] ?? 'https://www.4399.com/flash/16613.htm'
-const rufflePath = process.argv[3] ?? '/tmp/ruffle.js'
+const rufflePath = process.argv[3] ?? join(tmpdir(), 'ruffle.js')
 const state = mkdtempSync(join(tmpdir(), 'dsh-flash-'))
 process.env.DSH_INNER_BROWSER_STATE_DIR = state
 

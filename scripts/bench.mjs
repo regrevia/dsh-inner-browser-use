@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Sidecar } from '../sidecar.js?v=1'
+import { browserRoot, sqliteCli } from '../chromecookies.js'
 import { readPage, renderPage, readRelevant, readTabs, covering, locate, locateFirst } from '../read.js?v=1'
 import { diffRead } from '../tools.js?v=1'
 import { sidecarTools } from '../tools.js?v=1'
@@ -952,14 +953,14 @@ document.cookie = 'bench_session=bench-cookie-secret; path=/'
     const hash = createHash('sha256').update(host).digest()
     return Buffer.concat([Buffer.from('v10', 'latin1'), cipher.update(Buffer.concat([hash, Buffer.from(value, 'utf8')])), cipher.final()])
   }
-  const profileDir = join(chromeHome, 'Library', 'Application Support', 'Google', 'Chrome', 'Default', 'Network')
+  const profileDir = join(browserRoot('chrome'), 'Default', 'Network')
   mkdirSync(profileDir, { recursive: true })
   const benchDb = join(profileDir, 'Cookies')
   const hex = (blob) => `X'${Buffer.from(blob).toString('hex')}'`
   const benchSql = 'CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER);'
     + ` INSERT INTO cookies VALUES ('.127.0.0.1','from_chrome','',${hex(benchSeal('.127.0.0.1', 'chrome-secret'))},'/',13500000000000000,1,1,1);`
     + ` INSERT INTO cookies VALUES ('.elsewhere.test','other','',${hex(benchSeal('.elsewhere.test', 'no'))},'/',0,0,0,-1);`
-  spawnSync('/usr/bin/sqlite3', [benchDb], { input: benchSql, encoding: 'utf8' })
+  spawnSync(sqliteCli(), [benchDb], { input: benchSql, encoding: 'utf8' })
   await sidecar.page.navigate(wallBase + 'enter')
   const importAt = Date.now()
   const importNote = await wallLogin.execute({ action: 'import', name: 'bench-import' })

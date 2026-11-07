@@ -1,3 +1,9 @@
+## 0.47.41 — 一条路径是全平台的第一道关
+
+0.47.40 让 cookie 库按平台建、SQLite 从 PATH 找，但 Windows 上还剩最后一个红：最后一个测试自身还在用 `/usr/bin/sqlite3` 数行数。修掉之后，同类问题做成了守卫——`scripts/` 里不许出现 `/tmp/` 字面量，任何脚本不许 `spawnSync('/usr/bin/…')`，产品必须能从 `DSH_INNER_BROWSER_SQLITE3` 指定二进制。顺带修了三个只在 macOS 跑得动的开发脚本：`bench.mjs` 造 cookie 库的路径与 SQLite、`breadth.mjs` 两个上传用的临时文件、`check-flash.mjs` 的 Ruffle 默认位置。
+
+**这次不只是测试变绿。** Windows 上「从 Chrome 导入登录」此前永远读不到东西：代码在找 `/usr/bin/sqlite3`，那里没有。现在它先问 PATH，再试三个常见目录，也接受指名。
+
 ## 0.47.40 — Windows 上真的能导入浏览器登录了
 
 上一版让 31 个测试文件全部进 CI 后，`chromecookies.test.mjs` 在 Windows 上红了，红的是产品本身：读 Chrome 的 cookie 库时写死了 `/usr/bin/sqlite3`。Windows 没有这个路径，所以「从浏览器导入登录」在 Windows 上一直读不到任何东西——不是测试太严，是功能没通。现在先问 PATH，再试 `/usr/bin`、`/opt/homebrew/bin`、`/usr/local/bin`，也接受 `DSH_INNER_BROWSER_SQLITE3` 指定；找不到就明确返回空而不是静默当成没有登录。
