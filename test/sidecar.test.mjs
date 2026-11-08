@@ -1722,3 +1722,90 @@ test('a scaled capture is measured against its own scale, not the column', () =>
   page.publish(fakeJpeg(1600, 1800, 'crisp'))
   assert.equal(seen.length, 1, 'a sharp capture at twice the column is the right shape')
 })
+
+test('a cast refused as already active stops the leftover and starts again', async () => {
+  /* A stop that failed leaves Chrome's own cast running while the bookkeeping
+     here says it stopped. The next start is then refused, and believing that
+     refusal leaves the pane quiet with a cast still encoding frames. */
+  /** @type {{method: string, params: any}[]} */
+  const sent = []
+  let starts = 0
+  const cdp = {
+    on: () => {},
+    send: async (method, params) => {
+      sent.push({ method, params })
+      if (method === 'Page.startScreencast') {
+        starts += 1
+        if (starts === 1) throw new Error('Page.startScreencast: Screencast is already active')
+      }
+      return {}
+    },
+  }
+  const page = new SidecarPage(cdp, 'unit-cast-refused')
+  page.view = { width: 800, height: 900 }
+  page.dpr = 1
+  let stills = 0
+  page.still = async () => { stills += 1 }
+  await page.cast()
+  assert.equal(page.casting, true, 'the mirror is casting after the retry')
+  assert.deepEqual(
+    sent.map((one) => one.method).filter((one) => one !== 'Page.screencastFrameAck'),
+    ['Page.startScreencast', 'Page.stopScreencast', 'Page.startScreencast'],
+    'the leftover cast is stopped before the start is asked for again',
+  )
+  assert.equal(stills, 1, 'a live pane still gets its first picture')
+  page.casting = false
+})
+
+test('a stop given no casting flag still stops the cast Chrome is running', async () => {
+  /** @type {string[]} */
+  const sent = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method) => { sent.push(method); return {} },
+  }, 'unit-stop-leak')
+  page.casting = false
+  await page.stopCast()
+  assert.deepEqual(sent, ['Page.stopScreencast'], 'the stop goes out even when the flag says idle')
+})
+
+test('a cast that accepted the start and sent nothing gives way to the capture path', async () => {
+  /** @type {string[]} */
+  const sent = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method) => { sent.push(method); return {} },
+  }, 'unit-live-dead')
+  page.view = { width: 800, height: 900 }
+  page.castScale = 1
+  page.dpr = 1
+  let loops = 0
+  page.castCrisp = async () => { loops += 1 }
+  /* The start was accepted a while ago and no frame ever arrived: the same
+     silence an idle page shows, which is why only a frame after the start
+     counts as proof the screencast is alive. */
+  page.casting = true
+  page.lastFrameAt = Date.now() - 5000
+  page.frames.add(() => {})
+  assert.equal(await page.liveDead(), true, 'silence after a start is a dead cast')
+  assert.equal(page.casting, false)
+  assert.equal(page.castLive, false, 'this page keeps using the capture path')
+  assert.equal(loops, 1, 'the capture path takes over')
+  assert.ok(sent.includes('Page.stopScreencast'), 'the dead cast is stopped')
+  assert.equal(page.castScale, 1)
+})
+
+test('a cast that is delivering frames is left alone', async () => {
+  const sent = []
+  const page = new SidecarPage({ on: () => {}, send: async (method) => { sent.push(method); return {} } }, 'unit-live-ok')
+  page.castScale = 1
+  page.casting = true
+  page.lastFrameAt = Date.now()
+  let loops = 0
+  page.castCrisp = async () => { loops += 1 }
+  assert.equal(await page.liveDead(), false, 'a frame that just arrived is proof of life')
+  assert.equal(sent.length, 0)
+  assert.equal(loops, 0)
+  assert.equal(page.casting, true)
+  page.casting = false
+})

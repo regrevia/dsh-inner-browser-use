@@ -709,6 +709,11 @@ export class SidecarPage {
        loop owns the cast: a restart bumps the number so the old loop stops. */
     this.castScale = 1 // ui-copy-ignore
     this.castGen = 0 // ui-copy-ignore
+    /* Whether this page's screencast has proved it delivers frames, and how
+       many it has sent since the last start. */
+    this.castLive = true // ui-copy-ignore
+    this.castSeen = 0 // ui-copy-ignore
+    this.liveClock = null
     /** The scale the page was last told to draw at; null until it is told once. */
     this.appliedScale = null
     /* What the pane already has: an unchanged picture is not worth a second
@@ -1378,6 +1383,9 @@ export class SidecarPage {
    * @returns {Promise<void>}
    */
   async castCrisp() {
+    if (this.liveClock !== null) clearTimeout(this.liveClock)
+    this.liveClock = null
+    this.resizing = false
     this.casting = true
     const mine = this.castGen + 1
     this.castGen = mine
@@ -1409,8 +1417,16 @@ export class SidecarPage {
         this.lastFrameAt = Date.now()
         this.deliverFrame(data)
       }
+      /* The pace is not a reason to keep the process up: a pane that stopped
+         watching ends this loop, a test that drives the loop ends the test. */
       const pause = CRISP_GAP_MS - (Date.now() - started)
-      if (pause > 0) await wait(pause)
+      if (pause > 0) {
+        await new Promise((resolve) => {
+          const tick = setTimeout(resolve, pause)
+          tick.unref?.()
+        })
+      }
+      if (this.frames.size === 0) break
     }
     if (this.castGen === mine) {
       this.casting = false
@@ -1464,6 +1480,7 @@ export class SidecarPage {
         }
         this.latest = data
         this.lastFrameAt = Date.now()
+        this.castSeen += 1
         if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
         this.deliverFrame(data)
       } catch (error) {
@@ -1621,7 +1638,7 @@ export class SidecarPage {
       if (Date.now() - this.lastFrameAt < 3000) return
       this.casting = false
     }
-    if (this.castScale > 1) {
+    if (this.castScale > 1 || this.castLive === false) {
       void this.castCrisp()
       return
     }
@@ -1632,17 +1649,71 @@ export class SidecarPage {
        pixels makes the cast downscale a picture that was already the right
        size, and the pane shows a soft copy of a sharp page. */
     const scale = this.dpr > 0 ? this.dpr : 1
-    await this.cdp.send('Page.startScreencast', {
+    const asked = {
       format: 'jpeg', // ui-copy-ignore
       quality: this.castQuality, // ui-copy-ignore
       maxWidth: Math.round(this.view.width * scale), // ui-copy-ignore
       maxHeight: Math.round(this.view.height * scale),
       optimizeForSpeed: true,
       everyNthFrame: 1,
-    }).catch(() => {
-      this.casting = false
-    })
+    }
+    const refused = await this.cdp.send('Page.startScreencast', asked).then(
+      () => null,
+      (error) => error,
+    )
+    if (refused !== null) {
+      /* A stop that failed earlier leaves Chrome's own cast running while the
+         bookkeeping here says it stopped, and this start is refused as
+         "already active". Giving up then leaves the pane quiet with a cast
+         still encoding frames nobody reads, so stop it and start once more. */
+      if (/already active/i.test(String(refused?.message ?? refused)) === true) {
+        await this.cdp.send('Page.stopScreencast').catch(() => {})
+        await this.cdp.send('Page.startScreencast', asked).catch(() => {
+          this.casting = false
+        })
+      } else {
+        this.casting = false
+      }
+    }
+    /* A screencast that accepted the request and then sent nothing is not an
+       idle page, it is a dead cast: the pane would hold one picture until the
+       next interaction. One frame is owed at once even when nothing repaints,
+       so silence here means the screencast never came up, and the paced
+       capture path below knows how to draw the same picture without it. */
+    this.castSeen = 0
+    const live = this.castGen
+    if (this.liveClock !== null) clearTimeout(this.liveClock)
+    this.liveClock = setTimeout(() => {
+      this.liveClock = null
+      if (this.castGen !== live) return
+      void this.liveDead()
+    }, 900)
+    this.liveClock.unref?.()
     void this.still()
+  }
+
+  /**
+   * The screencast accepted the start and never delivered a frame, so stop
+   * trusting it for this page and draw frames with the same paced capture the
+   * sharp path uses.
+   * @returns {Promise<boolean>} whether the live cast was found dead.
+   */
+  async liveDead() {
+    if (this.casting !== true) return false
+    if (this.castScale > 1) return false
+    /* Nobody is looking: a capture loop would burn the CPU to paint a picture
+       no pane holds. The fallback is for a cast that has an audience. */
+    if (this.frames.size === 0) return false
+    /* Frames left over from the cast before this one still land in the first
+       moments, so "one frame arrived" is not proof of a live screencast: what
+       counts is a frame that arrived while this cast was the current one. */
+    if (Date.now() - this.lastFrameAt < 700) return false
+    this.casting = false
+    this.castGen += 1
+    this.castLive = false
+    if (this.flashBridge === null) await this.cdp.send('Page.stopScreencast').catch(() => {})
+    void this.castCrisp()
+    return true
   }
 
   /**
@@ -1812,6 +1883,11 @@ export class SidecarPage {
        follows is asked for exactly that. */
     this.dpr = this.paneDpr
     if (this.casting === true) {
+      /* A scale change can swap the loop underneath the cast. The one that was
+         running only checks `casting`, so without this the old loop wakes up
+         after the restart, sees a cast still running and takes the surface back
+         - the pane then gets one picture and then nothing. */
+      this.castGen += 1
       await this.cdp.send('Page.stopScreencast').catch(() => {})
       this.casting = false
       await this.cast()
@@ -2038,10 +2114,21 @@ export class SidecarPage {
   async stopCast() {
     if (this.sizeClock !== null) clearTimeout(this.sizeClock)
     this.sizeClock = null
-    if (!this.casting) return
+    if (this.liveClock !== null) clearTimeout(this.liveClock)
+    this.liveClock = null
+    /* A fresh attach is a fresh chance for the screencast: the page may have
+       been navigated since, and the capture path is the fallback, not the
+       preference. */
+    this.castLive = true
     this.casting = false
     this.castGen += 1
-    if (this.flashBridge === null) await this.cdp.send('Page.stopScreencast').catch(() => {})
+    /* The bookkeeping is not proof of what Chrome is doing: a start refused as
+       "already active" left `casting` false over a cast that was still
+       encoding frames for a pane nobody watches. Stopping is idempotent, so the
+       stop goes out either way rather than trusting the flag. */
+    if (this.flashBridge === null && this.cdp !== null && this.cdp !== undefined) {
+      await this.cdp.send('Page.stopScreencast').catch(() => {})
+    }
   }
 
   /**
