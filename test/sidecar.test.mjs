@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, pidsWithMark, rootDir } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, mayClaim, pidsWithMark, rootDir } from '../sidecar.js'
 import { findWords, nearestByWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
@@ -1319,6 +1319,15 @@ test('a browser is only closed by the process that started it', () => {
   assert.equal(ownsBrowser({ pid: 0, owner: 0 }), false, 'a missing pid is not an owner')
   assert.equal(ownsBrowser({}), false, 'nothing said, nothing owned')
   assert.equal(ownsBrowser(null), false, 'no record, not owned')
+
+  /* A browser whose starter died is nobody's: it must be closed by the next
+     run, or the mirror that comes after it drives a page from a past session. */
+  assert.equal(mayClaim({ pid: 4242, owner: 4242 }, true), true, 'the starter may close its own browser')
+  assert.equal(mayClaim({ pid: 9001, owner: 4242 }, false), true, 'a starter that has gone leaves the browser free to take')
+  assert.equal(mayClaim({ pid: 9001, owner: 4242 }, true), false, 'a browser a live process started is not ours to close')
+  assert.equal(mayClaim({ pid: 9001, owner: 0 }, false), true, 'a profile with no marker has nobody to protect it')
+  assert.equal(mayClaim({ pid: 0, owner: 4242 }, false), false, 'a missing pid cannot claim anything')
+  assert.equal(mayClaim(null, false), false, 'nothing said, nothing claimed')
 })
 
 test('a probe told to keep its files elsewhere does not find the person\'s browser', () => {

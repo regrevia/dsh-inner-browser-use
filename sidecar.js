@@ -457,6 +457,41 @@ export function ownsBrowser(said) {
   return mine === owner
 }
 
+/**
+ * Whether a browser found on this profile is free to take: the process named in
+ * the marker has gone, so nobody is left to close it. A browser whose starter
+ * died would otherwise outlive every run — on Windows there is no lifetime
+ * watcher at all, so the next mirror attached to a browser from a previous
+ * session, with its old page and its old shape, and every click went to a
+ * window the person could no longer see.
+ * @param {{pid?: number, owner?: number}} said - this process, and the marker's pid.
+ * @param {boolean} alive - whether the marker's process still exists.
+ * @returns {boolean} true when this process may adopt the browser.
+ */
+export function mayClaim(said, alive) {
+  const mine = Number(said?.pid ?? 0)
+  const owner = Number(said?.owner ?? 0)
+  if (!Number.isInteger(mine) || mine <= 0) return false
+  if (owner === mine) return true
+  return alive !== true
+}
+
+/**
+ * @param {number} pid - a process the marker named.
+ * @returns {boolean} true while that process still exists.
+ */
+function pidAlive(pid) {
+  const number = Number(pid)
+  if (!Number.isInteger(number) || number <= 0) return false
+  try {
+    process.kill(number, 0)
+    return true
+  } catch (error) {
+    /* A process we are not allowed to signal still exists. */
+    return error?.code === 'EPERM'
+  }
+}
+
 /** @param {string} dir - profile directory. @returns {number} the pid that started this browser, or 0. */
 function markerPid(dir) {
   try {
@@ -3568,7 +3603,22 @@ export class Sidecar {
     mark('login')
     let port = await this.runningPort(dir) // ui-copy-ignore
     if (port === 0) port = await this.spawnChrome(dir) // ui-copy-ignore
-    else this.owns = ownsBrowser({ pid: process.pid, owner: markerPid(dir) })
+    else {
+      /* A browser found on the profile is adopted, not restarted. Whether this
+         process may close it later depends on who started it: somebody still
+         alive, or somebody who has gone and left the browser behind. */
+      const owner = markerPid(dir)
+      this.owns = ownsBrowser({ pid: process.pid, owner }) || mayClaim({ pid: process.pid, owner }, pidAlive(owner))
+      if (this.owns && owner !== process.pid) {
+        /* Taking it over means writing it down, so a later run knows whose it
+           is and the marker never points at a process that is gone. */
+        try {
+          writeFileSync(join(dir, 'owner.json'), JSON.stringify({ pid: process.pid, at: Date.now() })) // ui-copy-ignore
+        } catch {
+          /* a profile that cannot take a marker leaves it somebody else's */
+        }
+      }
+    }
     mark('browser')
     const ws = await this.pageSocket(port) // ui-copy-ignore
     mark('socket')
