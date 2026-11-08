@@ -1637,3 +1637,36 @@ test('an unscaled column still uses the display cast', async () => {
   assert.equal(calls.some((call) => call.method === 'Page.captureScreenshot' && call.params?.clip !== undefined), false, 'a capture per frame is not worth it at one pixel')
   await page.stopCast()
 })
+
+test('a tall scaled column captures within a pixel budget', async () => {
+  const own = []
+  const calls = []
+  const page = new SidecarPage({
+    on: (handler) => own.push(handler),
+    send: async (method, params) => {
+      calls.push({ method, params })
+      return method === 'Page.captureScreenshot' ? { data: 'tall-frame' } : {}
+    },
+  }, 'unit-tall', 0, () => 0)
+  await page.start()
+  calls.length = 0
+  /* A column taller than any screen: two device pixels per CSS pixel would be
+     a 4800-pixel-high picture, so the scale gives way, not the column. */
+  page.view = { width: 800, height: 2400 }
+  page.castScale = 2
+  page.sentAt = 0
+  page.lastFrameAt = 0
+  const frames = []
+  page.frames.add((message) => frames.push(message))
+  await page.cast()
+  await new Promise((resolve) => setTimeout(resolve, 90))
+  await page.stopCast()
+  const capture = calls.find((call) => call.method === 'Page.captureScreenshot' && call.params?.clip !== undefined)
+  assert.ok(capture !== undefined, 'the picture is captured')
+  const { width, height, scale } = capture.params.clip
+  assert.ok(scale > 1 && scale < 2, `the scale is lowered for a tall column, got ${scale}`)
+  assert.ok(width * height * scale * scale <= 4_200_000 + 1, 'the picture stays inside the pixel budget')
+  assert.equal(page.handScale(), 1, 'a click is still a CSS pixel')
+  assert.equal(frames.at(-1).w, 800, 'the header stays the column size')
+  assert.equal(frames.at(-1).h, 2400)
+})

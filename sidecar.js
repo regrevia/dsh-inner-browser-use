@@ -81,6 +81,13 @@ const CRISP_GAP_MS = 42 // ui-copy-ignore
 const CRISP_MAX = 2
 const CRISP_ROOM = 4096
 
+/* A tall column at two device pixels per CSS pixel asks for a picture bigger
+   than any screen: a 2400 CSS tall pane wants 4800 pixels of height, and one
+   such capture measured 160 KB and 132 ms per frame. The detail is worth
+   having, the bill is not, so the capture keeps within a budget of pixels and
+   a tall pane gets a lower scale instead of a heavier frame. */
+const CRISP_PIXELS = 4_200_000 // ui-copy-ignore
+
 /* The mirror is a photograph of a page, not an archive of one: quality that
    keeps small text readable is the ceiling, and a page whose frame is heavy
    gets a lighter one so the round trip stays short. */
@@ -1314,7 +1321,14 @@ export class SidecarPage {
     this.castGen = mine
     while (this.casting === true && this.castGen === mine) {
       const started = Date.now()
-      const room = Math.min(CRISP_MAX, CRISP_ROOM / Math.max(1, this.view.width))
+      const wide = Math.max(1, this.view.width)
+      const tall = Math.max(1, this.view.height)
+      const room = Math.min(
+        CRISP_MAX,
+        CRISP_ROOM / wide,
+        CRISP_ROOM / tall,
+        Math.sqrt(CRISP_PIXELS / (wide * tall)),
+      )
       const scale = Math.max(1, Math.min(room, Number(this.castScale) || 1))
       const shot = await this.cdp
         .send('Page.captureScreenshot', {
