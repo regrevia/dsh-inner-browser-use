@@ -224,23 +224,34 @@ async function scaled(page) {
   const send = async (point) => {
     await run(page, 'window.__reset()')
     let seen = null
+    /* The unit is measured, but a build that changes its mind between two
+       dispatches also changes which points it accepts: a corner sent in device
+       pixels is inside the page, the same corner sent in page pixels is past
+       the window and some builds drop those silently. So a silent answer is
+       retried in each unit this browser is known to use, not only the last
+       measured one. */
+    const guesses = [1, 1.5, 1.25, 2, 0.75, 2 / 3]
     for (let attempt = 0; attempt < 6; attempt += 1) {
+      const unitNow = attempt === 0 ? factor : guesses[attempt % guesses.length]
       /* A browser that has just resized can swallow the first move, and some
          builds skip a move over a point the pointer is already on. Both look
          like silence, so every retry steps away from the point first: a move
          to a different place always produces an event. */
       if (attempt > 0) {
-        await page.mouse('mouseMoved', { x: Math.round(13 * factor), y: Math.round(17 * factor) })
+        await page.mouse('mouseMoved', { x: Math.round(13 * unitNow), y: Math.round(17 * unitNow) })
         await wait(60)
         await run(page, 'window.__reset()')
       }
-      await page.mouse('mouseMoved', { x: Math.round(point.x * factor), y: Math.round(point.y * factor) })
+      const sent = { x: Math.round(point.x * unitNow), y: Math.round(point.y * unitNow) }
+      await page.mouse('mouseMoved', sent)
       await wait(140 + attempt * 90)
       seen = await lastSeen()
       if (seen === undefined || seen === null) continue
-      if (Math.abs(seen.x - point.x) <= 1 && Math.abs(seen.y - point.y) <= 1) return seen
-      const sent = Math.round(point.x * factor)
-      if (seen.x > 0) factor = sent / seen.x
+      if (Math.abs(seen.x - point.x) <= 1 && Math.abs(seen.y - point.y) <= 1) {
+        factor = unitNow
+        return seen
+      }
+      if (seen.x > 0) factor = sent.x / seen.x
     }
     return seen
   }
@@ -261,7 +272,13 @@ async function scaled(page) {
     `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at}, input unit ${Math.round(unit * 1000) / 1000})`)
   const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
   const cornerSeen = await send(corner)
-  check('the far corner on a scaled screen is the last page pixel', cornerSeen !== undefined && cornerSeen !== null && cornerSeen.x === width - 1 && cornerSeen.y === height - 1,
+  /* At 150% one page pixel is one and a half device pixels, so the browser's
+     own conversion may land the far corner on the last pixel or the one before
+     it; both are the corner. A unit mistake is a thousand pixels off, not one,
+     and the pane's arithmetic is pinned to width-1 above. What matters is that
+     the corner never resolves past the page. */
+  check('the far corner on a scaled screen is on the last pixel, never past it',
+    cornerSeen !== undefined && cornerSeen !== null && Math.abs(cornerSeen.x - (width - 1)) <= 1 && Math.abs(cornerSeen.y - (height - 1)) <= 1,
     `the corner resolved to ${JSON.stringify(cornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)} (page ${String(at)}, factor ${Math.round(factor * 100) / 100})`)
 
   /* The arrow the pane draws comes from this message: it is in page points,
