@@ -1124,7 +1124,7 @@ test('the page lays out at the size of its column, so the mirror fills the frame
   page.still = async () => {}
   sent.length = 0
   await page.setViewport(700, 860)
-  assert.deepEqual(sent.map((call) => call.method).filter((method) => method !== 'Page.getLayoutMetrics').slice(0, 2), ['Emulation.setDeviceMetricsOverride', 'Page.stopScreencast'])
+  assert.deepEqual(sent.map((call) => call.method).filter((method) => method !== 'Page.getLayoutMetrics' && method !== 'Runtime.evaluate').slice(0, 2), ['Emulation.setDeviceMetricsOverride', 'Page.stopScreencast'])
   const started = sent.find((call) => call.method === 'Page.startScreencast')
   assert.deepEqual({ w: started.params.maxWidth, h: started.params.maxHeight }, { w: 700, h: 860 })
 })
@@ -1158,6 +1158,29 @@ test('a size the browser did not take is replaced by the size it reports', async
   page.cdp = null
   await page.laidOut()
   assert.deepEqual(page.view, { width: 1250, height: 875 })
+})
+
+test('a page with a scrollbar is measured with its scrollbar', async () => {
+  /* The layout viewport leaves the scrollbar out, so a long page would be
+     believed 15 CSS pixels narrower than the pane: every frame came back
+     narrow, the pane letterboxed it, and the scrollbar itself never reached
+     the mirror. The window's own width is the pane's width. */
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method) => {
+      if (method === 'Runtime.evaluate') return { result: { value: [885, 900] } }
+      if (method === 'Page.getLayoutMetrics') return { cssLayoutViewport: { clientWidth: 870, clientHeight: 900 } }
+      return {}
+    },
+  }, 'default')
+  const view = await page.setViewport(885, 900)
+  assert.deepEqual(view, { width: 885, height: 900 }, 'the scrollbar is part of the pane')
+
+  /* A page that cannot answer still falls back to the layout viewport rather
+     than refusing to place the pointer. */
+  page.cdp = { send: async (method) => (method === 'Runtime.evaluate' ? Promise.reject(new Error('gone')) : { cssLayoutViewport: { clientWidth: 870, clientHeight: 900 } }) }
+  await page.laidOut()
+  assert.deepEqual(page.view, { width: 870, height: 900 })
 })
 
 test('a polled mirror sends a still picture once, not once per poll', async () => {

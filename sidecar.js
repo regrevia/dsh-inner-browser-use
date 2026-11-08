@@ -1783,6 +1783,24 @@ export class SidecarPage {
 
   async laidOut() {
     if (this.cdp === null || this.cdp === undefined) return
+    /* The window, scrollbar and all. `cssLayoutViewport.clientWidth` leaves the
+       scrollbar out: on a page long enough to have one, believing it makes the
+       page 15 CSS pixels narrower than the pane, and every frame then arrives
+       narrow, is letterboxed into the pane, and the last 15 pixels of the page
+       — the scrollbar itself — never reach the mirror. */
+    const answered = await this.cdp
+      .send('Runtime.evaluate', {
+        expression: '[window.innerWidth, window.innerHeight]',
+        returnByValue: true,
+      })
+      .catch(() => null)
+    const pair = answered?.result?.value
+    const width = Array.isArray(pair) === true ? Number(pair[0]) : NaN
+    const height = Array.isArray(pair) === true ? Number(pair[1]) : NaN
+    if (Number.isFinite(width) && Number.isFinite(height) && width >= 200 && height >= 200) {
+      this.tookSize(width, height)
+      return
+    }
     const metrics = await this.cdp.send('Page.getLayoutMetrics').catch(() => null)
     const css = metrics === null || metrics === undefined ? null : metrics.cssLayoutViewport
     this.tookSize(
