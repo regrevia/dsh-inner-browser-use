@@ -602,7 +602,8 @@ test('a fast hand cannot queue stale hover positions', () => {
   assert.ok(source.includes('if (moveClock.current !== 0) return'))
   assert.ok(source.includes('moving.current = pressed.current === null ? point : { ...point, pressed: true }'))
   assert.ok(source.includes('if (moving.current !== null) queue()'))
-  assert.ok(source.includes('const wait = Math.max(0, 40 - (Date.now() - movedAt.current))'))
+  assert.ok(source.includes('const DRAG_GAP_MS = 8'))
+  assert.ok(source.includes('const wait = Math.max(0, DRAG_GAP_MS - (Date.now() - movedAt.current))'))
 })
 
 test('a tab that changed behind the picture is taken over, not declared gone', () => {

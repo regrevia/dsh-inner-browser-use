@@ -439,3 +439,22 @@ test('a press outside the picture opens no gesture', async () => {
 
   assert.deepEqual(pane.input(), [])
 })
+
+test('a drag reaches the page at the speed the hand drew it', async () => {
+  const pane = mount()
+  await pane.settle()
+  pane.frame({ jpeg: 'AA', w: 3000, h: 1600, target: 'tab-1', url: 'https://example.com/' })
+  await pane.settle()
+  pane.reset()
+  const stage = pane.find('dshib-side-stage')
+  /* Eight moves 12 ms apart is a slow drag a person would draw a curve with.
+     A 40 ms gate lets two or three of them through and turns the rest into
+     straight lines. */
+  for (let i = 0; i < 8; i += 1) {
+    stage.props.onPointerMove({ clientX: 100 + i * 40, clientY: 600, pointerId: 1, currentTarget: pane.nodes.stage })
+    await new Promise((resolve) => setTimeout(resolve, 12))
+  }
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  const points = pane.input().filter((body) => body.kind === 'hover')
+  assert.ok(points.length >= 8, `the page saw ${points.length} of 8 points of the drag`)
+})

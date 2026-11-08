@@ -1036,10 +1036,14 @@ window.__ModuleLoader__.load({
       const moving = React.useRef(null)
       const moveClock = React.useRef(0)
       /* One ask is in the air at a time and only the newest point is kept: a
-         fast hand cannot queue a trail of stale positions behind itself. */
+         fast hand cannot queue a trail of stale positions behind itself. The
+         gap is one display refresh, not two and a half: at 40 ms a drag reached
+         the page as 15 points a second, which a canvas reads as straight
+         segments, while the same pipe carried 44 (scripts/pointer.mjs). */
+      const DRAG_GAP_MS = 8
       const queue = () => {
         if (moveClock.current !== 0) return
-        const wait = Math.max(0, 40 - (Date.now() - movedAt.current))
+        const wait = Math.max(0, DRAG_GAP_MS - (Date.now() - movedAt.current))
         moveClock.current = setTimeout(() => {
           moveClock.current = 0
           const latest = moving.current
