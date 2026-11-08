@@ -1574,3 +1574,66 @@ test('the keys the hand holds ride with the click, the wheel and the hover', asy
   await page.mouse('mousePressed', { x: 100, y: 120, clickCount: 1 })
   assert.equal(last().params.modifiers, 0, 'no key held is zero, not missing')
 })
+
+test('a column drawn at two device pixels per CSS pixel gets a captured picture', async () => {
+  /* A scaled display once had the page itself drawn at its scale, which moved
+     every click: a point the pane sent came back in device pixels. The detail
+     is wanted, the moved layout is not, so the picture is captured at the
+     column's size through a clip and the page is never told. */
+  const own = []
+  const calls = []
+  const cdp = {
+    on: (handler) => own.push(handler),
+    send: async (method, params) => {
+      calls.push({ method, params })
+      return method === 'Page.captureScreenshot' ? { data: 'crisp-frame' } : {}
+    },
+  }
+  const page = new SidecarPage(cdp, 'unit-crisp', 0, () => 0)
+  await page.start()
+  calls.length = 0
+  page.view = { width: 1100, height: 800 }
+  page.castScale = 2
+  const frames = []
+  page.frames.add((message) => frames.push(message))
+  page.sentAt = 0
+  page.lastFrameAt = 0
+  await page.cast()
+  await new Promise((resolve) => setTimeout(resolve, 90))
+  await page.stopCast()
+  const captures = calls.filter((call) => call.method === 'Page.captureScreenshot')
+  assert.ok(captures.length >= 1, 'the picture is captured, not cast')
+  assert.deepEqual(captures[0].params.clip, { x: 0, y: 0, width: 1100, height: 800, scale: 2 }, 'the clip is the viewport at the column scale')
+  assert.equal(calls.some((call) => call.method === 'Page.startScreencast'), false, 'no cast is started for a scaled column')
+  assert.equal(page.handScale(), 1, 'a click still counts in CSS pixels')
+  assert.ok(frames.length >= 1, 'the pane is sent the picture')
+  assert.equal(frames.at(-1).w, 1100, 'the header stays in CSS pixels')
+  assert.equal(frames.at(-1).h, 800)
+  /* A stopped picture stops being captured, not just being sent. */
+  const settled = calls.length
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(calls.filter((call) => call.method === 'Page.captureScreenshot').length, captures.length, 'the loop ends with the cast')
+  assert.equal(calls.length, settled, 'nothing keeps asking after the cast stopped')
+})
+
+test('an unscaled column still uses the display cast', async () => {
+  const own = []
+  const calls = []
+  const page = new SidecarPage({
+    on: (handler) => own.push(handler),
+    send: async (method, params) => {
+      calls.push({ method, params })
+      return {}
+    },
+  }, 'unit-plain', 0, () => 0)
+  await page.start()
+  calls.length = 0
+  page.view = { width: 900, height: 700 }
+  page.castScale = 1
+  page.sentAt = 0
+  page.lastFrameAt = 0
+  await page.cast()
+  assert.equal(calls.filter((call) => call.method === 'Page.startScreencast').length, 1, 'one cast is what a plain column needs')
+  assert.equal(calls.some((call) => call.method === 'Page.captureScreenshot' && call.params?.clip !== undefined), false, 'a capture per frame is not worth it at one pixel')
+  await page.stopCast()
+})

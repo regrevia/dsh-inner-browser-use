@@ -74,6 +74,13 @@ const POPUP_GRACE_MS = 25
 const FOLLOW_WINDOW_MS = 2000
 const FRAME_GAP_MS = 28
 
+/* A column on a scaled display draws in two device pixels per CSS pixel. The
+   picture is captured at that size and the page is never told: the layout keeps
+   counting clicks in CSS pixels while the pane gets the detail its screen has. */
+const CRISP_GAP_MS = 42 // ui-copy-ignore
+const CRISP_MAX = 2
+const CRISP_ROOM = 4096
+
 /* The mirror is a photograph of a page, not an archive of one: quality that
    keeps small text readable is the ceiling, and a page whose frame is heavy
    gets a lighter one so the round trip stays short. */
@@ -652,6 +659,10 @@ export class SidecarPage {
        the display is soft; rendering at the pane's own scale keeps small text
        and hairlines legible without asking the encoder for more than it gives. */
     this.paneDpr = 1
+    /* How many device pixels the column draws per CSS pixel, and which capture
+       loop owns the cast: a restart bumps the number so the old loop stops. */
+    this.castScale = 1 // ui-copy-ignore
+    this.castGen = 0 // ui-copy-ignore
     /** The scale the page was last told to draw at; null until it is told once. */
     this.appliedScale = null
     /* What the pane already has: an unchanged picture is not worth a second
@@ -1241,6 +1252,96 @@ export class SidecarPage {
     return { x: Number(spot.x), y: Number(spot.y) }
   }
 
+  /**
+   * Hands one picture to every pane watching this tab, at the pace a person can
+   * see. How the picture was made is not the pane's concern: a cast frame and a
+   * captured one leave through here, so both keep the same counters and limits.
+   * @param {string} data - base64 JPEG of the page.
+   * @returns {void}
+   */
+  deliverFrame(data) {
+    this.seq += 1
+    this.bytes += data.length
+    if (this.resizing === true) return
+    /* Every so often, let the weight of the last frame decide the quality the
+       next one is made at: a heavy page pays for itself in every later frame. */
+    if ((this.seq % 24 === 0 || this.seq === 1) && Date.now() - this.adaptAt > 3000) {
+      this.adaptAt = Date.now()
+      const wanted = nextQuality(this.castQuality, data.length)
+      if (wanted !== this.castQuality) void this.recast(wanted)
+    }
+    /* A page that is not moving sends the same bytes again and again; the pane
+       already shows that picture, so it is dropped. */
+    if (this.frames.size > 0 && this.repeats(data) === true) return
+    if (this.tooSoon()) return
+    this.inflight += 1
+    const frame = {
+      seq: this.seq, // ui-copy-ignore
+      w: this.view.width, // ui-copy-ignore
+      h: this.view.height, // ui-copy-ignore
+      jpeg: data, // ui-copy-ignore
+      url: this.url, // ui-copy-ignore
+      title: this.title, // ui-copy-ignore
+      pointer: this.pointer, // ui-copy-ignore
+      /* Which tab this picture came from: the pane sends it back with every
+         click, so input cannot land on a page the person never saw. */
+      target: this.targetId, // ui-copy-ignore
+      /* Whether the person is driving right now: the pane hides the agent's
+         arrow while they are, so two cursors never claim the same hand. */
+      hold: this.holdOf(), // ui-copy-ignore
+    }
+    for (const sink of this.frames) {
+      try {
+        sink(frame)
+      } catch {
+        /* a closed viewer is dropped by its own stream handler */
+      }
+    }
+    this.inflight -= 1
+  }
+
+  /**
+   * The column draws more device pixels than the page has CSS pixels, so the
+   * picture is captured at that size instead of being cast from the display:
+   * a clip scales the image and leaves the layout and the input units alone,
+   * which is the one way to get a sharp mirror without moving every click.
+   * One capture at a time, paced and cancelled like the cast.
+   * @returns {Promise<void>}
+   */
+  async castCrisp() {
+    this.casting = true
+    const mine = this.castGen + 1
+    this.castGen = mine
+    while (this.casting === true && this.castGen === mine) {
+      const started = Date.now()
+      const room = Math.min(CRISP_MAX, CRISP_ROOM / Math.max(1, this.view.width))
+      const scale = Math.max(1, Math.min(room, Number(this.castScale) || 1))
+      const shot = await this.cdp
+        .send('Page.captureScreenshot', {
+          format: 'jpeg', // ui-copy-ignore
+          quality: this.castQuality, // ui-copy-ignore
+          fromSurface: true,
+          /* The clip is the viewport, at two image pixels per CSS pixel: the same
+             box the cast would show, drawn at the column's own resolution. */
+          clip: { x: 0, y: 0, width: this.view.width, height: this.view.height, scale }, // ui-copy-ignore
+        })
+        .catch(() => null)
+      if (this.casting !== true || this.castGen !== mine) break
+      const data = String(shot?.data ?? '')
+      if (data !== '' && this.frames.size > 0) {
+        this.latest = data
+        this.lastFrameAt = Date.now()
+        this.deliverFrame(data)
+      }
+      const pause = CRISP_GAP_MS - (Date.now() - started)
+      if (pause > 0) await wait(pause)
+    }
+    if (this.castGen === mine) {
+      this.casting = false
+      this.castGen += 1
+    }
+  }
+
   /** Keep one listener that fans frames out to every viewer. */
   async start() {
     /* A click that downloads should leave a file, not nothing: point downloads
@@ -1287,46 +1388,8 @@ export class SidecarPage {
         }
         this.latest = data
         this.lastFrameAt = Date.now()
-        this.seq += 1
-        this.bytes += data.length
-        if (this.resizing === true) return
-        /* Every so often, let the weight of the last frame decide the quality
-           of the next one. Restarting the cast is cheap and rare; a heavy
-           page pays for itself in every frame of every later action. */
-        if ((this.seq % 24 === 0 || this.seq === 1) && Date.now() - this.adaptAt > 3000) {
-          this.adaptAt = Date.now()
-          const wanted = nextQuality(this.castQuality, data.length)
-          if (wanted !== this.castQuality) void this.recast(wanted)
-        }
         if (metadata?.timestamp !== undefined && metadata.timestamp * 1000 < this.touched - 60_000) return
-        /* A page that is not moving sends the same bytes again and again; the
-           pane already shows that picture, so it is acked and dropped. */
-        if (this.frames.size > 0 && this.repeats(data) === true) return
-        if (this.tooSoon()) return
-        this.inflight += 1
-        const frame = {
-          seq: this.seq, // ui-copy-ignore
-          w: this.view.width, // ui-copy-ignore
-          h: this.view.height, // ui-copy-ignore
-          jpeg: data, // ui-copy-ignore
-          url: this.url, // ui-copy-ignore
-          title: this.title, // ui-copy-ignore
-          pointer: this.pointer, // ui-copy-ignore
-          /* Which tab this picture came from: the pane sends it back with every
-             click, so input cannot land on a page the person never saw. */
-          target: this.targetId, // ui-copy-ignore
-          /* Whether the person is driving right now: the pane hides the agent's
-             arrow while they are, so two cursors never claim the same hand. */
-          hold: this.holdOf(), // ui-copy-ignore
-        }
-        for (const sink of this.frames) {
-          try {
-            sink(frame)
-          } catch {
-            /* a closed viewer is dropped by its own stream handler */
-          }
-        }
-        this.inflight -= 1
+        this.deliverFrame(data)
       } catch (error) {
         this.fault = String(error?.message ?? error) // ui-copy-ignore
       }
@@ -1440,6 +1503,7 @@ export class SidecarPage {
     if (this.casting !== true || this.flashBridge !== null) return
     try {
       this.castQuality = quality
+      this.castGen += 1
       await this.cdp.send('Page.stopScreencast').catch(() => {})
       this.casting = false
       await this.cast()
@@ -1480,6 +1544,10 @@ export class SidecarPage {
          few seconds means the cast died rather than being idle. */
       if (Date.now() - this.lastFrameAt < 3000) return
       this.casting = false
+    }
+    if (this.castScale > 1) {
+      void this.castCrisp()
+      return
     }
     this.casting = true
     /* Full-resolution mirror at a quality that keeps small text readable;
@@ -1623,8 +1691,14 @@ export class SidecarPage {
        scale is a change even when the size is the same, because the page is
        still drawing at the old one. */
     const looked = this.mirrorScale(w, Number(dpr))
-    const rescaled = looked !== this.appliedScale
+    /* The page is laid out at one CSS pixel per image pixel, so the picture is
+       captured at that size and then enlarged again for a scaled column: a
+       device scale in the metrics is what used to move every click. */
+    const asked = Number(dpr)
+    const crisp = Number.isFinite(asked) && asked > 1 ? Math.min(CRISP_MAX, asked) : 1
+    const rescaled = looked !== this.appliedScale || crisp !== this.castScale
     this.paneDpr = looked
+    this.castScale = crisp
     if (w === this.view.width && h === this.view.height && rescaled !== true) return this.view
     this.view = { width: w, height: h }
     this.touched = Date.now()
@@ -1884,6 +1958,7 @@ export class SidecarPage {
     this.sizeClock = null
     if (!this.casting) return
     this.casting = false
+    this.castGen += 1
     if (this.flashBridge === null) await this.cdp.send('Page.stopScreencast').catch(() => {})
   }
 
