@@ -94,7 +94,7 @@ test('a hand on the page hovers it without moving the agent arrow', async () => 
   assert.deepEqual(seen, [], 'the arrow is drawn by the agent, not by every hover')
   assert.deepEqual(cdp.sent[0], [
     'Input.dispatchMouseEvent',
-    { type: 'mouseMoved', x: 300, y: 200, button: 'none', buttons: 0, clickCount: 0, pointerType: 'mouse' },
+    { type: 'mouseMoved', x: 300, y: 200, button: 'none', buttons: 0, clickCount: 0, modifiers: 0, pointerType: 'mouse' },
   ])
   assert.equal(cdp.sent[1][0], 'Runtime.evaluate', 'the page is asked what cursor it wants there')
   assert.equal(typeof cursor, 'string', 'a page that cannot answer still yields a usable cursor')
@@ -1547,4 +1547,30 @@ test('every picture names its tab and every reclaim names the viewer', () => {
   )
   assert.equal(source.split('row.page.markGone()').length - 1, 1, 'trimming a tab tells its pane')
   assert.equal(source.split('page.markGone()').length - 1, 2, 'reaping an idle tab tells its pane too')
+})
+
+test('the keys the hand holds ride with the click, the wheel and the hover', async () => {
+  const sent = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method, params) => {
+      sent.push({ method, params })
+      return {}
+    },
+  }, 'default')
+  const last = () => sent.filter((one) => one.method === 'Input.dispatchMouseEvent').at(-1)
+  /* Shift is the range, ctrl a second pick, cmd a new tab: the page reads them
+     off the mouse event, so the bits have to reach the protocol. */
+  await page.mouse('mousePressed', { x: 100, y: 120, modifiers: 8, clickCount: 1 })
+  assert.equal(last().params.modifiers, 8, 'shift reaches the press')
+  await page.mouse('mouseReleased', { x: 100, y: 120, modifiers: 8, clickCount: 1 })
+  assert.equal(last().params.modifiers, 8, 'and the release')
+  await page.hover({ x: 100, y: 120, modifiers: 2, pressed: true })
+  assert.equal(last().params.modifiers, 2, 'a drag with ctrl held says so on every move')
+  await page.wheel({ x: 100, y: 120, dy: 40, modifiers: 8 })
+  assert.equal(last().params.modifiers, 8, 'shift turns a vertical wheel sideways')
+  /* A plain click carries no keys, and the field is always there: a page that
+     reads modifiers off the event never gets undefined. */
+  await page.mouse('mousePressed', { x: 100, y: 120, clickCount: 1 })
+  assert.equal(last().params.modifiers, 0, 'no key held is zero, not missing')
 })

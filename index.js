@@ -774,29 +774,33 @@ export function apply(ctx) {
         const button = body?.button === 'right' ? 'right' : 'left'
         const act = async () => {
           if (kind === 'hover') {
-            cursor = await page.hover({ x, y, pressed: body.pressed === true })
+            cursor = await page.hover({ x, y, modifiers: Math.max(0, Math.min(15, Math.round(Number(body.modifiers ?? 0)) || 0)), pressed: body.pressed === true })
             return true
           }
           /* A press and its release are their own events: the page sees a
              button that stays down across the moves in between, which is what
              makes a drag a drag and a double click a double click. */
-          if (kind === 'down') return (await page.mouse('mousePressed', { x, y, button, clickCount: Number(body.clickCount ?? 1) })) !== false
-          if (kind === 'up') return (await page.mouse('mouseReleased', { x, y, button, clickCount: Number(body.clickCount ?? 1) })) !== false
-          if (kind === 'move') return (await page.mouse('mouseMoved', { x, y })) !== false
+          /* Shift, ctrl, alt and cmd ride with the click: without them a
+             shift-click is a plain click, a ctrl-click opens nothing and a
+             shift-drag selects nothing. */
+          const modifiers = Math.max(0, Math.min(15, Math.round(Number(body.modifiers ?? 0)) || 0))
+          if (kind === 'down') return (await page.mouse('mousePressed', { x, y, button, modifiers, clickCount: Number(body.clickCount ?? 1) })) !== false
+          if (kind === 'up') return (await page.mouse('mouseReleased', { x, y, button, modifiers, clickCount: Number(body.clickCount ?? 1) })) !== false
+          if (kind === 'move') return (await page.mouse('mouseMoved', { x, y, modifiers })) !== false
           if (kind === 'click') {
             /* A hand that clicked twice quickly says so in the count it sends;
                two single clicks would never reach a page's double click. */
             const clickCount = body.double === true ? 2 : Math.max(1, Math.min(3, Number(body.clickCount ?? 1)))
-            const moved = await page.mouse('mouseMoved', { x, y })
-            const pressed = await page.mouse('mousePressed', { x, y, button, clickCount })
-            const released = await page.mouse('mouseReleased', { x, y, button, clickCount })
+            const moved = await page.mouse('mouseMoved', { x, y, modifiers })
+            const pressed = await page.mouse('mousePressed', { x, y, button, modifiers, clickCount })
+            const released = await page.mouse('mouseReleased', { x, y, button, modifiers, clickCount })
             if (body.double === true) {
               await page.mouse('mousePressed', { x, y, button, clickCount: 2 })
               await page.mouse('mouseReleased', { x, y, button, clickCount: 2 })
             }
             return moved !== false && pressed !== false && released !== false
           }
-          if (kind === 'wheel') return (await page.wheel({ x, y, dx: Number(body.dx ?? 0), dy: Number(body.dy ?? 0) })) !== false
+          if (kind === 'wheel') return (await page.wheel({ x, y, modifiers, dx: Number(body.dx ?? 0), dy: Number(body.dy ?? 0) })) !== false
           if (kind === 'text') return (await page.insertText(String(body.text ?? ''))) !== false
           if (kind === 'key') {
             const key = keyEvent(body)

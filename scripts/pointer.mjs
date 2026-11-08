@@ -43,10 +43,10 @@ addEventListener('mousemove', (event) => {
   window.__moves.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, target: (event.target && event.target.id) || '' })
 }, true)
 addEventListener('mousedown', (event) => {
-  window.__presses.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, target: (event.target && event.target.id) || '' })
+  window.__presses.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, target: (event.target && event.target.id) || '', shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey })
 }, true)
 addEventListener('wheel', (event) => {
-  window.__wheels.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, button: event.button, dy: Math.round(event.deltaY) })
+  window.__wheels.push({ x: event.clientX, y: event.clientY, buttons: event.buttons, button: event.button, dy: Math.round(event.deltaY), shift: event.shiftKey, ctrl: event.ctrlKey })
 }, true)
 window.__reset = () => { window.__moves = []; window.__wheels = []; window.__presses = []; window.__dbl = []; return true }
 </script>`
@@ -173,6 +173,29 @@ async function dragged(page) {
     `the page saw buttons ${String(wheels[0]?.buttons)} on the wheel`)
   check('a wheel is not a button press', wheels[0]?.button === 0, `the page saw button ${String(wheels[0]?.button)}`)
   return { moves: moves.length, wheels: wheels.length }
+}
+
+/** A click with a key held is still that key's gesture: shift is a range, ctrl a
+ * second pick, cmd a new tab. The bits a person holds have to survive the pipe. */
+async function heldKeys(page) {
+  await run(page, 'window.__reset()')
+  const at = point(page, 0.4, 0.4, WIDE, TALL)
+  for (const [bits, want] of [[8, { shift: true, ctrl: false }], [2, { shift: false, ctrl: true }], [4, { shift: false, ctrl: false }]]) {
+    await page.mouse('mousePressed', { x: at.x, y: at.y, button: 'left', clickCount: 1, modifiers: bits })
+    await page.mouse('mouseReleased', { x: at.x, y: at.y, button: 'left', clickCount: 1, modifiers: bits })
+    await page.wheel({ x: at.x, y: at.y, dx: 0, dy: 40, modifiers: bits })
+    await wait(120)
+    const presses = JSON.parse(await run(page, 'JSON.stringify(window.__presses)'))
+    const wheels = JSON.parse(await run(page, 'JSON.stringify(window.__wheels)'))
+    const press = presses.at(-1) ?? {}
+    const wheel = wheels.at(-1) ?? {}
+    check(`a click with ${String(bits)} held carries that key`, press.shift === want.shift && press.ctrl === want.ctrl,
+      `the page saw shift ${String(press.shift)} / ctrl ${String(press.ctrl)} for ${String(bits)}`)
+    check(`a wheel turned with ${String(bits)} held carries that key`, wheel.shift === want.shift && wheel.ctrl === want.ctrl,
+      `the page saw shift ${String(wheel.shift)} / ctrl ${String(wheel.ctrl)} for ${String(bits)}`)
+    await run(page, 'window.__reset()')
+  }
+  return { presses: 3, wheels: 3 }
 }
 
 /** A screen that scales by 150% is how Windows usually arrives. */
@@ -342,6 +365,7 @@ async function main() {
     summary.drag = await dragged(page)
     summary.dragMs = Date.now() - drag
     summary.dbl = await doubleClicked(page)
+    summary.keys = await heldKeys(page)
     const zoom = await scaled(page)
     summary.scaled = zoom.at
     summary.scaledCorner = zoom.corner ?? null

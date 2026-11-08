@@ -962,6 +962,9 @@ window.__ModuleLoader__.load({
           ph: Math.max(1, Math.round(view.h)),
           x: Math.round(fx * (fw - 1)),
           y: Math.round(fy * (fh - 1)),
+          /* A click with shift held is a range, with ctrl or cmd a new tab or
+             a second pick: the keys the hand holds are part of the click. */
+          modifiers: modsOf(event),
         }
       }
       const ime = React.useRef(null)
@@ -1087,7 +1090,7 @@ window.__ModuleLoader__.load({
         const box = el.getBoundingClientRect()
         const across = Math.min(1, Math.max(0, (event.clientX - box.left - spot.x) / spot.w))
         const down = Math.min(1, Math.max(0, (event.clientY - box.top - spot.y) / spot.h))
-        return { fx: across, fy: down, fw: spot.fw, fh: spot.fh, pw: view.w, ph: view.h, x: Math.round(across * view.w), y: Math.round(down * view.h) }
+        return { fx: across, fy: down, fw: spot.fw, fh: spot.fh, pw: view.w, ph: view.h, x: Math.round(across * view.w), y: Math.round(down * view.h), modifiers: modsOf(event) }
       }
       const onWheel = (event) => {
         touched()

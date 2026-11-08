@@ -2098,6 +2098,7 @@ export class SidecarPage {
       button: 'none', // ui-copy-ignore
       buttons: held ? 1 : 0, // ui-copy-ignore
       clickCount: 0,
+      modifiers: point?.modifiers ?? 0, // ui-copy-ignore
       pointerType: 'mouse',
     })
     return this.cursorAt(point)
@@ -2195,6 +2196,9 @@ export class SidecarPage {
       button: type === 'mouseMoved' ? 'none' : button, // ui-copy-ignore
       buttons: held, // ui-copy-ignore
       clickCount: point.clickCount ?? (type === 'mouseMoved' ? 0 : 1),
+      /* The keys the hand holds, in the browser's own bits: alt 1, ctrl 2,
+         meta 4, shift 8. A page reads them from every mouse event. */
+      modifiers: point.modifiers ?? 0, // ui-copy-ignore
       pointerType: 'mouse',
     })
     /* The held button is remembered between events, so a move in the middle of
@@ -2223,6 +2227,7 @@ export class SidecarPage {
       deltaY: args.dy ?? 0, // ui-copy-ignore
       button: 'none', // ui-copy-ignore
       buttons: this.buttons, // ui-copy-ignore
+      modifiers: args.modifiers ?? 0, // ui-copy-ignore
       pointerType: 'mouse',
     })
   }

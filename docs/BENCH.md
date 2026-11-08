@@ -491,6 +491,26 @@ Flash 路径原来采集一个固定的 1440×900 窗口，竖高右栏里上下
 
 结论：静止页面几乎不花带宽（Chrome 的 screencast 只在合成器变化时发帧）；满帧动画按列宽排版后单帧只有 15 KB，60 fps 总计约 875 KB/s，走本机 SSE 无压力，不设帧率上限以免牺牲延迟。「同一张图不重复发」这道闸真正省掉的是 Flash 轮询分支与 `still()` 连发（单测：3 次连发 → 1 张）。
 
+## 镜像点页面时按着的键一起送过去（0.47.63，真实 Chrome）
+
+面板自己（`client.js`）一直知道手在按什么键，键盘路径也把 `modifiers` 发给了服务端，唯独**鼠标事件把键丢了**：按下、抬起、拖动、右键、滚轮五条负载都不带这个字段，`sidecar.js` 的 `mouse()` / `wheel()` 也没往 CDP 写，于是页面永远读到 `shiftKey/ctrlKey/altKey/metaKey = false`。Shift 点选一段、Ctrl 点选多个、Cmd 点开新标签、Alt 点保存、Shift 滚轮横向——在镜像里全是普通点击。
+
+同一台机器、同一个页面（`contenteditable` 一行文本），同一串「点左端 → 移到右端 → Shift 点」：
+
+| 版本 | 页面看到的 shiftKey | 选中的字符数 |
+| --- | --- | --- |
+| 0.47.62，`modifiers: 8` 发出 | `mousedown` false、`mouseup` false、`wheel` false（5/5 全假） | 0（只有光标） |
+| 0.47.63，`modifiers: 8` 发出 | `mousedown` true、`mouseup` true、`wheel` true（5/5 全真） | 62（整段选中） |
+
+同一次测量里 `modifiers: 2` 的第二次点击页面读到 `ctrlKey: true`，两次都不再串味。
+
+- `client.js`：`toView()` 与画面外滚轮的比例落点都带上 `modifiers: modsOf(event)`（Alt 1 / Ctrl 2 / Meta 4 / Shift 8，与键盘路径同一套位）。
+- `index.js`：`down` / `up` / `move` / `click` / `hover` / `wheel` 六条都转交给 `page.mouse()` / `page.wheel()` / `page.hover()`，并夹在 0–15 之间。
+- `sidecar.js`：`hover()`、`mouse()`、`wheel()` 的 `Input.dispatchMouseEvent` 都写 `modifiers`，没按键时是 `0` 而不是缺字段。
+- `scripts/pointer.mjs`：新增 `heldKeys()` 六项检查（1 / 2 / 4 三种位 × 点击与滚轮），真实 Chrome 里页面自己回报键位；总检查 19 → 25 项，25/25 通过。
+
+测试 379 通过 / 0 失败。
+
 ## 镜像不按面板缩放渲染，点击永远落在指针下（0.47.62，真实 Chrome）
 
 0.47.60 / 0.47.61 让镜像按面板的 `devicePixelRatio` 放大渲染，高 DPI 下确实更清晰，代价是**点不准**：设备度量覆盖带上非 1 的 `deviceScaleFactor` 之后，这台机器的 Chrome 按设备像素读 CDP 指针坐标，而面板发的是 CSS 像素，于是每个点都被除以缩放比。
