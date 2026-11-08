@@ -1078,11 +1078,14 @@ test('the page lays out at the size of its column, so the mirror fills the frame
   const before = sent.length
   await page.setViewport(720, 880)
   assert.equal(sent.length, before)
-  /* A column too small to be a browser, or bigger than a screen, is ignored
-     rather than applied as a sliver. */
+  /* A column too small to be a browser is ignored rather than applied as a
+     sliver, and one wider than the widest page a browser lays out is clamped:
+     dropping it would leave the pane showing the shape of the size before it,
+     at the wrong ratio and with every click off by the difference. */
   await page.setViewport(100, 880)
-  await page.setViewport(3000, 900)
   assert.deepEqual(page.view, { width: 720, height: 880 })
+  assert.deepEqual(await page.setViewport(3000, 900), { width: 3000, height: 900 })
+  assert.deepEqual(await page.setViewport(5000, 800), { width: 4096, height: 800 })
   /* A narrow, tall column is the shape a right-hand column has, and the page is
      laid out at it so the picture fills the pane instead of sitting in bars. */
   assert.deepEqual(await page.setViewport(260, 1900), { width: 260, height: 1900 })

@@ -87,6 +87,10 @@ const CRISP_ROOM = 4096
    having, the bill is not, so the capture keeps within a budget of pixels and
    a tall pane gets a lower scale instead of a heavier frame. */
 const CRISP_PIXELS = 4_200_000 // ui-copy-ignore
+/* The widest page the mirror lays out: a window across two displays, a five-K
+   panel in its wide setting. Beyond this the page is clamped rather than left
+   showing the shape of the size before it. */
+const MAX_VIEW = 4096
 
 /* The mirror is a photograph of a page, not an archive of one: quality that
    keeps small text readable is the ceiling, and a page whose frame is heavy
@@ -1699,12 +1703,17 @@ export class SidecarPage {
        leaves the picture letterboxed in the pane, which is what makes a mirror
        look like it does not fill the column. */
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 200 || h < 200) return this.view
-    if (w > 2560 || h > 2560) return this.view
+    /* A column wider than the widest screen a browser is drawn on - a window
+       across two displays, a five-K panel in the wide setting - used to be
+       dropped, which left the pane showing the shape of the size before it.
+       It is clamped to what the browser can lay out instead. */
+    const wide = Math.min(w, MAX_VIEW)
+    const tall = Math.min(h, MAX_VIEW)
     /* A scaled display draws the column in more device pixels than the page has
        CSS pixels: rendering at that scale is what keeps the mirror crisp. A new
        scale is a change even when the size is the same, because the page is
        still drawing at the old one. */
-    const looked = this.mirrorScale(w, Number(dpr))
+    const looked = this.mirrorScale(wide, Number(dpr))
     /* The page is laid out at one CSS pixel per image pixel, so the picture is
        captured at that size and then enlarged again for a scaled column: a
        device scale in the metrics is what used to move every click. */
@@ -1713,14 +1722,14 @@ export class SidecarPage {
     const rescaled = looked !== this.appliedScale || crisp !== this.castScale
     this.paneDpr = looked
     this.castScale = crisp
-    if (w === this.view.width && h === this.view.height && rescaled !== true) return this.view
-    this.view = { width: w, height: h }
+    if (wide === this.view.width && tall === this.view.height && rescaled !== true) return this.view
+    this.view = { width: wide, height: tall }
     this.touched = Date.now()
     if (this.flashBridge !== null) {
       /* The picture is the game, not the window: the Flash runtime frames its
          window on the box the game occupies and replies with that shape, so the
          frame - and everything that maps onto it - follows the reply. */
-      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/resize?w=${w}&h=${h}`)
+      const reply = await fetch(`http://127.0.0.1:${this.flashBridge}/resize?w=${wide}&h=${tall}`)
         .then((answer) => (answer.ok === true ? answer.json() : null))
         .catch(() => null)
       const bounds = reply === null || reply === undefined ? null : reply.bounds
@@ -1730,8 +1739,8 @@ export class SidecarPage {
       return this.view
     }
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: w,
-      height: h,
+      width: wide,
+      height: tall,
       deviceScaleFactor: this.paneDpr,
       mobile: false, // ui-copy-ignore
     }).catch(() => {})
