@@ -224,9 +224,18 @@ async function scaled(page) {
   const send = async (point) => {
     await run(page, 'window.__reset()')
     let seen = null
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      /* A browser that has just resized can swallow the first move, and some
+         builds skip a move over a point the pointer is already on. Both look
+         like silence, so every retry steps away from the point first: a move
+         to a different place always produces an event. */
+      if (attempt > 0) {
+        await page.mouse('mouseMoved', { x: Math.round(13 * factor), y: Math.round(17 * factor) })
+        await wait(60)
+        await run(page, 'window.__reset()')
+      }
       await page.mouse('mouseMoved', { x: Math.round(point.x * factor), y: Math.round(point.y * factor) })
-      await wait(140)
+      await wait(140 + attempt * 90)
       seen = await lastSeen()
       if (seen === undefined || seen === null) continue
       if (Math.abs(seen.x - point.x) <= 1 && Math.abs(seen.y - point.y) <= 1) return seen
@@ -253,7 +262,7 @@ async function scaled(page) {
   const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
   const cornerSeen = await send(corner)
   check('the far corner on a scaled screen is the last page pixel', cornerSeen !== undefined && cornerSeen !== null && cornerSeen.x === width - 1 && cornerSeen.y === height - 1,
-    `the corner resolved to ${JSON.stringify(cornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)}`)
+    `the corner resolved to ${JSON.stringify(cornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)} (page ${String(at)}, factor ${Math.round(factor * 100) / 100})`)
 
   /* The arrow the pane draws comes from this message: it is in page points,
      while the picture beside it is in device pixels. Mixing the two drew the
