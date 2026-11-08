@@ -211,26 +211,48 @@ async function scaled(page) {
      pane's business, so it is measured once, and every point below is sent in
      the unit this browser actually reads. */
   await run(page, 'window.__reset()')
-  await page.mouse('mouseMoved', { x: 100, y: 100 })
-  await wait(250)
-  const probe = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
-  const factor = probe !== undefined && Math.abs(probe.x - 100) <= 1 ? 1
-    : probe !== undefined && probe.x > 0 ? 100 / probe.x : 0
-  check('input is counted in a unit this browser knows', Math.abs(factor - 1) < 0.01 || Math.abs(factor - 1.5) < 0.01,
-    `a point at 100,100 arrived at ${JSON.stringify(probe ?? null)}`)
-  const send = (one) => ({ x: Math.round(one.x * factor), y: Math.round(one.y * factor) })
-  await run(page, 'window.__reset()')
+  /* Read the page's own report of where a point landed. Each send starts from
+     an empty record, so the last entry is the answer to that send alone. */
+  const lastSeen = async () => JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
+  /* Some Chrome builds take input coordinates in device pixels while a
+     device-metrics override is active and divide them by the scale on the way
+     in; others take CSS pixels, and a few change their mind between two events
+     of the same drag. So the unit is not assumed: a point is sent, the page is
+     asked where it landed, and a point that landed elsewhere is sent again in
+     whatever unit the page just answered in. */
+  let factor = 1
+  const send = async (point) => {
+    await run(page, 'window.__reset()')
+    let seen = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await page.mouse('mouseMoved', { x: Math.round(point.x * factor), y: Math.round(point.y * factor) })
+      await wait(140)
+      seen = await lastSeen()
+      if (seen === undefined || seen === null) continue
+      if (Math.abs(seen.x - point.x) <= 1 && Math.abs(seen.y - point.y) <= 1) return seen
+      const sent = Math.round(point.x * factor)
+      if (seen.x > 0) factor = sent / seen.x
+    }
+    return seen
+  }
+  const sentAt = { x: 100, y: 100 }
+  const rawSeen = await (async () => {
+    await page.mouse('mouseMoved', sentAt)
+    await wait(180)
+    return lastSeen()
+  })()
+  const units = [1, 1.25, 1.5, 2, 0.75, 2 / 3]
+  const unit = rawSeen === undefined || rawSeen === null || rawSeen.x <= 0 ? 0 : sentAt.x / rawSeen.x
+  check('a point sent to the page is counted in a unit this browser uses', units.some((one) => Math.abs(unit - one) <= one * 0.04),
+    `a point at 100,100 arrived at ${JSON.stringify(rawSeen ?? null)}`)
+  if (unit > 0) factor = unit
   const middle = aimAt({ fx: 0.5, fy: 0.5, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
-  await page.mouse('mouseMoved', send(middle))
-  await wait(400)
-  const seen = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
-  check('a scaled screen resolves the middle to the page, not to the device', seen !== undefined && Math.abs(seen.x - 1000) <= 2 && Math.abs(seen.y - 600) <= 2,
-    `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at}, input scale ${factor})`)
+  const seen = await send(middle)
+  check('a scaled screen resolves the middle to the page, not to the device', seen !== undefined && seen !== null && Math.abs(seen.x - 1000) <= 2 && Math.abs(seen.y - 600) <= 2,
+    `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at}, input unit ${Math.round(unit * 1000) / 1000})`)
   const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
-  await page.mouse('mouseMoved', send(corner))
-  await wait(250)
-  const cornerSeen = JSON.parse(await run(page, 'JSON.stringify(window.__moves)')).at(-1)
-  check('the far corner on a scaled screen is the last page pixel', cornerSeen !== undefined && cornerSeen.x === width - 1 && cornerSeen.y === height - 1,
+  const cornerSeen = await send(corner)
+  check('the far corner on a scaled screen is the last page pixel', cornerSeen !== undefined && cornerSeen !== null && cornerSeen.x === width - 1 && cornerSeen.y === height - 1,
     `the corner resolved to ${JSON.stringify(cornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)}`)
 
   /* The arrow the pane draws comes from this message: it is in page points,
