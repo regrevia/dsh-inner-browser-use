@@ -28,11 +28,11 @@
 
 ## 三、我们真实的位置
 
-同一台机器、同一个本地 fixture、同一套 headless Chrome，2026-11-02 五方测量（`docs/BENCH.md`）：冷启 840 ms（Stagehand 760 / browser-use 713）、热标签页工具 42–54 ms、读取 2302 字符（Stagehand 21396 / browser-use 5662）、空闲 CPU 0.33 %（36–51 %）、空闲 RSS 459–552 MB（1265–1672 MB）、休止后唤醒 0.39–0.59 s。
+同一台机器、同一个本地 fixture、同一套 headless Chrome，2026-11-02 五方测量（`docs/BENCH.md`）：冷启 840 ms（Stagehand 760 / browser-use 713；0.47.13 五次重测中位 453 ms）、热标签页工具 42–54 ms、读取 2302 字符（Stagehand 21396 / browser-use 5662）、空闲 CPU 0.67 %（36–51 %）、空闲 RSS 459–552 MB（1265–1672 MB）、休止后唤醒 0.39–0.59 s。
 
 工具面 40 个（`tools.js`）：`browser_open/view/read/find/click/type/key/scroll/drag/select/check/hover`、`browser_eval`、`browser_do`（一串动作一次调用）、`browser_network/console/failed/cookie/clipboard/downloads/tabs/dialog`、`browser_shot/pdf/grab`、`browser_login`、`browser_media`（流媒体拼接保存）、`browser_prepare/look`（canvas / 游戏 / Flash）、`browser_ask/review`。
 
-**我们赢的地方（已测）**：不装第二个浏览器、不导登录、不开远程调试、不申请 Full access；镜像就在会话右栏，人看得见 agent 在点什么；空闲几乎不耗电；读页面只有对手 1/2–1/9 的字符量。
+**我们赢的地方（已测）**：拖拽跟手——50 点拖拽在 8 ms 门限下 45 点/秒、裸门限 46 点/秒、点间最大间隔 18–19 ms，改前 40 ms 门限只有 15 点/秒 / 52–61 ms（`node scripts/drag-rate.mjs`）；不装第二个浏览器、不导登录、不开远程调试、不申请 Full access；镜像就在会话右栏，人看得见 agent 在点什么；空闲几乎不耗电；读页面只有对手 1/2–1/9 的字符量。
 
 **我们输的地方（必须承认）**：
 - 快照深度：我们的 `browser_view/read` 走 DOM/可访问性树，**跨域 iframe 与 shadow DOM 里层没有专门处理**；ego 靠改引擎拿这块，这是它最硬的护城河。
