@@ -694,7 +694,7 @@ export function apply(ctx) {
           json(409, { ok: false, text: 'the browser is not open' }) // ui-copy-ignore
           return
         }
-        json(200, { ok: true, view: await page.setViewport(body.w, body.h) })
+        json(200, { ok: true, view: await page.setViewport(body.w, body.h, Number(body?.dpr)) })
       } catch (error) {
         json(500, { ok: false, text: String(error?.message ?? error) })
       }

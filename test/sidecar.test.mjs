@@ -992,6 +992,34 @@ test('a child that ignores SIGTERM is killed, so no stray app is left', async ()
   rmSync(join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-kill'), { recursive: true, force: true })
 })
 
+test('the mirror renders at the scale its pane draws at, up to what the stream can carry', async () => {
+  const sent = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method, params) => {
+      sent.push({ method, params })
+      return {}
+    },
+  }, 'default')
+  /* A display that scales draws a CSS pixel in more than one device pixel:
+     rendering at that scale is what keeps small text sharp instead of stretched. */
+  await page.setViewport(900, 700, 2)
+  assert.deepEqual(sent[0].params, { width: 900, height: 700, deviceScaleFactor: 2, mobile: false })
+  assert.equal(page.dpr, 2)
+  /* Nobody draws at 3x, and the stream has a ceiling: the column asks for more
+     and gets the highest scale that still fits under it. */
+  sent.length = 0
+  await page.setViewport(920, 700, 3)
+  assert.equal(sent[0].params.deviceScaleFactor, 2)
+  sent.length = 0
+  await page.setViewport(1600, 900, 2)
+  assert.equal(sent[0].params.deviceScaleFactor, 1.25)
+  /* An unset or mad scale is one device pixel per CSS pixel, as before. */
+  sent.length = 0
+  await page.setViewport(1000, 800)
+  assert.equal(sent[0].params.deviceScaleFactor, 1)
+})
+
 test('the page lays out at the size of its column, so the mirror fills the frame', async () => {
   const sent = []
   const page = new SidecarPage({

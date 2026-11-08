@@ -648,6 +648,10 @@ export class SidecarPage {
        from the page, and what lets a resize be believed on the frame that
        reports it instead of one frame later. */
     this.dpr = 0
+    /* The scale the pane draws at. A mirror rendered at 1x and stretched by
+       the display is soft; rendering at the pane's own scale keeps small text
+       and hairlines legible without asking the encoder for more than it gives. */
+    this.paneDpr = 1
     /* What the pane already has: an unchanged picture is not worth a second
        copy, but silence still needs a heartbeat or the pane thinks the stream
        died. */
@@ -1377,7 +1381,7 @@ export class SidecarPage {
         this.cdp.send('Emulation.setDeviceMetricsOverride', {
           width: this.view.width, // ui-copy-ignore
           height: this.view.height, // ui-copy-ignore
-          deviceScaleFactor: 1,
+          deviceScaleFactor: this.paneDpr,
           mobile: false, // ui-copy-ignore
         }),
       ),
@@ -1571,11 +1575,25 @@ export class SidecarPage {
   }
 
   /**
+   * How many device pixels to render each CSS pixel at for the pane: its own
+   * scale, kept below the encoder's 2000 px ceiling so a wide column asks for
+   * less rather than paying for pixels the stream then throws away.
+   * @param {number} width - the column's CSS width.
+   * @param {number} dpr - the scale the pane draws at.
+   * @returns {number} device pixels per CSS pixel, never below 1.
+   */
+  mirrorScale(width, dpr) {
+    if (!(Number.isFinite(dpr) && dpr > 1) || !(width > 0)) return 1
+    const fit = 2000 / width
+    return Math.max(1, Math.min(Math.min(dpr, 2), fit))
+  }
+
+  /**
    * The column changed size: lay the page out at that size so the picture fills
    * the frame instead of sitting letterboxed inside it.
    * @param {number} width - CSS pixels of the frame. @param {number} height - CSS pixels of the frame.
    */
-  async setViewport(width, height) {
+  async setViewport(width, height, dpr = 1) {
     const w = Math.round(Number(width))
     const h = Math.round(Number(height))
     /* A narrow column with a long page is still a browser: refusing its size
@@ -1583,7 +1601,14 @@ export class SidecarPage {
        look like it does not fill the column. */
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 200 || h < 200) return this.view
     if (w > 2560 || h > 2560) return this.view
-    if (w === this.view.width && h === this.view.height) return this.view
+    /* A scaled display draws the column in more device pixels than the page has
+       CSS pixels: rendering at that scale is what keeps the mirror crisp. A new
+       scale is a change even when the size is the same, because the page is
+       still drawing at the old one. */
+    const looked = this.mirrorScale(w, Number(dpr))
+    const rescaled = looked !== this.paneDpr
+    this.paneDpr = looked
+    if (w === this.view.width && h === this.view.height && rescaled !== true) return this.view
     this.view = { width: w, height: h }
     this.touched = Date.now()
     if (this.flashBridge !== null) {
@@ -1602,7 +1627,7 @@ export class SidecarPage {
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: w,
       height: h,
-      deviceScaleFactor: 1,
+      deviceScaleFactor: this.paneDpr,
       mobile: false, // ui-copy-ignore
     }).catch(() => {})
     /* The answer to the override is the browser's, not ours: ask where the
@@ -1610,6 +1635,9 @@ export class SidecarPage {
        display would otherwise leave the mirror the wrong shape and the pointer
        off the mark for every click. */
     await this.laidOut()
+    /* The page now draws at the pane's scale, so the cast that follows is
+       asked for that many pixels per CSS pixel instead of one. */
+    this.dpr = this.paneDpr
     /* A Flash window is captured from a hidden app: there is no screencast to
        restart, and its own resize path owns the picture. */
     if (this.casting === true) {

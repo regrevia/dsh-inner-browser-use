@@ -1,3 +1,12 @@
+## 0.47.60 — 镜像按面板的缩放级别渲染，高 DPI 下不再被拉伸
+
+面板此前只上报宽高，sidecar 不知道它所在显示器的缩放级别，镜像永远按 1 CSS px = 1 图像 px 渲染；在 Windows 150%、Retina 2x 上被放大 1.5–2 倍显示，小字和 1 px 细线糊掉，看着像「比例不对」。现在面板上报 `devicePixelRatio`，sidecar 用 `Emulation.setDeviceMetricsOverride` 的 `deviceScaleFactor` 按这个比例渲染，并以编码器 2000 px 上限为预算：900x700 的面板从 900x700 帧变成 1800x1400 帧；1600 宽的栏自动退到它能承受的 1.25x。指针仍按 CSS px 精确落点，实测点到 (360,250) 页面读到 360,250。
+
+- `client.js`：`POST /sidecar/viewport` 带上 `dpr`。
+- `index.js`：把 `dpr` 传给 `setViewport`。
+- `sidecar.js`：新增 `paneDpr` 与 `mirrorScale()`；attach 与 `setViewport` 的覆盖都按它走；比例变化本身算一次变更，尺寸不变也会重建截图。
+- 测试：377 通过 / 0 失败。
+
 ## 0.47.59 — 竞品对照表补齐拖拽与空闲 CPU 的口径
 
 `docs/COMPETITORS.md` 里空闲 CPU 还写着 0.33 %，而 BENCH / MATURITY 都是 0.67 %（六次采样 0.5/0.4/0/0/1.1/2 取均值），按最新口径统一；「赢的地方」补上拖拽跟手这组数（8 ms 门限 45 点/秒、裸门限 46 点/秒、最大间隔 18–19 ms，改前 15 点/秒 / 52–61 ms）；冷启动那行补上 0.47.13 五次重测中位 453 ms，不再只留旧值 840 ms。

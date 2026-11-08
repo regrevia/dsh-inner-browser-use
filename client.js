@@ -813,7 +813,7 @@ window.__ModuleLoader__.load({
           fetch(`${ROUTE}/sidecar/viewport`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ session: String(props.sessionId ?? ''), w: Math.round(size.w), h: Math.round(size.h) }),
+            body: JSON.stringify({ session: String(props.sessionId ?? ''), w: Math.round(size.w), h: Math.round(size.h), dpr: Number(window.devicePixelRatio) || 1 }),
           })
             .then((answer) => (answer.ok === true ? answer.json() : { ok: false }))
             .then((said) => {
