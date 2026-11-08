@@ -742,6 +742,10 @@ export class SidecarPage {
     this.flashButtons = 0
     /* Which button the page believes is held: a move in a drag carries it. */
     this.buttons = 0
+    /* The name of the button that is down, for the moves in between: the
+       browser only runs a selection when a move names the button as well as
+       counting it. */
+    this.heldButton = 'none'
     this.url = ''
     this.lastUrl = ''
     this.crashed = false
@@ -2344,11 +2348,24 @@ export class SidecarPage {
     return took
   }
 
+  /**
+   * The buttons a hover is dragging with: what the last press left down, or
+   * the left one when the pane says a press is still in flight.
+   *
+   * @param {{pressed?: boolean}} point - the point, as the pane sent it.
+   * @returns {number} the browser's button mask.
+   */
+  dragMask(point) {
+    if (this.buttons !== 0) return this.buttons
+    return point?.pressed === true ? 1 : 0
+  }
+
   async hover(point) {
     await this.revive()
     /* A hand with the button down is dragging, not hovering: every move must
        say so, or the page reads the press as a click that ended instantly. */
-    const held = point?.pressed === true || (this.buttons & 1) === 1
+    const drag = this.dragMask(point)
+    const held = drag !== 0
     if (this.flashBridge !== null) {
       this.flashButtons = held ? 1 : 0
       if ((await this.flashInput('mouseMove', point)) === true) return this.cursorAt(point)
@@ -2357,8 +2374,8 @@ export class SidecarPage {
       type: 'mouseMoved', // ui-copy-ignore
       x: Math.round(point.x),
       y: Math.round(point.y),
-      button: 'none', // ui-copy-ignore
-      buttons: held ? 1 : 0, // ui-copy-ignore
+      button: held ? (this.heldButton === 'none' ? 'left' : this.heldButton) : 'none', // ui-copy-ignore
+      buttons: drag, // ui-copy-ignore
       clickCount: 0,
       modifiers: point?.modifiers ?? 0, // ui-copy-ignore
       pointerType: 'mouse',
@@ -2449,13 +2466,17 @@ export class SidecarPage {
        mask to know which button a drag or a menu is holding. */
     const bit = button === 'right' ? 2 : button === 'middle' ? 4 : 1
     const held = type === 'mousePressed' ? bit : type === 'mouseReleased' ? 0 : this.buttons
+    /* A move in the middle of a drag names the button that is down: the browser
+       starts a selection from a move that says left is held, not from the count
+       alone. Outside a drag there is no button to name. */
+    const named = type === 'mouseMoved' ? (this.buttons === 0 ? 'none' : this.heldButton) : button
     /* A protocol event, not a screen: the keys below are the browser's names. */
     const hand = this.handScale()
     const took = await this.input('Input.dispatchMouseEvent', { // ui-copy-ignore
       type, // ui-copy-ignore
       x: point.x * hand, // ui-copy-ignore
       y: point.y * hand, // ui-copy-ignore
-      button: type === 'mouseMoved' ? 'none' : button, // ui-copy-ignore
+      button: named, // ui-copy-ignore
       buttons: held, // ui-copy-ignore
       clickCount: point.clickCount ?? (type === 'mouseMoved' ? 0 : 1),
       /* The keys the hand holds, in the browser's own bits: alt 1, ctrl 2,
@@ -2465,7 +2486,10 @@ export class SidecarPage {
     })
     /* The held button is remembered between events, so a move in the middle of
        a drag is dispatched with it even when the pane did not say so. */
-    if (took === true) this.buttons = held
+    if (took === true) {
+      this.buttons = held
+      this.heldButton = held === 0 ? 'none' : button
+    }
     return took
   }
 

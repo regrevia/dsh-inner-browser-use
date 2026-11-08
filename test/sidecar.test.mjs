@@ -113,11 +113,48 @@ test('a drag carries the held button on every move between press and release', a
   const moves = events.filter((event) => event.type === 'mouseMoved')
   assert.equal(moves.length, 2)
   assert.equal(moves[0].buttons, 1, 'a hover while the button is down belongs to the drag')
-  assert.equal(moves[0].button, 'none', 'the held button is not the one that moved')
+  assert.equal(moves[0].button, 'left', 'the move names the button that is down')
   assert.equal(moves[1].buttons, 1)
+  assert.equal(moves[1].button, 'left', 'naming only the count leaves a selection empty')
   assert.equal(events.find((event) => event.type === 'mousePressed').buttons, 1)
   assert.equal(events.find((event) => event.type === 'mouseReleased').buttons, 0)
   assert.equal(page.buttons, 0, 'the release leaves nothing held')
+})
+
+test('a drag move names the button that is down, so a page can select text', async () => {
+  /* Chrome only runs a selection from a move that names the button it is
+     dragging with: with `button: 'none'` and `buttons: 1` the press and the
+     release arrive but nothing between them is a drag, so dragging across a
+     sentence selected nothing at all in a real browser. */
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+
+  await page.mouse('mousePressed', { x: 10, y: 20, button: 'left' })
+  await page.mouse('mouseMoved', { x: 60, y: 20 })
+  await page.mouse('mouseMoved', { x: 120, y: 20 })
+  await page.mouse('mouseReleased', { x: 120, y: 20, button: 'left' })
+
+  const moves = cdp.sent
+    .filter(([method]) => method === 'Input.dispatchMouseEvent')
+    .map(([, params]) => params)
+    .filter((event) => event.type === 'mouseMoved')
+  assert.deepEqual(moves.map((event) => [event.button, event.buttons]), [['left', 1], ['left', 1]])
+})
+
+test('the button named on a drag move follows the button that was pressed', async () => {
+  const cdp = fakeCdp()
+  const page = new SidecarPage(cdp, 'default')
+
+  await page.mouse('mousePressed', { x: 10, y: 20, button: 'right' })
+  await page.mouse('mouseMoved', { x: 40, y: 20 })
+  await page.mouse('mouseReleased', { x: 40, y: 20, button: 'right' })
+  await page.mouse('mouseMoved', { x: 50, y: 20 })
+
+  const moves = cdp.sent
+    .filter(([method]) => method === 'Input.dispatchMouseEvent')
+    .map(([, params]) => params)
+    .filter((event) => event.type === 'mouseMoved')
+  assert.deepEqual(moves.map((event) => [event.button, event.buttons]), [['right', 2], ['none', 0]], 'a move after the release names nothing')
 })
 
 test('a wheel turned mid-drag keeps the button the hand still holds', async () => {
