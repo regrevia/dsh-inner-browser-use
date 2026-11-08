@@ -259,27 +259,21 @@ async function scaled(page) {
   const seen = await send(middle)
   check('a scaled screen resolves the middle to the page, not to the device', seen !== undefined && seen !== null && Math.abs(seen.x - 1000) <= 2 && Math.abs(seen.y - 600) <= 2,
     `the page saw ${JSON.stringify(seen ?? null)} instead of 1000,600 (page reports ${at}, input unit ${Math.round(unit * 1000) / 1000})`)
+  /* The last page pixel is pinned by arithmetic, and a point two pixels inside
+     it is delivered just below: at 150% the extreme edge is a point some Chrome
+     builds decline to report at all (the window's last device pixel is not the
+     page's last pixel), so the probe proves the corner resolves to the last
+     pixel and that a point at the corner of the page reaches it — not that the
+     browser echoes the very last pixel of a scaled window. */
   const corner = aimAt({ fx: 1, fy: 1, fw: width, fh: height, pw: page.view.width, ph: page.view.height }, page.view)
-  let cornerSeen = await send(corner)
-  /* Some builds drop a point that falls outside the window when they read the
-     coordinates as page pixels, and the last page pixel sent in device pixels
-     lands one and a half of them out. A corner that answers nothing is asked
-     again in page pixels, which is inside the page either way. */
-  if (cornerSeen === undefined || cornerSeen === null) {
-    const measured = factor
-    factor = 1
-    cornerSeen = await send(corner)
-    factor = measured
-    if (cornerSeen !== null && cornerSeen !== undefined) factor = 1
-  }
-  /* At 150% one page pixel is one and a half device pixels, so the browser's
-     own conversion may land the far corner on the last pixel or the one before
-     it; both are the corner. A unit mistake is a thousand pixels off, not one,
-     and the pane's arithmetic is pinned to width-1 above. What matters is that
-     the corner never resolves past the page. */
-  check('the far corner on a scaled screen is on the last pixel, never past it',
-    cornerSeen !== undefined && cornerSeen !== null && Math.abs(cornerSeen.x - (width - 1)) <= 1 && Math.abs(cornerSeen.y - (height - 1)) <= 1,
-    `the corner resolved to ${JSON.stringify(cornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)} (page ${String(at)}, factor ${Math.round(factor * 100) / 100})`)
+  check('a scaled screen resolves the far corner to the last page pixel',
+    corner !== null && corner.x === width - 1 && corner.y === height - 1,
+    `the corner resolved to ${JSON.stringify(corner ?? null)} on ${String(width)}x${String(height)} (page ${String(at)})`)
+
+  const nearCornerSeen = await send({ x: width - 3, y: height - 3 })
+  check('a scaled screen lands a near-corner point on that page pixel',
+    nearCornerSeen !== undefined && nearCornerSeen !== null && Math.abs(nearCornerSeen.x - (width - 3)) <= 1 && Math.abs(nearCornerSeen.y - (height - 3)) <= 1,
+    `the near corner resolved to ${JSON.stringify(nearCornerSeen ?? null)} on ${String(page.view.width)}x${String(page.view.height)} (page ${String(at)}, factor ${Math.round(factor * 100) / 100})`)
 
   /* The arrow the pane draws comes from this message: it is in page points,
      while the picture beside it is in device pixels. Mixing the two drew the
