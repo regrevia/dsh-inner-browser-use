@@ -1583,6 +1583,11 @@ export class SidecarPage {
    * @returns {number} device pixels per CSS pixel, never below 1.
    */
   mirrorScale(width, dpr) {
+    /* Windows builds have been seen to read CDP pointer coordinates in device
+       pixels once a metrics override is on, which would land every click at the
+       wrong place; the mirror keeps one image pixel per CSS pixel there rather
+       than trade a sharp picture for a misplaced click. */
+    if (process.platform === 'win32') return 1
     if (!(Number.isFinite(dpr) && dpr > 1) || !(width > 0)) return 1
     const fit = 2000 / width
     return Math.max(1, Math.min(Math.min(dpr, 2), fit))

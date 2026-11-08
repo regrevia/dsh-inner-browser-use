@@ -1003,17 +1003,21 @@ test('the mirror renders at the scale its pane draws at, up to what the stream c
   }, 'default')
   /* A display that scales draws a CSS pixel in more than one device pixel:
      rendering at that scale is what keeps small text sharp instead of stretched. */
+  /* Windows builds have been seen to read pointer coordinates in device pixels
+     under a metrics override, so a mirror there stays at one pixel per CSS pixel
+     rather than landing clicks in the wrong place. */
+  const sharp = process.platform === 'win32' ? 1 : 2
   await page.setViewport(900, 700, 2)
-  assert.deepEqual(sent[0].params, { width: 900, height: 700, deviceScaleFactor: 2, mobile: false })
-  assert.equal(page.dpr, 2)
+  assert.deepEqual(sent[0].params, { width: 900, height: 700, deviceScaleFactor: sharp, mobile: false })
+  assert.equal(page.dpr, sharp)
   /* Nobody draws at 3x, and the stream has a ceiling: the column asks for more
      and gets the highest scale that still fits under it. */
   sent.length = 0
   await page.setViewport(920, 700, 3)
-  assert.equal(sent[0].params.deviceScaleFactor, 2)
+  assert.equal(sent[0].params.deviceScaleFactor, sharp)
   sent.length = 0
   await page.setViewport(1600, 900, 2)
-  assert.equal(sent[0].params.deviceScaleFactor, 1.25)
+  assert.equal(sent[0].params.deviceScaleFactor, process.platform === 'win32' ? 1 : 1.25)
   /* An unset or mad scale is one device pixel per CSS pixel, as before. */
   sent.length = 0
   await page.setViewport(1000, 800)
