@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, looksLikeApp, nextQuality, noteDeath, ownsBrowser, pidsWithMark, rootDir } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, pidsWithMark, rootDir } from '../sidecar.js'
 import { findWords, nearestByWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
@@ -1672,4 +1672,53 @@ test('a tall scaled column captures within a pixel budget', async () => {
   assert.equal(page.handScale(), 1, 'a click is still a CSS pixel')
   assert.equal(frames.at(-1).w, 800, 'the header stays the column size')
   assert.equal(frames.at(-1).h, 2400)
+})
+
+
+/** A JPEG header of a known size: enough of a picture for the size to be read. */
+function fakeJpeg(width, height, tail = '') {
+  const head = Buffer.from([
+    0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08,
+    (height >> 8) & 0xFF, height & 0xFF,
+    (width >> 8) & 0xFF, width & 0xFF,
+    3, 1, 0x22, 0x00, 2, 0x11, 0x01, 3, 0x11, 0x01,
+  ])
+  return Buffer.concat([head, Buffer.from(tail)]).toString('base64')
+}
+
+test('a picture of the size before a resize is read from its own header', () => {
+  const size = jpegSize(fakeJpeg(785, 883))
+  assert.deepEqual(size, { width: 785, height: 883 })
+  assert.equal(jpegSize('picture-a'), null, 'a still that is not a JPEG has no size to trust')
+})
+
+test('the frame a restarted cast owes from before the resize is not shown', () => {
+  /* A cast restarted right after the column changes size hands over one frame
+     of the old size. Drawn against the new size it sits letterboxed and every
+     click in it lands off by the difference, so the pane keeps the picture it
+     has and shows the next frame - always the page's own size. */
+  const page = new SidecarPage({ on: () => {}, send: async () => ({}) }, 'default')
+  page.view = { width: 800, height: 900 }
+  page.castScale = 1
+  page.dpr = 1
+  /** @type {string[]} */
+  const seen = []
+  page.frames.add((frame) => seen.push(frame.jpeg))
+  page.publish(fakeJpeg(785, 883, 'before'))
+  assert.deepEqual(seen, [], 'the size before the resize is dropped')
+  page.publish(fakeJpeg(800, 900, 'after'))
+  assert.equal(seen.length, 1, "the page's own size goes out")
+  assert.deepEqual(page.view, { width: 800, height: 900 })
+})
+
+test('a scaled capture is measured against its own scale, not the column', () => {
+  const page = new SidecarPage({ on: () => {}, send: async () => ({}) }, 'default')
+  page.view = { width: 800, height: 900 }
+  page.castScale = 2
+  page.dpr = 1
+  /** @type {string[]} */
+  const seen = []
+  page.frames.add((frame) => seen.push(frame.jpeg))
+  page.publish(fakeJpeg(1600, 1800, 'crisp'))
+  assert.equal(seen.length, 1, 'a sharp capture at twice the column is the right shape')
 })

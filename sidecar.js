@@ -349,6 +349,41 @@ function commandOf(pid) {
  * shared browser on a plugin reload.
  * @returns {boolean} true when `handoff()` can write a watcher note.
  */
+/**
+ * The picture's own size, read from its JPEG frame header.
+ * @param {string} data - base64 JPEG.
+ * @returns {{width: number, height: number}|null} the size in pixels, or null when it is not a JPEG this can read.
+ */
+export function jpegSize(data) {
+  const text = typeof data === 'string' ? data : ''
+  if (text.length < 24) return null
+  const raw = Buffer.from(text, 'base64')
+  let at = 2
+  while (at + 9 < raw.length) {
+    if (raw[at] !== 0xFF) {
+      at += 1
+      continue
+    }
+    const marker = raw[at + 1]
+    /* Markers with no length of their own. */
+    if (marker === 0xD8 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+      at += 2
+      continue
+    }
+    /* The scan begins: everything after it is entropy-coded, not headers. */
+    if (marker === 0xDA || marker === 0x00) return null
+    const length = raw.readUInt16BE(at + 2)
+    if (length < 2) return null
+    /* Every start-of-frame carries the size of the picture it describes. */
+    if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC) {
+      if (at + 8 >= raw.length) return null
+      return { width: raw.readUInt16BE(at + 7), height: raw.readUInt16BE(at + 5) }
+    }
+    at += 2 + length
+  }
+  return null
+}
+
 export function canArmWatcher() {
   if (process.platform === 'win32') return false
   const app = appPid()
@@ -1264,6 +1299,28 @@ export class SidecarPage {
   }
 
   /**
+   * Whether this picture is the size of the column it is about to fill. A cast
+   * restarted right after a resize hands over one frame of the size before it;
+   * drawn against the new size that picture sits letterboxed in the pane and a
+   * click in it lands off by the difference. A picture that is not the page's
+   * own size is dropped, and the next one - always the right size - takes its
+   * place without the pane ever showing the wrong shape.
+   * @param {string} data - base64 JPEG of the page. @returns {boolean} true when it must not be shown.
+   */
+  staleFrame(data) {
+    /* A scaled capture is asked for at its own size, so only a live cast is
+       checked: there the page and the picture are the same pixels. */
+    if (!(this.castScale <= 1)) return false
+    const scale = this.dpr > 0 ? this.dpr : 1
+    const width = Math.round(this.view.width * scale)
+    const height = Math.round(this.view.height * scale)
+    const size = jpegSize(data)
+    /* A picture whose size cannot be read is shown rather than hidden. */
+    if (size === null || size.width < 16 || size.height < 16) return false
+    return Math.abs(size.width - width) > 2 || Math.abs(size.height - height) > 2
+  }
+
+  /**
    * Hands one picture to every pane watching this tab, at the pace a person can
    * see. How the picture was made is not the pane's concern: a cast frame and a
    * captured one leave through here, so both keep the same counters and limits.
@@ -1274,6 +1331,7 @@ export class SidecarPage {
     this.seq += 1
     this.bytes += data.length
     if (this.resizing === true) return
+    if (this.staleFrame(data) === true) return
     /* Every so often, let the weight of the last frame decide the quality the
        next one is made at: a heavy page pays for itself in every later frame. */
     if ((this.seq % 24 === 0 || this.seq === 1) && Date.now() - this.adaptAt > 3000) {
@@ -1817,6 +1875,7 @@ export class SidecarPage {
   publish(data) {
     if (data === '' || this.frames.size === 0) return
     this.latest = data
+    if (this.staleFrame(data) === true) return
     if (this.repeats(data) === true) return
     if (this.tooSoon()) return
     this.lastFrameAt = Date.now()
