@@ -180,13 +180,13 @@ async function scaled(page) {
   const width = 2000
   const height = 1200
   await page.cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1.5, mobile: false })
-  /* The scale the display reports is what caps the cast: ask for it until the
-     browser agrees, because a measure taken mid-resize says 1 and the picture
-     then arrives at the page's size instead of the display's. */
+  /* The pane asks for a scaled mirror and the browser answers with the scale
+     it uses: one, because a scaled override moves the pointer off the mark.
+     Wait for that answer rather than for the scale that was asked for. */
   const scaleDeadline = Date.now() + 4000
   while (Date.now() < scaleDeadline) {
     await page.remeasure()
-    if (Math.abs(Number(page.dpr ?? 0) - 1.5) < 0.01) break
+    if (Math.abs(Number(page.dpr ?? 0) - 1) < 0.01) break
     await wait(100)
   }
   await page.stopCast()

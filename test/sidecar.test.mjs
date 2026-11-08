@@ -992,7 +992,7 @@ test('a child that ignores SIGTERM is killed, so no stray app is left', async ()
   rmSync(join(homedir(), '.dsh', 'inner-browser-use', 'chrome', 'unit-kill'), { recursive: true, force: true })
 })
 
-test('the mirror renders at the scale its pane draws at, up to what the stream can carry', async () => {
+test('the mirror draws one image pixel per CSS pixel whatever the pane scales at', async () => {
   const sent = []
   const page = new SidecarPage({
     on: () => {},
@@ -1001,27 +1001,56 @@ test('the mirror renders at the scale its pane draws at, up to what the stream c
       return {}
     },
   }, 'default')
-  /* A display that scales draws a CSS pixel in more than one device pixel:
-     rendering at that scale is what keeps small text sharp instead of stretched. */
-  /* Windows builds have been seen to read pointer coordinates in device pixels
-     under a metrics override, so a mirror there stays at one pixel per CSS pixel
-     rather than landing clicks in the wrong place. */
-  const sharp = process.platform === 'win32' ? 1 : 2
-  await page.setViewport(900, 700, 2)
-  assert.deepEqual(sent[0].params, { width: 900, height: 700, deviceScaleFactor: sharp, mobile: false })
-  assert.equal(page.dpr, sharp)
-  /* Nobody draws at 3x, and the stream has a ceiling: the column asks for more
-     and gets the highest scale that still fits under it. */
-  sent.length = 0
-  await page.setViewport(920, 700, 3)
-  assert.equal(sent[0].params.deviceScaleFactor, sharp)
-  sent.length = 0
-  await page.setViewport(1600, 900, 2)
-  assert.equal(sent[0].params.deviceScaleFactor, process.platform === 'win32' ? 1 : 1.25)
-  /* An unset or mad scale is one device pixel per CSS pixel, as before. */
+  /* A scaled mirror is bought with a pointer that lands somewhere else: measured
+     on this machine's Chrome with the pane at 1000x800, a page laid out at
+     1000x800 with deviceScaleFactor 2 saw a point sent as CSS (400,320) arrive
+     as (200,160) — divided by the scale — on six consecutive moves, and at 1.25x
+     and 1.5x the same division happens to every point. The page is therefore
+     laid out at the pane's CSS size and drawn at one device pixel per CSS pixel,
+     which is the assumption every dispatched point already makes. */
+  for (const scale of [2, 3, 1.5, 1.25, 0]) {
+    const width = 880 + Math.round(scale * 10)
+    sent.length = 0
+    await page.setViewport(width, 700, scale)
+    assert.equal(sent[0].params.deviceScaleFactor, 1)
+    assert.equal(sent[0].params.width, width)
+    assert.equal(page.dpr, 1)
+  }
   sent.length = 0
   await page.setViewport(1000, 800)
   assert.equal(sent[0].params.deviceScaleFactor, 1)
+  assert.equal(page.dpr, 1)
+  /* A page left drawing at a scale by an older build is put back even when the
+     column has not changed size: otherwise the mirror stays at a scale the
+     pointer no longer matches. */
+  page.appliedScale = 2
+  sent.length = 0
+  await page.setViewport(1000, 800)
+  assert.deepEqual(sent[0].params, { width: 1000, height: 800, deviceScaleFactor: 1, mobile: false })
+})
+
+test('a point the pane sends is the point this browser reads, whatever it scales at', async () => {
+  const sent = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method, params) => {
+      sent.push({ method, params })
+      return {}
+    },
+  }, 'default')
+  /* The pane sends CSS pixels and the page lays out in CSS pixels, so the point
+     goes through unchanged: no platform multiplies it on the way in, because no
+     device-metrics override makes a point mean device pixels. */
+  await page.setViewport(900, 700, 2)
+  assert.equal(page.handScale(), 1)
+  sent.length = 0
+  await page.mouse('mouseMoved', { x: 100, y: 200 })
+  const moved = sent.find((one) => one.method === 'Input.dispatchMouseEvent')
+  assert.deepEqual({ x: moved.params.x, y: moved.params.y }, { x: 100, y: 200 })
+  sent.length = 0
+  await page.wheel({ x: 100, y: 200, dy: 40 })
+  const turned = sent.find((one) => one.method === 'Input.dispatchMouseEvent')
+  assert.deepEqual({ x: turned.params.x, y: turned.params.y }, { x: 100, y: 200 })
 })
 
 test('the page lays out at the size of its column, so the mirror fills the frame', async () => {

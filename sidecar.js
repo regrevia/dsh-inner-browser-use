@@ -652,6 +652,8 @@ export class SidecarPage {
        the display is soft; rendering at the pane's own scale keeps small text
        and hairlines legible without asking the encoder for more than it gives. */
     this.paneDpr = 1
+    /** The scale the page was last told to draw at; null until it is told once. */
+    this.appliedScale = null
     /* What the pane already has: an unchanged picture is not worth a second
        copy, but silence still needs a heartbeat or the pane thinks the stream
        died. */
@@ -1575,22 +1577,32 @@ export class SidecarPage {
   }
 
   /**
-   * How many device pixels to render each CSS pixel at for the pane: its own
-   * scale, kept below the encoder's 2000 px ceiling so a wide column asks for
-   * less rather than paying for pixels the stream then throws away.
-   * @param {number} width - the column's CSS width.
-   * @param {number} dpr - the scale the pane draws at.
-   * @returns {number} device pixels per CSS pixel, never below 1.
+   * How many device pixels to render each CSS pixel at for the pane.
+   *
+   * One: a scaled mirror is bought with a pointer that lands somewhere else.
+   * Measured on this machine's Chrome with the pane at 1000x800 on a 2x
+   * display: the page laid out at 1000x800 with deviceScaleFactor 2, then a
+   * point sent as CSS (400,320) was reported by the page as (200,160) — divided
+   * by the scale — across six consecutive moves. At 1.25x and 1.5x the same
+   * division happens to every point. A build that reads a dispatched point in
+   * device pixels cannot be told from one that reads CSS pixels without asking
+   * the page, and a pane that guesses wrong puts the click on the wrong element.
+   * The page therefore renders at the pane's CSS size, one image pixel per CSS
+   * pixel, which is what every point already assumes.
+   * @returns {number} device pixels per CSS pixel, always 1.
    */
-  mirrorScale(width, dpr) {
-    /* Windows builds have been seen to read CDP pointer coordinates in device
-       pixels once a metrics override is on, which would land every click at the
-       wrong place; the mirror keeps one image pixel per CSS pixel there rather
-       than trade a sharp picture for a misplaced click. */
-    if (process.platform === 'win32') return 1
-    if (!(Number.isFinite(dpr) && dpr > 1) || !(width > 0)) return 1
-    const fit = 2000 / width
-    return Math.max(1, Math.min(Math.min(dpr, 2), fit))
+  mirrorScale() {
+    return 1
+  }
+
+  /**
+   * The unit a dispatched mouse point is read in, as a multiplier over the CSS
+   * pixel the pane sends: always one, because the mirror never applies a device
+   * scale that would make a point mean device pixels.
+   * @returns {number} 1.
+   */
+  handScale() {
+    return 1
   }
 
   /**
@@ -1611,7 +1623,7 @@ export class SidecarPage {
        scale is a change even when the size is the same, because the page is
        still drawing at the old one. */
     const looked = this.mirrorScale(w, Number(dpr))
-    const rescaled = looked !== this.paneDpr
+    const rescaled = looked !== this.appliedScale
     this.paneDpr = looked
     if (w === this.view.width && h === this.view.height && rescaled !== true) return this.view
     this.view = { width: w, height: h }
@@ -1639,12 +1651,11 @@ export class SidecarPage {
        page actually landed. A window that keeps its own size on a scaled
        display would otherwise leave the mirror the wrong shape and the pointer
        off the mark for every click. */
+    this.appliedScale = this.paneDpr
     await this.laidOut()
-    /* The page now draws at the pane's scale, so the cast that follows is
-       asked for that many pixels per CSS pixel instead of one. */
+    /* The page draws at one image pixel per CSS pixel, so the cast that
+       follows is asked for exactly that. */
     this.dpr = this.paneDpr
-    /* A Flash window is captured from a hidden app: there is no screencast to
-       restart, and its own resize path owns the picture. */
     if (this.casting === true) {
       await this.cdp.send('Page.stopScreencast').catch(() => {})
       this.casting = false
@@ -2176,10 +2187,11 @@ export class SidecarPage {
     const bit = button === 'right' ? 2 : button === 'middle' ? 4 : 1
     const held = type === 'mousePressed' ? bit : type === 'mouseReleased' ? 0 : this.buttons
     /* A protocol event, not a screen: the keys below are the browser's names. */
+    const hand = this.handScale()
     const took = await this.input('Input.dispatchMouseEvent', { // ui-copy-ignore
       type, // ui-copy-ignore
-      x: point.x, // ui-copy-ignore
-      y: point.y, // ui-copy-ignore
+      x: point.x * hand, // ui-copy-ignore
+      y: point.y * hand, // ui-copy-ignore
       button: type === 'mouseMoved' ? 'none' : button, // ui-copy-ignore
       buttons: held, // ui-copy-ignore
       clickCount: point.clickCount ?? (type === 'mouseMoved' ? 0 : 1),
@@ -2202,10 +2214,11 @@ export class SidecarPage {
     /* A wheel turned while the button is down is still a drag: the page reads
        the held button off every event it gets, and a wheel that says no button
        is down cancels the drag the hand never let go of. */
+    const hand = this.handScale()
     return await this.input('Input.dispatchMouseEvent', {
       type: 'mouseWheel', // ui-copy-ignore
-      x: args.x, // ui-copy-ignore
-      y: args.y, // ui-copy-ignore
+      x: args.x * hand, // ui-copy-ignore
+      y: args.y * hand, // ui-copy-ignore
       deltaX: args.dx ?? 0, // ui-copy-ignore
       deltaY: args.dy ?? 0, // ui-copy-ignore
       button: 'none', // ui-copy-ignore
