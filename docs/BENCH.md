@@ -1,5 +1,18 @@
-## 崩溃后留下的浏览器，下一次启动不收回 — 0.47.71
+## Windows 上没有值守进程 — 0.47.72
 
+场景：DSH 在 Windows 上退出。改动前后量的是同一段判定代码（在本机跑，平台写成 `win32`），以及一份真 Chrome 值守实测。
+
+| 指标 | 0.47.71 | 0.47.72 |
+| --- | --- | --- |
+| Windows 路径的 `.exe` 被认成应用 | false | true |
+| 父链挑选 `appFromTable` | 不存在 | 有（跳过 node / shell） |
+| Windows 上的 `handoff()` | 不装值守 | 装 node 值守 |
+| 值守脚本关掉真 Chrome（本机，应用 pid 死后） | 未验证 | 是（`chromeAliveBefore` true → 关掉） |
+| 单元测试 | 392 | 393 |
+
+值守用同一份 `WATCHER_SCRIPT`：macOS 上 `process.kill(chrome,'SIGTERM')`，Windows 上 `taskkill /pid <chrome> /T /F`。探针 `/tmp/wat.mjs`（真 Chrome + 假应用进程），`/tmp/pre71w`（0.47.71 的 worktree）做 PRE 取值。
+
+## 崩溃后留下的浏览器，下一次启动不收回 — 0.47.71
 场景：进程 A 启动浏览器，A 被 `SIGKILL`；进程 B 在同一 profile 上启动。B 复用 A 留下的浏览器。
 
 | 指标 | 0.47.70 | 0.47.71 |

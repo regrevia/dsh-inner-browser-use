@@ -1,12 +1,15 @@
+## 0.47.72 — Windows 上没有值守：应用退出，浏览器留下
+
+Windows 上从来没有第二个进程在看应用是否还在。`appPid()` 用 `ps` 往上走父链，Windows 没有 `ps`，于是返回 0；`canArmWatcher()` 在那里直接 return false；`handoff()` 也在 `win32` 上提前返回，理由是那里只有 `taskkill /T` 可依赖。结果是：DSH 退出（或崩溃）时那台浏览器没人关，下一次启动接上的还是它——旧页面、旧尺寸、指针落在旧页面上。
+
+三处都补上：Windows 的过程表一次读出（PowerShell `Get-CimInstance` 转 JSON，`wmic` 兜底），在本地按父链找最高的那个「不是 node、不是 shell」的 `.exe`——那才是应用，node 实例是重载时就换掉的、shell 是启动它的；值守脚本改成 node（`WATCHER_SCRIPT`），macOS 与 Windows 跑同一份代码，Windows 上用 `taskkill /pid <chrome> /T /F` 收整棵树。
+
+- Windows 应用识别：`looksLikeApp('C:\Program Files\DSH\DSH.exe', 'win32')` false → **true**；`appFromTable` 不存在 → **有**（沿父链跳过 `node.exe`、`cmd.exe`、`powershell.exe`）
+- Windows 上的 `handoff()`：不装值守（提前 return）→ **装**（node 值守，`windowsHide`）
+- 值守脚本在本机真 Chrome 上实测：`chromeAliveBefore` true → 应用死后 **Chrome 已关闭**
+- 检测用例：**393 项通过**（新增：父链挑选 7 项、Windows 应用判定 7 项、值守真进程 1 项）
+
 ## 0.47.71 — 崩溃留下的浏览器没人收回：下一次接上的是上一场会话
-
-进程被强杀（Windows 上每次退出都如此，那里没有值守进程）之后，Chrome 还活着，`owner.json` 指向一个已经不在的 pid。下一次启动会接管这个浏览器，却认为它「属于别人」，退出时只断开连接、不关闭它 —— 于是一台台浏览器堆在 profile 上，后来的镜像驱动的是上一场会话的旧页面、旧尺寸，指针事件也落在那个页面上。
-
-接管规则补一条：marker 里的 pid 已经不在，浏览器就是没人管的，这一进程可以收下它，并把 marker 改写成自己。
-
-- 崩溃后接管：`owns` false → **true**；接管后退出，Chrome 仍活着 → **已关闭**
-- 检测用例：392 项通过
-
 ## 0.47.70 — 快拖选中：移动事件要带上是哪个键在按
 
 在页面里按住左键快速拖过一段文字，松手后什么都没选中。事件都到了页面：按下、若干次移动、松开，`buttons` 也一直是 1。缺的是移动事件自己的 `button` 字段——沿用了「没有键被按下」的 `none`。Chrome 只在移动事件指名了按住的键时才把它当成拖选，于是按下和松开之间没有任何东西算拖动。

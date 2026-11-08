@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, canArmWatcher, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, mayClaim, pidsWithMark, rootDir } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, WATCHER_SCRIPT, appFromTable, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, mayClaim, pidsWithMark, rootDir } from '../sidecar.js'
 import { findWords, nearestByWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
@@ -1328,6 +1328,34 @@ test('a browser is only closed by the process that started it', () => {
   assert.equal(mayClaim({ pid: 9001, owner: 0 }, false), true, 'a profile with no marker has nobody to protect it')
   assert.equal(mayClaim({ pid: 0, owner: 4242 }, false), false, 'a missing pid cannot claim anything')
   assert.equal(mayClaim(null, false), false, 'nothing said, nothing claimed')
+
+  /* Windows has no `ps`, so the ancestry is walked over a table read in one
+     call. A node instance is what a reload replaces and a shell is what
+     launched one: the watcher may only key on the application above both. */
+  const table = new Map([
+    [500, { parent: 400, command: 'node.exe plugin.js' }],
+    [400, { parent: 0, command: 'C:\\Program Files\\DSH\\DSH.exe' }],
+  ])
+  assert.equal(appFromTable(500, table), 400, 'the walk names the application above the node instance')
+  table.set(400, { parent: 300, command: 'C:\\Windows\\System32\\cmd.exe /c start' })
+  table.set(300, { parent: 200, command: 'C:\\Program Files\\DSH\\DSH.exe' })
+  assert.equal(appFromTable(500, table), 300, 'the highest application in the chain is the one watched')
+  table.set(300, { parent: 200, command: 'node.exe --expose-internals reentry.js' })
+  assert.equal(appFromTable(500, table), 0, 'a chain with no application arms nothing')
+  table.set(300, { parent: 200, command: 'powershell.exe -NoProfile' })
+  assert.equal(appFromTable(500, table), 0, 'a shell is not an application either')
+  assert.equal(appFromTable(0, table), 0, 'no pid, no walk')
+  assert.equal(appFromTable(500, null), 0, 'no table, no walk')
+
+  /* The Windows rule is exercised here on a mac, so it has to be spelled out:
+     a node the harness spawns is not the application, an exe above it is. */
+  assert.equal(looksLikeApp('C:\\Program Files\\DSH\\DSH.exe', 'win32'), true, 'an app exe is the app')
+  assert.equal(looksLikeApp('\"C:\\Program Files\\DSH\\DSH.exe\" --type=renderer', 'win32'), true, 'a quoted app exe is the app')
+  assert.equal(looksLikeApp('C:\\Program Files\\nodejs\\node.exe plugin.js', 'win32'), false, 'a node instance is not the app')
+  assert.equal(looksLikeApp('C:\\Windows\\System32\\cmd.exe', 'win32'), false, 'a shell is not the app')
+  assert.equal(looksLikeApp('node.exe --expose-internals x.js', 'win32'), false, 'a reload instance is never the app')
+  assert.equal(looksLikeApp('', 'win32'), false, 'nothing named, nothing watched')
+  assert.equal(looksLikeApp('C:\\Program Files\\DSH\\DSH.exe', 'darwin'), false, 'a Windows path is not a mac app')
 })
 
 test('a probe told to keep its files elsewhere does not find the person\'s browser', () => {
@@ -1877,4 +1905,36 @@ test('a cast that is delivering frames is left alone', async () => {
   assert.equal(loops, 0)
   assert.equal(page.casting, true)
   page.casting = false
+})
+
+
+test('the watcher closes the browser once the application is gone', async () => {
+  /* Two stand-ins: the application, and the browser it started. The watcher is
+     the code that ships, asked to look every 120 ms so the check stays quick. */
+  const { spawn } = await import('node:child_process')
+  const launch = () => spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' })
+  const app = launch()
+  const chrome = launch()
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  const guard = spawn(process.execPath, ['-e', WATCHER_SCRIPT, String(app.pid), String(chrome.pid), '120'], { stdio: 'ignore' })
+  const gone = (child) => new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve(true)
+    const timer = setTimeout(() => resolve(false), 2500)
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
+  try {
+    app.kill('SIGKILL')
+    assert.equal(await gone(chrome), true, 'the browser is closed after the application goes')
+  } finally {
+    for (const child of [app, chrome, guard]) {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 })

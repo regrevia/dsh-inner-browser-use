@@ -299,6 +299,7 @@ export function isForeign(targetId, mine, foreign = []) {
  * @returns {number} the application pid, or 0 when it cannot be walked.
  */
 function appPid() {
+  if (process.platform === 'win32') return appFromTable(process.pid, processTable())
   let pid = process.pid
   let top = pid
   for (let hop = 0; hop < 12; hop += 1) {
@@ -316,6 +317,80 @@ function appPid() {
 }
 
 /**
+ * Windows has no `ps`, and the whole ancestry can be read in one call, so the
+ * table is fetched once and walked here. A shell or a node instance is the
+ * thing a reload replaces, never the application, so the first ancestor that is
+ * neither is the one a watcher may watch; when no ancestor qualifies the walk
+ * answers nobody, and no watcher is armed rather than one keyed to a process
+ * that comes and goes with a reload.
+ * @param {number} pid - this process.
+ * @param {Map<number, {parent: number, command: string}>} table - pid to its parent and command line.
+ * @returns {number} the application pid, or 0 when the walk cannot name it.
+ */
+export function appFromTable(pid, table) {
+  if (table === null || table === undefined || typeof table.get !== 'function') return 0
+  let at = Number(pid)
+  if (!Number.isInteger(at) || at <= 1) return 0
+  const seen = new Set([at])
+  const ancestors = []
+  for (let hop = 0; hop < 12; hop += 1) {
+    const said = table.get(at)
+    const parent = Number(said?.parent ?? 0)
+    if (!Number.isInteger(parent) || parent <= 1 || seen.has(parent)) break
+    seen.add(parent)
+    ancestors.push(parent)
+    at = parent
+  }
+  for (let i = ancestors.length - 1; i >= 0; i -= 1) {
+    const candidate = ancestors[i]
+    if (looksLikeApp(table.get(candidate)?.command, 'win32') === true) return candidate
+  }
+  return 0
+}
+
+/**
+ * The process table, read once: a Windows walk needs every hop, and one call
+ * for all of them costs less than `ps` would. PowerShell is the path a current
+ * Windows keeps; `wmic` is the fallback for an image that still has it.
+ * @returns {Map<number, {parent: number, command: string}>} pid to its parent and command.
+ */
+function processTable() {
+  const table = new Map()
+  if (process.platform !== 'win32') return table
+  const queries = [
+    ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress']],
+    ['wmic.exe', ['process', 'get', 'processid,parentprocessid,commandline', '/format:csv']],
+  ]
+  for (const [binary, args] of queries) {
+    let said = ''
+    try {
+      said = String(execFileSync(binary, args, { encoding: 'utf8', timeout: 5000, windowsHide: true }))
+    } catch {
+      continue
+    }
+    try {
+      const parsed = JSON.parse(said) // ui-copy-ignore
+      const rows = Array.isArray(parsed) ? parsed : [parsed]
+      for (const row of rows) {
+        const pid = Number(row?.ProcessId ?? 0) // ui-copy-ignore
+        if (!Number.isInteger(pid) || pid <= 0) continue
+        table.set(pid, { parent: Number(row?.ParentProcessId ?? 0), command: String(row?.CommandLine ?? '') })
+      }
+    } catch {
+      for (const line of said.split(/\r?\n/u)) {
+        const cells = line.split(',')
+        if (cells.length < 4) continue
+        const pid = Number(cells[3])
+        if (!Number.isInteger(pid) || pid <= 0) continue
+        table.set(pid, { parent: Number(cells[2]), command: cells.slice(4).join(',') })
+      }
+    }
+    if (table.size > 0) return table
+  }
+  return table
+}
+
+/**
  * Whether a process command line is the application itself, rather than the node
  * instance a reload replaces. A watcher keyed to the node instance would kill
  * the shared browser on every reload, which is exactly what made the column go
@@ -323,9 +398,17 @@ function appPid() {
  * @param {string} command - what `ps -o command=` said.
  * @returns {boolean} true for the app binary itself.
  */
-export function looksLikeApp(command) {
-  const line = String(command ?? '')
-  if (line.includes('--expose-internals')) return false
+export function looksLikeApp(command, platform = process.platform) {
+  const line = String(command ?? '').trim()
+  if (line === '' || line.includes('--expose-internals')) return false
+  if (platform === 'win32') {
+    /* A node instance is what a reload replaces, a shell is what launched one:
+       neither is the application, whatever directory it sits in. */
+    const binary = String((/^"([^"]+)"/u.exec(line) ?? /^(.+?\.exe)(?:\s|$)/iu.exec(line))?.[1] ?? line).toLowerCase()
+    const name = binary.split(/[\\/]/u).pop() ?? ''
+    if (['node.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'wmic.exe', 'conhost.exe'].includes(name)) return false
+    return name.endsWith('.exe')
+  }
   return line.includes('.app/Contents/MacOS/')
 }
 
@@ -335,6 +418,7 @@ export function looksLikeApp(command) {
  */
 function commandOf(pid) {
   if (!Number.isInteger(pid) || pid <= 1) return ''
+  if (process.platform === 'win32') return String(processTable().get(pid)?.command ?? '')
   try {
     return String(execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })).trim()
   } catch {
@@ -385,9 +469,61 @@ export function jpegSize(data) {
 }
 
 export function canArmWatcher() {
-  if (process.platform === 'win32') return false
   const app = appPid()
-  return app !== 0 && looksLikeApp(commandOf(app)) === true
+  return app !== 0 && looksLikeApp(commandOf(app), process.platform) === true
+}
+
+/**
+ * The code a watcher runs. It is node, so both platforms get the same loop:
+ * wait for the application to go, then close the browser. A browser killed
+ * outright can lose the last minute of cookies, so it is asked first and
+ * terminated afterwards, as a tree on Windows.
+ */
+export const WATCHER_SCRIPT = `const [app, chrome, every] = process.argv.slice(1).map(Number)
+if (!(app > 0 && chrome > 0 && every > 0)) process.exit(1)
+const tick = () => {
+  let up = true
+  try {
+    process.kill(app, 0)
+  } catch {
+    up = false
+  }
+  if (up) return setTimeout(tick, every)
+  try {
+    if (process.platform === 'win32') {
+      require('node:child_process').spawnSync('taskkill', ['/pid', String(chrome), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    } else {
+      process.kill(chrome, 'SIGTERM')
+    }
+  } catch {
+    /* already gone */
+  }
+  process.exit(0)
+}
+setTimeout(tick, every)`
+
+/**
+ * Starts a watcher on the application's pid, detached so the app does not wait
+ * for it and it outlives the plugin instance that armed it.
+ * @param {{app?: number, chrome?: number, every?: number}} said - the application, the browser, and how often to look.
+ * @returns {number} the watcher's pid, or 0 when it could not be started.
+ */
+function armWatcher(said) {
+  const app = Number(said?.app ?? 0)
+  const chrome = Number(said?.chrome ?? 0)
+  const every = Number(said?.every ?? 5000)
+  if (!Number.isInteger(app) || app <= 0 || !Number.isInteger(chrome) || chrome <= 0) return 0
+  try {
+    const guard = spawn(process.execPath, ['-e', WATCHER_SCRIPT, String(app), String(chrome), String(every)], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    guard.unref()
+    return Number(guard.pid ?? 0)
+  } catch {
+    return 0
+  }
 }
 
 /** The watcher that closes the browser when the app goes: one per app run. */
@@ -4323,21 +4459,16 @@ export class Sidecar {
       /* no watcher yet, or one whose note is unreadable */
     }
     /* Detached and unref'd: the app must not wait for this, and it must outlive
-       the plugin instance it was started for. Windows has no `/bin/sh`, so there
-       the lifetime rides on the browser itself: `taskkill /T` already ends the
-       whole tree when this process is gone, and spawning a POSIX watcher here
-       would only throw ENOENT and be swallowed. */
-    if (process.platform === 'win32') return
+       the plugin instance it was started for. The same node the plugin runs on
+       does the watching on every platform: Windows has no `/bin/sh`, and one
+       code path means the one that was measured here is the one that ships. */
+    const guard = armWatcher({ app, chrome })
+    if (guard === 0) return
     try {
-      const guard = spawn('/bin/sh', ['-c', `while kill -0 ${app} 2>/dev/null; do sleep 5; done; kill ${chrome} 2>/dev/null`], {
-        detached: true,
-        stdio: 'ignore',
-      })
-      guard.unref()
       mkdirSync(dir, { recursive: true })
-      writeFileSync(watcherFile(dir), JSON.stringify({ appPid: app, pid: guard.pid ?? 0, chrome, at: Date.now() }))
+      writeFileSync(watcherFile(dir), JSON.stringify({ appPid: app, pid: guard, chrome, at: Date.now() }))
     } catch {
-      /* a watcher that cannot start only means the browser outlives the app */
+      /* a watcher that cannot write its note still closes the browser */
     }
   }
 
