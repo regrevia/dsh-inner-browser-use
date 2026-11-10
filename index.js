@@ -755,6 +755,29 @@ export function apply(ctx) {
       return
     }
 
+    if (path === '/sidecar/control' && req.method === 'POST') {
+      let body
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        json(400, { ok: false, text: 'bad frame' })
+        return
+      }
+      /* Control follows the owner too: a chat that lost the mirror cannot hand
+         out or take back the page from a stale tab. */
+      const actor = acting(body)
+      if (actor === '') return
+      try {
+        const held = body.held === true
+        if (held) sidecar.takeOver()
+        else sidecar.release()
+        json(200, { ok: true, held: sidecar.taken === true })
+      } catch (error) {
+        json(500, { ok: false, text: String(error?.message ?? error) })
+      }
+      return
+    }
+
     if (path === '/sidecar/input' && req.method === 'POST') {
       let body
       try {

@@ -47,6 +47,10 @@ window.__ModuleLoader__.load({
         'side.soundOff': '开启游戏声音',
         'side.lost': '页面没有回应这一次操作，点一下恢复',
         'side.held': '另一个会话正在使用浏览器，点一下拿回',
+        'side.agent': 'Agent 拥有控制权',
+        'side.you': '你拥有控制权',
+        'side.take': '获取控制权',
+        'side.give': '交还控制权',
       },
       en: {
         'side.label': 'Background browser',
@@ -65,6 +69,10 @@ window.__ModuleLoader__.load({
         'side.soundOff': 'Unmute the game',
         'side.lost': 'The page did not take that — click to bring it back',
         'side.held': 'Another chat is using the browser — click to take it back',
+        'side.agent': 'The agent has control',
+        'side.you': 'You have control',
+        'side.take': 'Take control',
+        'side.give': 'Hand back',
       },
     }
     const LANG = /^zh/i.test(typeof navigator === 'undefined' ? '' : navigator.language ?? '') ? 'zh' : 'en'
@@ -88,6 +96,13 @@ window.__ModuleLoader__.load({
       /* The black arrow is the agent's pointer, not the person's cursor: both are
          on screen at once, and moving the mouse never takes the arrow over. */
       '.dshib-side-ptr{position:absolute;width:20px;height:20px;pointer-events:none;z-index:2;transform:translate(-2px,-2px);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}',
+      /* Who drives the page, and the one click that changes it: the person takes
+         the mirror by hand, and hands it back when the agent is wanted again. */
+      '.dshib-side-control{position:absolute;top:8px;right:8px;z-index:3;display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:999px;background:var(--dsw-alias-bg-elevated,rgba(0,0,0,.72));box-shadow:0 1px 4px rgba(0,0,0,.24);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.dshib-side-control-who{padding:2px 8px;white-space:nowrap}',
+      '.dshib-side-control-take{border:0;border-radius:999px;padding:2px 10px;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.dshib-side-control-take:hover{opacity:.85}',
+      '.dshib-side-control[data-you="1"] .dshib-side-control-take{background:var(--dsw-alias-bg-subtle);color:var(--dsw-alias-label-primary)}',
       '.dshib-side-note{font-size:12px;color:var(--dsw-alias-label-tertiary);padding:0 16px;text-align:center}',
       '.dshib-side-back{border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}',
       '.dshib-side-back:hover{background:var(--dsw-alias-bg-subtle)}',
@@ -500,6 +515,9 @@ window.__ModuleLoader__.load({
          the agent's arrow stays out of the way, and it comes back by itself
          once their hold runs out. */
       const [person, setPerson] = React.useState(false)
+      /* The person took the page from the chip: the agent's arrow stays out of
+         the way and its tools refuse to act until it is handed back. */
+      const [held, setHeld] = React.useState(false)
       const personTimer = React.useRef(0)
       /* The person's own hand hides the arrow the moment it lands, without
          waiting for the browser to report a hold: the arrow is a claim about
@@ -577,6 +595,7 @@ window.__ModuleLoader__.load({
                  back instead of showing a note for a browser this column shows. */
               if (asked !== '' && next !== asked) reclaim()
               setOwner((prev) => (prev === next ? prev : next))
+              setHeld(info?.held === true)
               /* A browser that is gone still remembers where this chat was:
                  keep the address so the pane can offer to reopen it. */
               const flash = info?.flash !== null && info?.flash !== undefined && info?.flash !== false
@@ -837,6 +856,24 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ ...body, session: who }),
         }).catch(() => {})
+      }
+      /* The chip's one click: take the page, or hand it back. The pane shows
+         the answer instead of the guess, and a failed request puts the chip
+         where it was rather than claiming control it does not have. */
+      const control = () => {
+        const next = held !== true
+        setHeld(next)
+        void fetch(`${ROUTE}/sidecar/control`, { // ui-copy-ignore
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ session: who, held: next }),
+        })
+          .then((reply) => (reply.ok === true ? reply.json() : null))
+          .then((info) => {
+            if (info?.ok === true) setHeld(info.held === true)
+            else setHeld(held === true)
+          })
+          .catch(() => setHeld(held === true))
       }
       /* Input is the one request whose failure the person can see: a click that
          went nowhere must not look like one that landed. Every answer comes back
@@ -1180,7 +1217,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dshib-side' },
           h('div', { className: 'dshib-side-note' }, L('side.foreign')))
       }
-      const pointer = person === true || hand === true ? null : ptr
+      const pointer = person === true || hand === true || held === true ? null : ptr
       const spot = pointer === null ? null : picture()
       /* The hand arrives in page points, the picture in frame pixels: on a
          display at 150% the arrow used to be drawn a third of the way short
@@ -1272,6 +1309,20 @@ window.__ModuleLoader__.load({
               },
             }, L('side.restore'))
             : frame === null ? h('div', { className: 'dshib-side-note' }, noteText) : null,
+          ...(frame === null ? [] : [h('div', {
+            className: 'dshib-side-control',
+            'data-you': held === true ? '1' : '0',
+            /* The chip sits over the picture, so its own pointer events must not
+               reach the page behind it: a click meant for the button used to be
+               a click on the page as well. */
+            onPointerDown: (event) => event.stopPropagation(),
+            onPointerUp: (event) => event.stopPropagation(),
+            onPointerMove: (event) => event.stopPropagation(),
+            onWheel: (event) => event.stopPropagation(),
+            onContextMenu: (event) => event.stopPropagation(),
+          },
+            h('span', { className: 'dshib-side-control-who' }, L(held === true ? 'side.you' : 'side.agent')),
+            h('button', { className: 'dshib-side-control-take', type: 'button', onClick: control }, L(held === true ? 'side.give' : 'side.take')))]),
           h('textarea', {
             className: 'dshib-side-ime',
             ref: ime,

@@ -1,3 +1,17 @@
+## 谁在开这个镜像 — 0.47.76
+
+探针 `/tmp/held.mjs`：真 Chrome，`file:///tmp/bands.html`，`setViewport(870,1200,2)`、`cast()` 后 `takeOver()` 再 `release()`，每步读 `state().held`、最新帧的 `hold` 与帧数。修复前没有接管这条路（`held` 字段、`/sidecar/control` 都不存在），只能靠人手操作后六秒衰减。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 空闲时 `hold` / `held` | `0` / 无此字段 | `0` / `false` |
+| 接管后 `hold` / `held` | — | `6000` / `true` |
+| 接管 1.2 s 后帧数 | — | 继续增加（镜像不因接管停画） |
+| 交还后 `hold` / `held` | — | `0` / `false` |
+| 单元测试 | 399 | 405 |
+
+运行：`node /tmp/held.mjs`（独立 `Sidecar` 与临时 profile，`finally` 里 `putAway()`）。接管在 `sidecar.js`（`takeOver()` / `release()` / `holding()` / `state().held`），端点在 `index.js` 的 `POST /sidecar/control`，胶囊在 `client.js`。
+
 ## 滚动后镜像丢失正在看的页面 — 0.47.75
 
 探针 `/tmp/scroll3.mjs`：真 Chrome，页面 `file:///tmp/bands.html` 是 3000×6000 的六条 1000 px 纯色带（红/绿/蓝/黄/品红/青），`setViewport(870,1200,2)`、`castScale = 2`，从右栏收到的帧里解码取样（左上 / 左中 / 右中 / 底部），同时打印帧头与 `Page.getLayoutMetrics`。

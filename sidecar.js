@@ -3118,6 +3118,10 @@ export class Sidecar {
        enough that a stray click does not stall a run, long enough that the agent
        does not type into a field the person is in the middle of filling. */
     this.holdMs = 6000
+    /* The person asked for the page from the column and keeps it until they
+       hand it back: a touch costs the agent a few seconds, this costs it the
+       page, so the pane says so and the tools refuse to act until it ends. */
+    this.held = false
     /* When the browser was last asked for anything, and the rhythm of those
        asks: the two numbers that decide when a pause has become a departure. */
     this.use = new GapClock()
@@ -3160,13 +3164,30 @@ export class Sidecar {
 
   /** @returns {number} ms the agent should still hold off; 0 when free to act. */
   holding() {
+    /* The person's own hold has no countdown: it ends when they say so. */
+    if (this.held === true) return this.holdMs
     if (this.person === undefined || this.person.at === 0) return 0
     const left = this.holdMs - (Date.now() - this.person.at)
     return left > 0 ? left : 0
   }
 
+  /** @returns {boolean} whether the person is holding the page. */
+  get taken() {
+    return this.held === true
+  }
+
+  /**
+   * The person took the page from the column: every action waits for them,
+   * without a countdown, until they hand it back.
+   */
+  takeOver() {
+    this.held = true
+    this.person = { at: Date.now(), kind: 'takeover', x: 0, y: 0, seen: false } // ui-copy-ignore
+  }
+
   /** Take the page back now, without waiting out the hold. */
   release() {
+    this.held = false
     if (this.person === undefined) this.person = { at: 0, kind: '', x: 0, y: 0, seen: true } // ui-copy-ignore
     this.person.at = 0
     this.person.seen = true
@@ -4740,6 +4761,9 @@ export class Sidecar {
       headless: this.headless, // ui-copy-ignore
       flash: this.flash, // ui-copy-ignore
       sound: this.soundOn === true, // ui-copy-ignore
+      /* The person holds the page: a chat that asks before acting reads this,
+         and the pane draws the control chip from it. */
+      held: this.held === true, // ui-copy-ignore
       flashCheck: this.flashCheck, // ui-copy-ignore
       url: this.page?.url ?? '', // ui-copy-ignore
       pages: this.pages.size,

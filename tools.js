@@ -1015,6 +1015,11 @@ export function personNote(sidecar) {
  * @returns {string} a refusal, or '' when the agent may act.
  */
 export function holdText(sidecar) {
+  /* The person took the page in the column: that hold has no countdown, so a
+     "few seconds more" would be a lie and the agent would keep retrying. */
+  if (sidecar?.taken === true) {
+    return 'the person has the mirror: they took control in the column — nothing was sent. Wait for them to hand it back, or browser_resume takes it back now.'
+  }
   const left = Number(sidecar?.holding?.() ?? 0)
   if (left <= 0) return ''
   return `the person is using the mirror (${String(Math.ceil(left / 1000))} s more) — nothing was sent. Let them finish, then repeat this call; browser_resume takes the page back now.`
@@ -3635,7 +3640,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
                 ? `rests in ${String(Math.max(1, Math.round(Number(state.restIn) / 60_000)))} min unless used`
                 : 'no rest scheduled',
           (state.parked ?? 0) > 0 ? `parked pages ${String(state.parked)}` : '',
-          holdText(sidecar) === '' ? 'person free' : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
+          holdText(sidecar) === ''
+            ? 'person free'
+            : sidecar?.taken === true
+              ? 'the person has control of the mirror' // ui-copy-ignore
+              : `person using it (${String(Math.ceil(Number(sidecar.holding()) / 1000))} s left)`,
         ]
         if (state.alive === true && viewerNote(state.viewers) !== '') rows.push(NO_VIEWER)
         return { text: rows.filter((row) => row !== '').join('\n') }
@@ -3723,7 +3732,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
 
     {
       name: 'browser_resume', // ui-copy-ignore
-      description: 'Take the page back from the person at the mirror: clears the hold so the next action is sent at once, instead of waiting the few seconds out.',
+      description: 'Take the page back from the person at the mirror: clears the hold so the next action is sent at once, instead of waiting the few seconds out. Also ends a takeover, where the person took control in the column.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: TEXT_OUTPUT, // ui-copy-ignore
       timeoutMs: 10_000,

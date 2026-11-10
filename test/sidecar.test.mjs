@@ -263,6 +263,15 @@ test('the sound switch reaches the bridge and reports what it did', async () => 
   }
 })
 
+test('the state a pane polls says whether the person holds the page', async () => {
+  const sidecar = new Sidecar({ dir: join(tmpdir(), `dshib-held-state-${process.pid}`) })
+  assert.equal((await sidecar.state()).held, false)
+  sidecar.takeOver()
+  assert.equal((await sidecar.state()).held, true)
+  sidecar.release()
+  assert.equal((await sidecar.state()).held, false)
+})
+
 test('the state a pane polls says whether the page can make noise', async () => {
   /* The pane shows its sound switch only for a Flash page, so the state it
      polls already carries both halves of that answer. */
@@ -390,6 +399,24 @@ test('a browser nobody has touched yet is free to act on', () => {
   assert.equal(sidecar.holding(), 0)
   sidecar.release()
   assert.equal(sidecar.holding(), 0)
+})
+
+test('a page the person took from the column stays theirs until they hand it back', () => {
+  /* A stray click costs the agent a few seconds. A takeover is a decision: the
+     pane says who has the page, and the agent waits until it is handed back
+     instead of retrying into the hold. */
+  const sidecar = new Sidecar({ profile: 'pretend' })
+  sidecar.holdMs = 5000
+  assert.equal(sidecar.taken, false)
+  sidecar.takeOver()
+  assert.equal(sidecar.taken, true)
+  assert.ok(sidecar.holding() > 0, 'a takeover holds the agent off')
+  /* No countdown: the same person is still there a minute later. */
+  sidecar.person.at = Date.now() - 60_000
+  assert.ok(sidecar.holding() > 0, 'the hold does not time out on its own')
+  sidecar.release()
+  assert.equal(sidecar.taken, false)
+  assert.equal(sidecar.holding(), 0, 'handing it back frees the agent at once')
 })
 
 test('a chat whose tab is gone is told where it was, so the pane can offer it back', async () => {

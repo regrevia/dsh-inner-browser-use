@@ -431,9 +431,23 @@ test('the arrow goes away as soon as a hand lands on the pane, not after a round
     const body = source.slice(source.indexOf(`const ${hook} = (event) => {`))
     assert.ok(body.slice(0, 120).includes('touched()'), `${hook} hides the arrow`)
   }
-  assert.match(source, /const pointer = person === true \|\| hand === true \? null : ptr/)
+  assert.match(source, /const pointer = person === true \|\| hand === true \|\| held === true \? null : ptr/)
   /* A timer left running after the tab is gone is a callback with no page. */
   assert.ok(source.includes('clearTimeout(handTimer.current)'))
+})
+
+test('the control chip takes the page without clicking it, and can hand it back', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  /* The chip sits over the picture, so every pointer event it gets has to stop
+     there: without this, taking control also pressed the page underneath. */
+  for (const hook of ['onPointerDown', 'onPointerUp', 'onPointerMove', 'onWheel', 'onContextMenu']) {
+    assert.ok(source.includes(`${hook}: (event) => event.stopPropagation()`), `${hook} stops at the chip`)
+  }
+  assert.match(source, /`\$\{ROUTE\}\/sidecar\/control`/, 'the chip talks to the control route')
+  assert.match(source, /held === true \? 'side\.give' : 'side\.take'/, 'the same click takes and hands back')
+  assert.match(source, /held === true \? 'side\.you' : 'side\.agent'/, 'the chip says who has the page')
+  /* A polled takeover is worn by the chip and by the arrow alike. */
+  assert.match(source, /setHeld\(info\?\.held === true\)/)
 })
 
 test('the picture fills the column even when the last measure was stale', () => {

@@ -1,3 +1,24 @@
+## 0.47.76 — 右栏有了一枚控制权胶囊：点一下接管，再点一下交还
+
+右栏的镜像只有「人在动」的六秒宽限，却没有「谁在开」的说法：人在栏里点、滚、打字，agent 只能看到一句 `person using it (N s left)`，而且每六秒重来一次；想让人自己接手一个页面，也没法让 agent 停下来等，它只会不停重试。
+
+现在面板右上角有一枚胶囊：`Agent 拥有控制权` + 「获取控制权」。点一下，agent 立即停手、箭头隐藏；按钮变成「交还控制权」，再点一下 agent 回来。这是**粘性**的，不会因为六秒没动静自动过期；agent 侧读到的是 `the person has control of the mirror`（等交还，或 `browser_resume` 立刻收回），而不是一个倒计时。
+
+实现：sidecar 侧 `held` 状态（`takeOver()` / `release()` / `taken`，`holding()` 在接管时返回有限宽限值，`state()` 带 `held`）；HTTP 端点 `POST /sidecar/control {held}`，沿用 `/sidecar/input` 的同一套所有权门控；`browser_state` 增加一行控制权；面板的胶囊对指针、滚轮、右键全部 `stopPropagation`，接管那一下不会顺手点到页面。
+
+PRE/POST（同机真 Chrome，`/tmp/held.mjs`：自起 `Sidecar`、`cast()` 后接管再交还，读帧头 `hold` 与 `state().held`）：
+
+| 指标 | PRE | POST |
+| --- | --- | --- |
+| 接管接口 | 无（`/sidecar/control` 404） | 点一下 `held: true`，再点一下 `held: false` |
+| 面板上的说法 | 无 | `Agent 拥有控制权` / `你拥有控制权` |
+| 接管时帧头 `hold` | 改不了（永远靠人手衰减） | `6000`（粘性，不衰减） |
+| 交还后帧头 `hold` | — | `0` |
+| `state().held` | 字段不存在 | 假 → 真 → 假 |
+| 接管时镜像 | — | 帧照常送达（静止页去重后 1.2 s 内仍有新帧） |
+| agent 侧提示 | `person using it (N s left)` | `the person has control of the mirror` |
+| 单元测试 | 399 | 405 |
+
 ## 0.47.75 — 滚动之后镜像里不是正在看的那一页
 
 右栏放大渲染（`castScale > 1`：Windows 125%/150%、Retina）时每帧走 `Page.captureScreenshot` 的 `clip` 抓图。`clip` 的坐标从**文档左上角**算起，代码却固定写 `x:0, y:0`：页面一滚，抓到的就是文档顶部那一块而不是窗口正在看的地方——滚到 2000 px 处整块镜像变白；横向滚动同样错位。另外 `clip` 的宽高用的是窗口尺寸（870×1200），而真正可见的是扣掉滚动条后的 855×1185，图里右侧、底部各多一条 15 px 白边。
