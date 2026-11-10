@@ -1716,6 +1716,74 @@ test('a column drawn at two device pixels per CSS pixel gets a captured picture'
   assert.equal(calls.length, settled, 'nothing keeps asking after the cast stopped')
 })
 
+test('a scrolled page is captured where the window is looking', async () => {
+  /* A capture clip is measured from the top of the document, not from the
+     window: a page that has been scrolled still answers with the top of
+     itself, so a wheel turn used to fill the mirror with the page above the
+     one the person is reading. The picture is the visible viewport, and the
+     header names the same box so a click lands where it was pointed. */
+  const calls = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method, params) => {
+      calls.push({ method, params })
+      if (method === 'Page.captureScreenshot') return { data: 'scrolled-frame' }
+      if (method === 'Page.getLayoutMetrics') {
+        return { cssVisualViewport: { offsetX: 0, offsetY: 0, pageX: 60, pageY: 1240, clientWidth: 1000, clientHeight: 700, scale: 1, zoom: 1 } }
+      }
+      return {}
+    },
+  }, 'unit-scrolled', 0, () => 0)
+  await page.start()
+  calls.length = 0
+  page.view = { width: 1015, height: 715 }
+  page.castScale = 2
+  page.sentAt = 0
+  page.lastFrameAt = 0
+  const frames = []
+  page.frames.add((message) => frames.push(message))
+  await page.cast()
+  await new Promise((resolve) => setTimeout(resolve, 90))
+  await page.stopCast()
+  const capture = calls.find((call) => call.method === 'Page.captureScreenshot')
+  assert.ok(capture !== undefined, 'the picture is captured')
+  assert.deepEqual(capture.params.clip, { x: 60, y: 1240, width: 1000, height: 700, scale: 2 }, 'the clip is the visible page, in document pixels')
+  assert.equal(frames.at(-1).w, 1000, 'the header is the visible width, not the window width')
+  assert.equal(frames.at(-1).h, 700, 'and the visible height')
+  assert.equal(page.handScale(), 1, 'a click is still a CSS pixel')
+})
+
+test('a capture that cannot measure the page falls back to the window', async () => {
+  /* The metrics call is not a reason to stop drawing: without it the picture
+     is the window, which is what it was before, and the pane still gets one. */
+  const calls = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method, params) => {
+      calls.push({ method, params })
+      if (method === 'Page.captureScreenshot') return { data: 'blind-frame' }
+      if (method === 'Page.getLayoutMetrics') throw new Error('no metrics')
+      return {}
+    },
+  }, 'unit-blind', 0, () => 0)
+  await page.start()
+  calls.length = 0
+  page.view = { width: 820, height: 620 }
+  page.castScale = 2
+  page.sentAt = 0
+  page.lastFrameAt = 0
+  const frames = []
+  page.frames.add((message) => frames.push(message))
+  await page.cast()
+  await new Promise((resolve) => setTimeout(resolve, 90))
+  await page.stopCast()
+  const capture = calls.find((call) => call.method === 'Page.captureScreenshot')
+  assert.ok(capture !== undefined, 'the picture is still captured')
+  assert.deepEqual(capture.params.clip, { x: 0, y: 0, width: 820, height: 620, scale: 2 }, 'the clip falls back to the window')
+  assert.equal(frames.at(-1).w, 820, 'and the header to the window size')
+  assert.equal(frames.at(-1).h, 620)
+})
+
 test('an unscaled column still uses the display cast', async () => {
   const own = []
   const calls = []

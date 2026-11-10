@@ -864,6 +864,10 @@ export class SidecarPage {
        fixed desktop size: a mirror with letterbox bands is a page that does
        not fill its frame. */
     this.view = { width: VIEW.width, height: VIEW.height }
+    /* The page box the last picture really showed, in CSS pixels: a captured
+       picture is the visible viewport, which is narrower than the window by
+       its scrollbars, and the pane maps a click through this box. */
+    this.frameBox = /** @type {{width: number, height: number}|null} */ (null)
     /* The last size a frame announced, in device pixels: the same size twice
        in a row is the same layout, and asking again would spend a round trip
        per frame. */
@@ -1524,10 +1528,14 @@ export class SidecarPage {
     if (this.frames.size > 0 && this.repeats(data) === true) return
     if (this.tooSoon()) return
     this.inflight += 1
+    /* The pane maps a click through these numbers, so they name the page box
+       the picture really shows: a captured picture is the visible viewport,
+       which is the window minus its scrollbars. */
+    const box = this.frameBox ?? this.view
     const frame = {
       seq: this.seq, // ui-copy-ignore
-      w: this.view.width, // ui-copy-ignore
-      h: this.view.height, // ui-copy-ignore
+      w: box.width, // ui-copy-ignore
+      h: box.height, // ui-copy-ignore
       jpeg: data, // ui-copy-ignore
       url: this.url, // ui-copy-ignore
       title: this.title, // ui-copy-ignore
@@ -1550,6 +1558,33 @@ export class SidecarPage {
   }
 
   /**
+   * The visible page, in the document's own pixels.
+   *
+   * A captured clip is measured from the top of the document, not from the
+   * window, so a scrolled page needs its offset: without it the picture shows
+   * the top of the page while the pane is looking at the middle, and after a
+   * wheel turn the mirror fills with whatever stands above the page. The box is
+   * the visual viewport, which is the window minus its scrollbars: a scrollbar
+   * is window, not page, and capturing it packs a blank strip down the side of
+   * the picture that no page content can ever fill.
+   * @returns {Promise<{x: number, y: number, width: number, height: number}>} the box a picture must show.
+   */
+  async castBox() {
+    const shape = await this.cdp.send('Page.getLayoutMetrics').catch(() => null)
+    const seen = shape?.cssVisualViewport
+    const num = (value, fallback) => {
+      const asked = Number(value)
+      return Number.isFinite(asked) && asked >= 0 ? asked : fallback
+    }
+    return {
+      x: Math.round(num(seen?.pageX, 0)),
+      y: Math.round(num(seen?.pageY, 0)),
+      width: Math.max(1, Math.round(num(seen?.clientWidth, this.view.width))),
+      height: Math.max(1, Math.round(num(seen?.clientHeight, this.view.height))),
+    }
+  }
+
+  /**
    * The column draws more device pixels than the page has CSS pixels, so the
    * picture is captured at that size instead of being cast from the display:
    * a clip scales the image and leaves the layout and the input units alone,
@@ -1566,8 +1601,13 @@ export class SidecarPage {
     this.castGen = mine
     while (this.casting === true && this.castGen === mine) {
       const started = Date.now()
-      const wide = Math.max(1, this.view.width)
-      const tall = Math.max(1, this.view.height)
+      /* Where the page is looking right now: a wheel turn moves the document
+         under the window, and a clip that names the offset from before the turn
+         captures a page nobody is looking at. */
+      const box = await this.castBox()
+      if (this.casting !== true || this.castGen !== mine) break
+      const wide = box.width
+      const tall = box.height
       const room = Math.min(
         CRISP_MAX,
         CRISP_ROOM / wide,
@@ -1580,9 +1620,10 @@ export class SidecarPage {
           format: 'jpeg', // ui-copy-ignore
           quality: this.castQuality, // ui-copy-ignore
           fromSurface: true,
-          /* The clip is the viewport, at two image pixels per CSS pixel: the same
-             box the cast would show, drawn at the column's own resolution. */
-          clip: { x: 0, y: 0, width: this.view.width, height: this.view.height, scale }, // ui-copy-ignore
+          /* The clip is the visible page at two image pixels per CSS pixel: the
+             same box the cast would show, drawn at the column's own resolution,
+             and named in document pixels so a scrolled page comes out right. */
+          clip: { x: box.x, y: box.y, width: wide, height: tall, scale }, // ui-copy-ignore
         })
         .catch(() => null)
       if (this.casting !== true || this.castGen !== mine) break
@@ -1590,6 +1631,9 @@ export class SidecarPage {
       if (data !== '' && this.frames.size > 0) {
         this.latest = data
         this.lastFrameAt = Date.now()
+        /* The pane maps every click through this box, so it is the box the
+           picture really shows, not the window it was asked for. */
+        this.frameBox = { width: wide, height: tall }
         this.deliverFrame(data)
       }
       /* The pace is not a reason to keep the process up: a pane that stopped
@@ -1801,6 +1845,7 @@ export class SidecarPage {
   /** @returns {Promise<void>} resolves once the page is casting. */
   async cast() {
     this.resizing = false
+    this.frameBox = null
     if (this.flashBridge !== null) {
       if (this.casting) return
       this.casting = true
@@ -2314,6 +2359,7 @@ export class SidecarPage {
        preference. */
     this.castLive = true
     this.casting = false
+    this.frameBox = null
     this.castGen += 1
     /* The bookkeeping is not proof of what Chrome is doing: a start refused as
        "already active" left `casting` false over a cast that was still
