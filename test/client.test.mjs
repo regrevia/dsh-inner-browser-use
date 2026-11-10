@@ -541,8 +541,8 @@ test('a click names a fraction of the picture, not a pixel of a stale one', () =
   assert.ok(source.includes('const fx = Math.min(1, Math.max(0, px / wide))'))
   assert.ok(source.includes('x: Math.round(fx * (fw - 1)),'))
   assert.ok(source.includes('y: Math.round(fy * (fh - 1)),'))
-  assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })"))
-  assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })"))
+  assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'down', button, clickCount: clicks, ...point })"))
+  assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'up', button: held.button ?? 'left', clickCount: held.clicks, ...point })"))
   assert.ok(source.includes("void input({ kind: 'wheel', ...point, dx: event.deltaX, dy: event.deltaY })"))
   /* A point outside the picture is not the picture's edge, and no picture is
      not a scale of one: both refuse instead of guessing. */
@@ -577,8 +577,8 @@ test('a press stays down until the hand lets go, so a drag can drag', () => {
   /* The picture used to send a click on the way down, which is press and
      release on one point: nothing on the page could be dragged. */
   assert.ok(!source.includes("void input({ kind: 'click', button: 'left'"), 'a press is not a click')
-  assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })"))
-  assert.ok(source.includes('pressed.current = { ...point, clicks }'), 'the point of the press is remembered')
+  assert.ok(source.includes("if (pressOn.current === true) void input({ kind: 'down', button, clickCount: clicks, ...point })"))
+  assert.ok(source.includes('pressed.current = { ...point, clicks, button }'), 'the point and the button of the press are remembered')
   assert.ok(source.includes("const point = event === null || event === undefined ? held : toView(event) ?? held"), 'the release goes where the hand let go, or where the press was')
   assert.ok(source.includes('onPointerUp: release'), 'letting go ends the press')
   assert.ok(source.includes('onPointerCancel: release'), 'a cancelled pointer ends the press too')
@@ -590,9 +590,22 @@ test('a press stays down until the hand lets go, so a drag can drag', () => {
 
 test('a right or middle button is not sent as a left press', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  assert.ok(source.includes('if (event.button === 1) {'), 'the middle button is its own click')
-  assert.ok(source.includes("kind: 'click', button: 'middle'"), 'a middle click reaches the page as middle')
-  assert.ok(source.includes('if (event.button !== 0 && event.button !== undefined) return'), 'the right button waits for its own menu')
+  /* Both were squeezed into a left press once, which opened a link in place
+     and dragged whatever sat under the hand. Each names its own button now. */
+  assert.ok(source.includes("const button = event.button === 2 ? 'right' : event.button === 1 ? 'middle' : event.button === 0 || event.button === undefined ? 'left' : ''"), 'each button is named as itself')
+  assert.ok(source.includes("if (button !== 'left') {\n          event.preventDefault()"), 'the page keeps the button instead of the browser menu')
+  assert.ok(source.includes("void input({ kind: 'click', button, ...point })"), 'an old host still gets one click of that button')
+})
+
+/* The right button was a menu and nothing else: it went out as one click, so
+   the button was already up before the hand moved. A right drag - a canvas,
+   a map, a trim handle - dragged nothing. */
+test('the right button stays down for a drag, and raises the menu from the press', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('pressed.current = { ...point, clicks, button }'), 'the press remembers which button is down')
+  assert.ok(source.includes("button: held.button ?? 'left'"), 'the release gives back the button the press took')
+  assert.ok(source.includes("moving.current = pressed.current === null ? point : { ...point, pressed: true, button: pressed.current.button ?? 'left' }"), 'a move in a right drag names the right button')
+  assert.ok(source.includes("if (pressOn.current === true) {\n          event.preventDefault()\n          return\n        }"), 'the browser raises the menu from the real press, so no second click is sent')
 })
 
 test('a third quick click counts three, so a line can be selected', () => {
@@ -610,7 +623,7 @@ test('a pane served by a host that predates press and release still clicks', () 
      the hand stopped clicking. The pane now asks the host what it takes. */
   assert.ok(source.includes('const pressOn = React.useRef(false)'), 'the pane starts out not knowing')
   assert.ok(source.includes('pressOn.current = info?.press === true'), 'the state poll says what this host takes')
-  assert.ok(source.includes("else void input({ kind: 'click', clickCount: held.clicks, ...point })"), 'an older host gets the one event it knows, and the count that makes a double a double')
+  assert.ok(source.includes("else void input({ kind: 'click', button: held.button ?? 'left', clickCount: held.clicks, ...point })"), 'an older host gets the one event it knows, and the count that makes a double a double')
   assert.ok(source.includes('onContextMenu,'), 'the right button reaches the page')
   assert.ok(source.includes("void input({ kind: 'click', button: 'right', ...point })"), 'a right click asks the page for its menu')
 })
@@ -630,7 +643,7 @@ test('a fast hand cannot queue stale hover positions', () => {
   /* One ask in the air at a time; the newest point replaces the waiting one. */
   assert.ok(source.includes('const queue = () => {'))
   assert.ok(source.includes('if (moveClock.current !== 0) return'))
-  assert.ok(source.includes('moving.current = pressed.current === null ? point : { ...point, pressed: true }'))
+  assert.ok(source.includes('moving.current = pressed.current === null ? point : { ...point, pressed: true, button: pressed.current.button ?? \'left\' }'))
   assert.ok(source.includes('if (moving.current !== null) queue()'))
   assert.ok(source.includes('const DRAG_GAP_MS = 8'))
   assert.ok(source.includes('const wait = Math.max(0, DRAG_GAP_MS - (Date.now() - movedAt.current))'))

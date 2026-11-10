@@ -1,3 +1,22 @@
+## 0.47.77 — 右键和中键按下去就一直按着：右键拖、中键自动滚动
+
+面板把右键和中键都当成「按一下就抬手」：中键在 `pointerdown` 里立刻发一个 `{kind:'click', button:'middle'}`，右键直接从 `pointerdown` 返回，全靠 `contextmenu` 事件补一个合成 click。结果是页面在一次突发里看到按下+抬起，**按钮从来没有保持按下**——右键拖画布、地图、滑杆拖不动，中键自动滚动也起不来。
+
+现在三种按钮走同一条路：`pointerdown` 按名字（`left`/`right`/`middle`）发 `kind:'down'`，`pressed.current` 记住按钮，拖拽中的每个 move 都带 `pressed: true` 和同一个按钮名，`release` 用 `held.button` 发 `kind:'up'`。右键菜单由浏览器从真实按下自己弹出，`onContextMenu` 不再重发合成 click（否则一次右键两个菜单）；只支持单次点击的旧宿主（`press` 为假）仍退回原来的一次 `click`。服务端这条链从 0.47.74 起就接受 `button: 'right'|'middle'`，本轮把拖拽中的按钮掩码补齐：`sidecar.js` 的 `dragMask()` 按 `point.button` 给 2/4，`hover()` 的 move 也带上按钮名——右键拖不再被页面读成左键框选。
+
+PRE/POST（同机真 Chrome，`/tmp/drag.mjs`：自起 `Sidecar`，页面在捕获阶段记 `mousedown/mousemove/mouseup/contextmenu/auxclick`，分别按 0.47.76 与 0.47.77 面板会发出的调用序列驱动）：
+
+| 指标 | PRE | POST |
+| --- | --- | --- |
+| 右键拖拽成立（down → 按住 move → up） | 否 | 是 |
+| 右键拖拽里「按住」的 move 数 | 0 | 2 |
+| 中键拖拽（自动滚动）成立 | 否 | 是 |
+| 中键拖拽里「按住」的 move 数 | 0 | 1 |
+| 右键按下 / 抬起 / 菜单 | 1 / 1 / 1 | 1 / 1 / 1 |
+| 右键菜单次数 | 1 | 1（没有第二个合成 click） |
+| 中键 `auxclick`（新标签页语义） | 1 | 1 |
+| 单元测试 | 405 | 408 |
+
 ## 0.47.76 — 右栏有了一枚控制权胶囊：点一下接管，再点一下交还
 
 右栏的镜像只有「人在动」的六秒宽限，却没有「谁在开」的说法：人在栏里点、滚、打字，agent 只能看到一句 `person using it (N s left)`，而且每六秒重来一次；想让人自己接手一个页面，也没法让 agent 停下来等，它只会不停重试。

@@ -1676,6 +1676,38 @@ test('every picture names its tab and every reclaim names the viewer', () => {
   assert.equal(source.split('page.markGone()').length - 1, 2, 'reaping an idle tab tells its pane too')
 })
 
+test('a right or middle drag names its own button on every move', async () => {
+  const sent = []
+  const page = new SidecarPage({
+    on: () => {},
+    send: async (method, params) => {
+      sent.push({ method, params })
+      return {}
+    },
+  }, 'drag-button')
+  const last = () => sent.filter((one) => one.method === 'Input.dispatchMouseEvent').at(-1)
+  /* A right press that the moves call left would drag a text selection across
+     the page instead of the thing under the hand. */
+  await page.mouse('mousePressed', { x: 100, y: 100, button: 'right', clickCount: 1 })
+  assert.equal(last().params.button, 'right', 'the press names the right button')
+  assert.equal(last().params.buttons, 2, 'and holds it')
+  await page.hover({ x: 140, y: 160, pressed: true, button: 'right' })
+  assert.equal(last().params.buttons, 2, 'a move in the drag holds the right button')
+  assert.equal(last().params.button, 'right', 'and names it')
+  await page.hover({ x: 150, y: 170 })
+  assert.equal(last().params.buttons, 2, 'a move that forgets the flag still carries the held button')
+  await page.mouse('mouseReleased', { x: 150, y: 170, button: 'right', clickCount: 1 })
+  assert.equal(last().params.buttons, 0, 'letting go drops it')
+  /* The middle button autoscrolls: the page only starts it while the button is down. */
+  await page.mouse('mousePressed', { x: 100, y: 100, button: 'middle', clickCount: 1 })
+  assert.equal(last().params.buttons, 4, 'the middle press holds its own bit')
+  await page.hover({ x: 100, y: 140 })
+  assert.equal(last().params.buttons, 4, 'the drag keeps the middle button down')
+  assert.equal(last().params.button, 'middle', 'and names it')
+  await page.mouse('mouseReleased', { x: 100, y: 140, button: 'middle', clickCount: 1 })
+  assert.equal(last().params.buttons, 0, 'the middle button is let go')
+})
+
 test('the keys the hand holds ride with the click, the wheel and the hover', async () => {
   const sent = []
   const page = new SidecarPage({

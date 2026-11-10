@@ -822,7 +822,7 @@ export function apply(ctx) {
         const button = handOfButton(body?.button)
         const act = async () => {
           if (kind === 'hover') {
-            cursor = await page.hover({ x, y, modifiers: Math.max(0, Math.min(15, Math.round(Number(body.modifiers ?? 0)) || 0)), pressed: body.pressed === true })
+            cursor = await page.hover({ x, y, modifiers: Math.max(0, Math.min(15, Math.round(Number(body.modifiers ?? 0)) || 0)), pressed: body.pressed === true, button: handOfButton(body?.button) })
             return true
           }
           /* A press and its release are their own events: the page sees a

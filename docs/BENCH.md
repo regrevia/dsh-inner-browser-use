@@ -1,3 +1,20 @@
+## 右键拖、中键拖：按钮有没有真的按住 — 0.47.77
+
+探针 `/tmp/drag.mjs`：真 Chrome，`data:text/html` 页面上挂一个 600×400 的 `div`，捕获阶段记录 `mousedown/mousemove/mouseup/contextmenu/auxclick`（含 `button` 与 `buttons` 掩码）。PRE 按 0.47.76 面板的序列驱动（右键、中键各发一次合成 `click`，拖拽中的 move 是 `pressed: false`），POST 按 0.47.77 的序列（`down` → 带 `pressed: true, button` 的 `hover` → `up`）。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 右键拖拽成立 | 否 | 是 |
+| 右键拖拽里 `buttons & 2` 的 move | 0 | 2 |
+| 中键拖拽成立 | 否 | 是 |
+| 中键拖拽里 `buttons & 4` 的 move | 0 | 1 |
+| `mousedown` / `mouseup`（右键、中键） | 1 / 1 | 1 / 1 |
+| `contextmenu` 次数 | 1 | 1（真实按下弹出，没有第二个合成 click） |
+| 中键 `auxclick` | 1 | 1（新标签页语义仍在） |
+| 单元测试 | 405 | 408 |
+
+运行：`node /tmp/drag.mjs pre` 与 `node /tmp/drag.mjs post`（各自独立 `Sidecar` 与临时 profile，`finally` 里 `putAway()`）。
+
 ## 谁在开这个镜像 — 0.47.76
 
 探针 `/tmp/held.mjs`：真 Chrome，`file:///tmp/bands.html`，`setViewport(870,1200,2)`、`cast()` 后 `takeOver()` 再 `release()`，每步读 `state().held`、最新帧的 `hold` 与帧数。修复前没有接管这条路（`held` 字段、`/sidecar/control` 都不存在），只能靠人手操作后六秒衰减。

@@ -2574,7 +2574,10 @@ export class SidecarPage {
    */
   dragMask(point) {
     if (this.buttons !== 0) return this.buttons
-    return point?.pressed === true ? 1 : 0
+    if (point?.pressed !== true) return 0
+    /* The mask names the button the hand holds: a right drag that said left
+       would drag a selection across the page instead of the thing under it. */
+    return point?.button === 'right' ? 2 : point?.button === 'middle' ? 4 : 1
   }
 
   async hover(point) {
@@ -2591,7 +2594,7 @@ export class SidecarPage {
       type: 'mouseMoved', // ui-copy-ignore
       x: Math.round(point.x),
       y: Math.round(point.y),
-      button: held ? (this.heldButton === 'none' ? 'left' : this.heldButton) : 'none', // ui-copy-ignore
+      button: held ? (this.heldButton === 'none' ? (point?.button ?? 'left') : this.heldButton) : 'none', // ui-copy-ignore
       buttons: drag, // ui-copy-ignore
       clickCount: 0,
       modifiers: point?.modifiers ?? 0, // ui-copy-ignore

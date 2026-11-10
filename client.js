@@ -1045,39 +1045,47 @@ window.__ModuleLoader__.load({
         const point = event === null || event === undefined ? held : toView(event) ?? held
         /* An app that never learned press and release would swallow both and
            the hand would never click: fall back to the one event it knows. */
-        if (pressOn.current === true) void input({ kind: 'up', button: 'left', clickCount: held.clicks, ...point })
+        if (pressOn.current === true) void input({ kind: 'up', button: held.button ?? 'left', clickCount: held.clicks, ...point })
         /* The second half of a double carries the count, or the page sees two
            single clicks and never opens what it should have opened. */
-        else void input({ kind: 'click', clickCount: held.clicks, ...point })
+        else void input({ kind: 'click', button: held.button ?? 'left', clickCount: held.clicks, ...point })
       }
       const onPointerDown = (event) => {
         touched()
-        /* Only the left button is a press. A middle click is its own click (a
-           link in a new tab, an autoscroll) and the right button is a menu the
-           context menu handler sends; sending either as a left press opened a
-           link in place and started a drag on whatever sat under the hand. */
-        if (event.button === 1) {
-          event.preventDefault()
-          const spot = toView(event)
-          if (spot !== null) void input({ kind: 'click', button: 'middle', ...spot })
-          return
-        }
-        /* A pointer event made by a script may leave the button out; only the
-           buttons the hand can actually press are left alone. */
-        if (event.button !== 0 && event.button !== undefined) return
+        /* A pointer event made by a script may leave the button out: that is
+           the left one. A button the hand cannot press is not a press. */
+        const button = event.button === 2 ? 'right' : event.button === 1 ? 'middle' : event.button === 0 || event.button === undefined ? 'left' : ''
+        if (button === '') return
         const point = toView(event)
         if (point === null) return
-        const field = ime.current
-        if (field !== null && typeof field.focus === 'function') field.focus()
-        else {
-          const el = stageRef.current
-          if (el !== null && typeof el.focus === 'function') el.focus()
+        /* The right and the middle button are presses too: a right press holds
+           the menu open and drags whatever is under the hand (a canvas, a map,
+           a trim handle), a middle press autoscrolls. Sending them as one click
+           gave the page a button it had already let go of, so the drag in
+           between went nowhere. A host too old for press and release still
+           gets the one click it knows. */
+        if (button !== 'left') {
+          event.preventDefault()
+          if (pressOn.current !== true) {
+            void input({ kind: 'click', button, ...point })
+            return
+          }
+        }
+        /* Only the left button takes the focus: a right press on the picture
+           must not pull the caret out of a field on the page. */
+        if (button === 'left') {
+          const field = ime.current
+          if (field !== null && typeof field.focus === 'function') field.focus()
+          else {
+            const el = stageRef.current
+            if (el !== null && typeof el.focus === 'function') el.focus()
+          }
         }
         const now = Date.now()
         const run = clickRun.current
         const clicks = now - run.at < 400 ? Math.min(3, run.count + 1) : 1
         clickRun.current = { at: now, count: clicks }
-        pressed.current = { ...point, clicks }
+        pressed.current = { ...point, clicks, button }
         /* Capture keeps the moves coming once the hand leaves the picture, so a
            drag that starts on the page still ends on the page. */
         const el = event.currentTarget
@@ -1088,7 +1096,7 @@ window.__ModuleLoader__.load({
             /* a pane that cannot capture still drags inside its own picture */
           }
         }
-        if (pressOn.current === true) void input({ kind: 'down', button: 'left', clickCount: clicks, ...point })
+        if (pressOn.current === true) void input({ kind: 'down', button, clickCount: clicks, ...point })
       }
       const movedAt = React.useRef(0)
       const moving = React.useRef(null)
@@ -1121,16 +1129,19 @@ window.__ModuleLoader__.load({
            only follows what the agent itself did. */
         /* While the button is down every move carries it: a move without it is
            a hover, and a slider that only ever sees hovers never moves. */
-        moving.current = pressed.current === null ? point : { ...point, pressed: true }
+        moving.current = pressed.current === null ? point : { ...point, pressed: true, button: pressed.current.button ?? 'left' }
         queue()
       }
-      /* The right button is a menu, not a drag: one click of that button where
-         the hand is, and the page draws its own menu there. Until the app says
-         it takes a button, the browser's own menu is left alone. */
+      /* A right press already made the menu: the button went down over the
+         page, the browser raises the menu at its own moment, and the press is
+         still down for whatever the hand drags. Only a host that predates press
+         and release needs this click, or the page would see two menus. */
       const onContextMenu = (event) => {
         touched()
-        if (pressOn.current !== true) return
-        event.preventDefault()
+        if (pressOn.current === true) {
+          event.preventDefault()
+          return
+        }
         const point = toView(event)
         if (point === null) return
         void input({ kind: 'click', button: 'right', ...point })

@@ -326,6 +326,39 @@ test('a picture smaller than its box sends the point it is drawn at', async () =
   assert.equal(body.y, 800)
 })
 
+test('a right press stays down while the hand drags, and raises one menu', async () => {
+  const pane = mount()
+  await pane.settle()
+  pane.frame({ jpeg: 'AA', w: 3000, h: 1600, target: 'tab-1' })
+  await pane.settle()
+  pane.reset()
+
+  const stage = pane.find('dshib-side-stage')
+  const at = (x, y, extra = {}) => ({ clientX: x, clientY: y, pointerId: 1, currentTarget: pane.nodes.stage, preventDefault() {}, ...extra })
+  stage.props.onPointerDown(at(450, 600, { button: 2, buttons: 2 }))
+  await pane.settle()
+  stage.props.onPointerMove(at(500, 620, { button: 2, buttons: 2 }))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  /* The browser raises the menu from the press itself: the pane must not send
+     a second right click on top of it. */
+  stage.props.onContextMenu(at(500, 620))
+  await pane.settle()
+  stage.props.onPointerUp(at(500, 620, { button: 2, buttons: 0 }))
+  await pane.settle()
+
+  const bodies = pane.input()
+  const down = bodies.find((body) => body.kind === 'down')
+  assert.ok(down !== undefined, 'the right press reached the page')
+  assert.equal(down.button, 'right', 'as the right button')
+  const moves = bodies.filter((body) => body.kind === 'hover' && body.pressed === true)
+  assert.ok(moves.length > 0, 'the move while the button was down is a drag')
+  assert.equal(moves.at(-1).button, 'right', 'and it carries the right button')
+  const up = bodies.at(-1)
+  assert.equal(up.kind, 'up', 'the release ends the press')
+  assert.equal(up.button, 'right', 'with the button the press took')
+  assert.equal(bodies.filter((body) => body.button === 'right' && body.kind === 'click').length, 0, 'no second right click for the menu')
+})
+
 test('the same point in the column maps the same way at any column width', async () => {
   const wide = mount({ stage: { left: 0, top: 0, width: 900, height: 1200 } })
   const narrow = mount({ stage: { left: 0, top: 0, width: 450, height: 1200 } })
