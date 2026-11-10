@@ -330,6 +330,16 @@ import { keyEvent, sidecarTools, sessionScope, workScope } from './tools.js?v=1'
  * @param {any} asked - the count the pane sent.
  * @returns {number[]} one count per click.
  */
+/**
+ * Which button the hand used. All three are the hand's: the middle one opens a
+ * link in a new tab, and calling it left opened the page in place instead.
+ */
+export function handOfButton(asked) {
+  if (asked === 'right') return 'right'
+  if (asked === 'middle') return 'middle'
+  return 'left'
+}
+
 export function clickCountsFor(double, asked) {
   if (double === true) return [1, 2]
   return [Math.max(1, Math.min(3, Math.round(Number(asked ?? 1)) || 1))]
@@ -786,7 +796,7 @@ export function apply(ctx) {
         let cursor
         /* The right button arrives with the click that asks for a menu; every
            other press is the left one. */
-        const button = body?.button === 'right' ? 'right' : 'left'
+        const button = handOfButton(body?.button)
         const act = async () => {
           if (kind === 'hover') {
             cursor = await page.hover({ x, y, modifiers: Math.max(0, Math.min(15, Math.round(Number(body.modifiers ?? 0)) || 0)), pressed: body.pressed === true })

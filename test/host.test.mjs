@@ -353,6 +353,15 @@ test('the built-in browser routes are gone', async () => {
   }
 })
 
+test('a middle click stays a middle click, and nothing else does', async () => {
+  const { handOfButton } = await import('../index.js')
+  assert.equal(handOfButton('middle'), 'middle')
+  assert.equal(handOfButton('right'), 'right')
+  assert.equal(handOfButton('left'), 'left')
+  assert.equal(handOfButton(undefined), 'left')
+  assert.equal(handOfButton('nonsense'), 'left')
+})
+
 test('a double click reaches the page as a first click and a second', async () => {
   const { clickCountsFor } = await import('../index.js')
   /* The count-2 click twice: every dblclick handler ran twice, and no click

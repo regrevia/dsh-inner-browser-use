@@ -1,3 +1,18 @@
+## 右键先按一下左键、中键变左键 — 0.47.74
+
+探针 `/tmp/btn.mjs`：真 Chrome，页面在捕获阶段记录 `mousedown/mouseup/click/contextmenu/auxclick` 的 `button` 与 `detail`，按右栏当前发出的序列注入（PRE：任何 `pointerdown` 都是左键按；POST：只有左键是按住）。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 右键的按键序列 | `mousedown:0:1, mousedown:2:1, contextmenu:2:0, mouseup:2:1, auxclick:2:1, mouseup:0:0` | `mousedown:2:1, contextmenu:2:0, mouseup:2:1, auxclick:2:1` |
+| 右键混入的左键按下 | 有（1 次） | 无 |
+| 中键序列 | `mousedown:0:1, mouseup:0:1, click:0:1` | `mousedown:1:1, mouseup:1:1, auxclick:1:1` |
+| 中键触达的左键 `click` | 1 | 0 |
+| 中键触达的 `auxclick` | 0 | 1（新标签页语义） |
+| 单元测试 | 395 | 397 |
+
+运行：`node /tmp/btn.mjs pre` / `node /tmp/btn.mjs post`（各自起独立 `Sidecar`，页面用 `data:` URL，不碰右栏正在用的浏览器）。
+
 ## 连点三下选不中一行 — 0.47.73
 
 同一条本地页（`<p>` 里一行 40 px 的 `alpha beta gamma delta`），同一个探针：三次按下/松开，间隔小于 400 ms，然后读 `String(getSelection())`。PRE 是 0.47.72 发出的计数（1、2、2），POST 是修复后的计数（1、2、3）。

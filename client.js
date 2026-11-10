@@ -1015,6 +1015,19 @@ window.__ModuleLoader__.load({
       }
       const onPointerDown = (event) => {
         touched()
+        /* Only the left button is a press. A middle click is its own click (a
+           link in a new tab, an autoscroll) and the right button is a menu the
+           context menu handler sends; sending either as a left press opened a
+           link in place and started a drag on whatever sat under the hand. */
+        if (event.button === 1) {
+          event.preventDefault()
+          const spot = toView(event)
+          if (spot !== null) void input({ kind: 'click', button: 'middle', ...spot })
+          return
+        }
+        /* A pointer event made by a script may leave the button out; only the
+           buttons the hand can actually press are left alone. */
+        if (event.button !== 0 && event.button !== undefined) return
         const point = toView(event)
         if (point === null) return
         const field = ime.current

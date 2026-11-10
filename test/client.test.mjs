@@ -574,6 +574,13 @@ test('a press stays down until the hand lets go, so a drag can drag', () => {
   assert.ok(source.includes('clickCount: clicks'), 'the second press of a double says it is the second')
 })
 
+test('a right or middle button is not sent as a left press', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('if (event.button === 1) {'), 'the middle button is its own click')
+  assert.ok(source.includes("kind: 'click', button: 'middle'"), 'a middle click reaches the page as middle')
+  assert.ok(source.includes('if (event.button !== 0 && event.button !== undefined) return'), 'the right button waits for its own menu')
+})
+
 test('a third quick click counts three, so a line can be selected', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* The gap alone only ever said two: three quick clicks left the count at 2,
