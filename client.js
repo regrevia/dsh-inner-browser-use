@@ -983,7 +983,11 @@ window.__ModuleLoader__.load({
          until the hand lets go, so a slider drags, text selects and a canvas
          draws. Two presses close together are the two halves of a double. */
       const pressed = React.useRef(null)
-      const lastPress = React.useRef(0)
+      /* The run a quick hand is in. The gap alone could only ever say "two",
+         so a third press close behind the second went out as another two and
+         a triple click never reached the page: the word stayed selected where
+         a line should have been. Each press inside the window counts one up. */
+      const clickRun = React.useRef({ at: 0, count: 0 })
       /* Press and release are a newer ask than click: an app older than them
          takes the ask, says yes, and does nothing. The pane starts out not
          knowing, and the state poll tells it what this one understands. */
@@ -1020,8 +1024,9 @@ window.__ModuleLoader__.load({
           if (el !== null && typeof el.focus === 'function') el.focus()
         }
         const now = Date.now()
-        const clicks = now - lastPress.current < 400 && pressed.current === null ? 2 : 1
-        lastPress.current = now
+        const run = clickRun.current
+        const clicks = now - run.at < 400 ? Math.min(3, run.count + 1) : 1
+        clickRun.current = { at: now, count: clicks }
         pressed.current = { ...point, clicks }
         /* Capture keeps the moves coming once the hand leaves the picture, so a
            drag that starts on the page still ends on the page. */

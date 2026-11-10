@@ -320,6 +320,21 @@ import { keyEvent, sidecarTools, sessionScope, workScope } from './tools.js?v=1'
  * @param {any} execution - tool execution context.
  * @returns {string} absolute path, or empty when nothing was said.
  */
+/**
+ * The counts one click ask is made of. A double click is a click that counts
+ * once and a second that counts twice: sending a count-2 click twice made a
+ * page's double-click handler run twice, and left the click a person expects
+ * to see first (detail 1) out of the stream entirely.
+ *
+ * @param {boolean} double - the ask was a double click.
+ * @param {any} asked - the count the pane sent.
+ * @returns {number[]} one count per click.
+ */
+export function clickCountsFor(double, asked) {
+  if (double === true) return [1, 2]
+  return [Math.max(1, Math.min(3, Math.round(Number(asked ?? 1)) || 1))]
+}
+
 export function cwdOf(execution) {
   try {
     const agent = execution?.agent
@@ -790,15 +805,14 @@ export function apply(ctx) {
           if (kind === 'click') {
             /* A hand that clicked twice quickly says so in the count it sends;
                two single clicks would never reach a page's double click. */
-            const clickCount = body.double === true ? 2 : Math.max(1, Math.min(3, Number(body.clickCount ?? 1)))
             const moved = await page.mouse('mouseMoved', { x, y, modifiers })
-            const pressed = await page.mouse('mousePressed', { x, y, button, modifiers, clickCount })
-            const released = await page.mouse('mouseReleased', { x, y, button, modifiers, clickCount })
-            if (body.double === true) {
-              await page.mouse('mousePressed', { x, y, button, clickCount: 2 })
-              await page.mouse('mouseReleased', { x, y, button, clickCount: 2 })
+            let took = moved !== false
+            for (const clickCount of clickCountsFor(body.double === true, body.clickCount)) {
+              const pressed = await page.mouse('mousePressed', { x, y, button, modifiers, clickCount })
+              const released = await page.mouse('mouseReleased', { x, y, button, modifiers, clickCount })
+              took = took && pressed !== false && released !== false
             }
-            return moved !== false && pressed !== false && released !== false
+            return took
           }
           if (kind === 'wheel') return (await page.wheel({ x, y, modifiers, dx: Number(body.dx ?? 0), dy: Number(body.dy ?? 0) })) !== false
           if (kind === 'text') return (await page.insertText(String(body.text ?? ''))) !== false

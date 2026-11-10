@@ -574,6 +574,15 @@ test('a press stays down until the hand lets go, so a drag can drag', () => {
   assert.ok(source.includes('clickCount: clicks'), 'the second press of a double says it is the second')
 })
 
+test('a third quick click counts three, so a line can be selected', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  /* The gap alone only ever said two: three quick clicks left the count at 2,
+     the word stayed selected where a triple click should select the line. */
+  assert.ok(source.includes('const clickRun = React.useRef({ at: 0, count: 0 })'), 'a run of clicks is counted')
+  assert.ok(source.includes('const clicks = now - run.at < 400 ? Math.min(3, run.count + 1) : 1'), 'each press in the run counts one up')
+  assert.ok(source.includes('clickRun.current = { at: now, count: clicks }'), 'the run carries to the next press')
+})
+
 test('a pane served by a host that predates press and release still clicks', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   /* A host loaded before press and release answered the ask and dropped it, so

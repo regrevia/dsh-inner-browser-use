@@ -353,6 +353,19 @@ test('the built-in browser routes are gone', async () => {
   }
 })
 
+test('a double click reaches the page as a first click and a second', async () => {
+  const { clickCountsFor } = await import('../index.js')
+  /* The count-2 click twice: every dblclick handler ran twice, and no click
+     ever said detail 1. */
+  assert.deepEqual(clickCountsFor(true, 1), [1, 2])
+  assert.deepEqual(clickCountsFor(true, 2), [1, 2], 'the ask carries one double, not two')
+  /* A hand that sends its own count keeps it, inside what the browser counts. */
+  assert.deepEqual(clickCountsFor(false, 3), [3])
+  assert.deepEqual(clickCountsFor(false, 9), [3])
+  assert.deepEqual(clickCountsFor(false, 0), [1])
+  assert.deepEqual(clickCountsFor(false, undefined), [1])
+})
+
 test('a malformed frame is refused before the browser is touched', async () => {
   for (const path of ['/sidecar/input', '/sidecar/nav']) {
     const response = await call(path, { method: 'POST', body: 'not json' })
