@@ -1,3 +1,15 @@
+## iframe 里的图：不再回答「页面上没有图」 — 0.47.82
+
+探针 `/tmp/frame82.mjs`：本机 HTTP 服务给一张外壳页，页面里是同源 `<iframe>`，框内一张 300×200 红底白块的 canvas。`readPage({mode:'text'})` 确认读页已经数到框；再直接调 `pictures()`（`browser_grab` 的唯一取图入口）看有没有图、多大的载荷、以及有没有标出来源。PRE 跑 0.47.81 工作树。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| `pictures()` 返回 | `[]` → 工具回 `There is no picture on the page.` | 1 张，PNG 2826 字节，`frame: true` |
+| 跨源 iframe | — | 跳过（`contentDocument` 为 `null`），不抛错 |
+| 主文档里有图（回归对照，`/tmp/taint81.mjs`） | 2794 字节 | 2794 字节，不变 |
+| 读一次 | 21 ms | 23 ms |
+| 全量单测 | 419 | 420 |
+
 ## 没读到的图不许编：跨站像素与「颜色很少」 — 0.47.81
 
 探针 `/tmp/taint81.mjs`：一个本地 HTTP 服务，页面走 `127.0.0.1`、图片走 `localhost`（端口相同、主机不同，即不同源）。页面把这张纯红图 `drawImage` 进 canvas 后 `toDataURL` 必然抛异常——就是真实站点里图表库、地图、验证码画布的常态。`readPage({mode:'text'})` 看 `picture` 与渲染句，再直接调 `pictures()` 看 `browser_grab` 拿到的载荷与原因。PRE 跑 0.47.80 工作树。

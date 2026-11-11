@@ -171,10 +171,7 @@ export function snapshot(mode, budget, max) {
   }
   const each = (fn) => {
     for (const root of roots) {
-      for (const el of root.querySelectorAll(reg.selector)) {
-        if (halt) return
-        fn(el)
-      }
+      for (const el of root.querySelectorAll(reg.selector)) fn(el)
     }
   }
   const role = (el) => {
@@ -192,7 +189,6 @@ export function snapshot(mode, budget, max) {
   }
   const controls = []
   const seen = new Set()
-  let halt = false
   let total = 0
   let described = 0
   /* Filtering is for what the reader is shown, never for what can be acted on:
@@ -681,9 +677,29 @@ export function pictures(ref, count) {
     if (b.width < 8 || b.height < 8) return
     const s = getComputedStyle(el)
     if (s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) < 0.05) return
-    picked.push({ el, kind, w, h, area: w * h })
+    picked.push({ el, kind, w, h, area: w * h, frame: el.ownerDocument !== document })
   }
-  const roots = where ? [where, ...where.querySelectorAll('*')] : [document, ...document.querySelectorAll('*')]
+  /* A dashboard often draws its chart inside a frame of the same site, and a
+     picture there is as real as any other: until now browser_grab called that
+     page empty. Frames of other sites are not ours to read and are skipped. */
+  const docs = [document]
+  for (const frame of document.querySelectorAll('iframe,frame')) {
+    if (docs.length >= 6) break
+    try {
+      const inside = frame.contentDocument
+      if (inside !== null && inside !== undefined) docs.push(inside)
+    } catch {}
+  }
+  const roots = []
+  for (const doc of docs) {
+    /* A ref that is not in the registry leaves this undefined, not null. */
+    if (where === null || where === undefined) {
+      roots.push(doc, ...doc.querySelectorAll('*'))
+      continue
+    }
+    if (where.ownerDocument !== doc) continue
+    roots.push(where, ...where.querySelectorAll('*'))
+  }
   for (const node of roots) {
     if (node === document || node === where) continue
     const tag = node.tagName
@@ -774,7 +790,7 @@ export function pictures(ref, count) {
       why = item.kind === 'canvas' ? 'its pixels come from another site, so they cannot be read from this page' : 'the page did not hand it over'
     }
     const feel = data ? await look(data) : null
-    out.push({ kind: item.kind, width: item.w, height: item.h, type, data, why, colors: feel?.colors ?? 0, flat: feel?.flat ?? 0 })
+    out.push({ kind: item.kind, width: item.w, height: item.h, type, data, why, frame: item.frame === true, colors: feel?.colors ?? 0, flat: feel?.flat ?? 0 })
   }
   return JSON.stringify({ pictures: out })
 })()`

@@ -1,3 +1,22 @@
+## 0.47.82 — 画在 iframe 里的图，也是这一页的图
+
+仪表盘、地图、统计图十有八九把画布塞在同源 iframe 里。读页早就数得到这类框（`1 embedded frame(s)`、框里的画布还带编号），可 `browser_grab` 只在主文档里找图：整页只有一张 300×200 的图，它回 **`There is no picture on the page.`**——读页刚说「用 browser_grab 取图」，取图工具说没有图，agent 只能去截图然后看图。
+
+`pictures()` 改成按文档走：主文档 + 同源 iframe（最多 6 个文档，跨源 `contentDocument` 为 `null` 直接跳过，不抛错），每个命中都带 `frame` 标记；`browser_grab` 在文件名后补一句 `(inside an embedded frame)`，免得人去页面上找一张其实在框里的图。
+
+顺手修掉一个只有这条新路径会踩到的坑：ref 不在注册表里时 `where` 是 `undefined` 而不是 `null`，新加的空值判断用 `=== null` 会直接抛 `Cannot read properties of undefined (reading 'ownerDocument')`；探针第一次跑就把它抓出来了，改成两者都认。
+
+PRE/POST（真 Chrome，探针 `/tmp/frame82.mjs`，本机 HTTP 服务提供外壳页 + 同源 iframe，iframe 里一张 300×200 红底白块 canvas；PRE 跑 0.47.81 工作树）：
+
+| 项 | PRE 0.47.81 | POST 0.47.82 |
+| --- | --- | --- |
+| `browser_grab` 拿到的图 | 0 张，`There is no picture on the page.` | 1 张，PNG 2826 字节 |
+| 是否标出来源 | — | `frame: true`，行尾 `(inside an embedded frame)` |
+| 读页看到的东西 | `1 embedded frame(s)`、框内画布有编号 | 不变 |
+| 跨源 iframe | — | `contentDocument === null`，跳过且不报错 |
+| 读一次 | 21 ms | 23 ms |
+| 单元测试 | 419 | 420 |
+
 ## 0.47.81 — 没读到的图，不许写成「颜色很少」
 
 页面用另一个站点的图片画到 canvas 上（图表库、地图、验证码很常见），canvas 就被「污染」了：`toDataURL`、`drawImage`+`getImageData` 全部抛异常。读页的采样兜底 `catch {}` 把异常吞掉，留下 `colors: 0, flat: 0`，渲染时按「颜色数 ≤ 3」判成 **`picture 300x200 a few colours`**——一张纯红的图被描述成「颜色很少」，模型据此以为看到了一张近乎空白的画。`browser_grab` 同一条路：抓不到像素，只回一句「could not be saved」，不说为什么，也不说下一步。

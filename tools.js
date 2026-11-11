@@ -3740,7 +3740,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const flat = Number(item.flat) || 0
           const colors = Number(item.colors) || 0
           const look = flat >= 0.9 ? 'mostly one colour' : colors <= 3 ? 'a few colours' : 'a picture with detail'
-          rows.push(`${file} ${size} ${look}`)
+          /* Saying a picture came out of a frame stops the reader hunting for
+             it on the page itself. */
+          rows.push(`${file} ${size} ${look}${item.frame === true ? ' (inside an embedded frame)' : ''}`)
         }
         if (rows.length === 0) {
           return list.length === 0 ? 'There is no picture on the page.' : 'That picture could not be saved.'

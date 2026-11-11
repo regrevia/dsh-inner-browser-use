@@ -214,3 +214,18 @@ test('a surface that hands back nothing says why, and points at the screen', () 
   assert.match(tools, /skipped \$\{size\}: \$\{why === '' \? 'that surface holds no picture/)
   assert.match(tools, /browser_shot shows it on screen/)
 })
+
+test('a picture inside a frame of the same site is still the page\'s picture', () => {
+  /* A dashboard draws its chart inside an iframe. The read already counts the
+     frame; browser_grab used to answer "There is no picture on the page." */
+  const code = pictures(undefined, 1)
+  assert.match(code, /document\.querySelectorAll\('iframe,frame'\)/)
+  assert.match(code, /frame\.contentDocument/)
+  assert.match(code, /frame: el\.ownerDocument !== document/)
+  assert.match(code, /frame: item\.frame === true/)
+  /* The registry may answer undefined for a ref it does not hold: walking with
+     a bare null check threw before it ever looked at the frame. */
+  assert.match(code, /where === null \|\| where === undefined/)
+  const tools = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /\(inside an embedded frame\)/)
+})
