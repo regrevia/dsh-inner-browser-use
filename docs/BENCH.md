@@ -1,3 +1,16 @@
+## 读不到的画：从屏幕等，不从字符串等 — 0.47.83
+
+探针 `/tmp/wait83.mjs`：本机 HTTP 服务，页面在 `127.0.0.1`，图片走 `localhost`（同端口、不同主机 → 不同源），`drawImage` 后画布被污染，然后每 120 ms 在红蓝之间 `fillRect` 重绘；另有 `/still.html`（只画一次）和 `/empty.html`（纯文字，没有 canvas/video）。PRE 直接重放 0.47.82 `tools.js` 里那段内联签名（逐字复制），POST 调 0.47.83 新增的 `SidecarPage#pictureSettled`。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 动画中的污染画布 | `settled`，**263 ms**（谎报） | `kept changing`，1672 ms |
+| 同一工具对「没动」的判断依据 | 页内恒定 `unreadable` 字符串 | 屏幕截图 sha1，连续 400 ms 一致 |
+| 静止的污染画布 | — | `settled`，585 ms，`fromScreen: 1` |
+| 纯文字页 | `kept changing for 1500 ms`，1527 ms | `no picture to wait for`，3 ms |
+| 采样间隔 / 静止判定窗 | 250 ms / 一次相等 | 150 ms / 400 ms |
+| 全量单测 | 420 | 424 |
+
 ## iframe 里的图：不再回答「页面上没有图」 — 0.47.82
 
 探针 `/tmp/frame82.mjs`：本机 HTTP 服务给一张外壳页，页面里是同源 `<iframe>`，框内一张 300×200 红底白块的 canvas。`readPage({mode:'text'})` 确认读页已经数到框；再直接调 `pictures()`（`browser_grab` 的唯一取图入口）看有没有图、多大的载荷、以及有没有标出来源。PRE 跑 0.47.81 工作树。

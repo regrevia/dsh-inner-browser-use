@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { oncePerPage, withoutSeenAddress, pageMark, dropSameFocus } from '../tools.js?v=1'
 
 import { settle, outcome } from '../tools.js'
+import { SidecarPage } from '../sidecar.js'
 
 /** A page that answers every Runtime.evaluate with the same readyState. */
 function fakePage({ ready, href, navStarted }) {
@@ -171,4 +173,61 @@ test('settle waits until the page text stops growing', async () => {
   const landed = await settle(page, 5_000)
   assert.equal(landed, 'https://a.example/s')
   assert.ok(at >= 3, `looked ${at} times`)
+})
+
+/** A page whose pictures refuse to be read from inside: only the screen knows. */
+function fakeSurface({ boxes, shot }) {
+  const methods = []
+  let taken = 0
+  return {
+    methods,
+    cdp: {
+      send: async (method) => {
+        methods.push(method)
+        if (method === 'Runtime.evaluate') return { result: { value: JSON.stringify({ seen: [], blind: boxes }) } }
+        if (method === 'Page.captureScreenshot') {
+          taken += 1
+          return { data: typeof shot === 'function' ? shot(taken) : shot }
+        }
+        return {}
+      },
+    },
+  }
+}
+
+test('a picture the page cannot read is watched on the screen, not trusted', async () => {
+  /* Its pixels belong to another site, so the page answers "unreadable" every
+     time. Untrusted silence used to read as a still picture. */
+  const page = fakeSurface({ boxes: [[10, 20, 320, 200]], shot: (n) => (n % 2 === 0 ? 'red' : 'blue') })
+  const done = await SidecarPage.prototype.pictureSettled.call(page, 900)
+  assert.equal(done.settled, false)
+  assert.equal(done.fromScreen, 1)
+  assert.ok(page.methods.includes('Page.captureScreenshot'), 'the screen was never read')
+})
+
+test('a picture read from the screen still settles when it holds still', async () => {
+  const page = fakeSurface({ boxes: [[10, 20, 320, 200]], shot: 'same' })
+  const done = await SidecarPage.prototype.pictureSettled.call(page, 1500)
+  assert.equal(done.settled, true)
+  assert.equal(done.surfaces, 1)
+  assert.equal(done.fromScreen, 1)
+})
+
+test('a page with no picture is not reported as changing', async () => {
+  const page = fakeSurface({ boxes: [], shot: 'same' })
+  const done = await SidecarPage.prototype.pictureSettled.call(page, 1500)
+  assert.equal(done.settled, true)
+  assert.equal(done.surfaces, 0)
+  /* Nothing to watch means no waiting: the whole call is one evaluate. */
+  assert.deepEqual(page.methods, ['Runtime.evaluate'])
+})
+
+test('the wait tool asks the page for its pictures instead of trusting a blind hash', () => {
+  const tool = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
+  const side = readFileSync(new URL('../sidecar.js', import.meta.url), 'utf8')
+  assert.match(tool, /const done = await page\.pictureSettled\(timeout\)/)
+  assert.ok(tool.includes('read from the screen'), 'a screen-read surface should say so')
+  assert.match(side, /Page\.captureScreenshot/, 'the screen is the fallback for a surface the page hides')
+  assert.ok(side.includes('const QUIET_MS = 400'), 'one equal sample is not a still picture')
+  assert.equal(/const signature = `/.test(tool), false, 'the blind inline signature is gone')
 })

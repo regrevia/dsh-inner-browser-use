@@ -6,6 +6,7 @@
  * shows it as a screencast, so the tab is a viewer, not the browser.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -2581,6 +2582,101 @@ export class SidecarPage {
    * @param {{x: number, y: number}} point - where to look, in viewport pixels.
    * @returns {Promise<string>} a CSS cursor keyword the Client can apply.
    */
+  /**
+   * Wait until the pictures on the page stop changing.
+   *
+   * A canvas paints without the DOM changing, so "idle" never arrives. The page
+   * can fingerprint its own pixels, but a surface that took its content from
+   * another site refuses to be read from inside, and that silence looked
+   * exactly like a still picture: this used to answer "settled" while a chart
+   * was animating. The screen still shows what such a surface holds, so those
+   * are fingerprinted from the screen instead of being trusted.
+   *
+   * @param {number} timeout - how long to watch, in milliseconds.
+   * @returns {Promise<{settled: boolean, surfaces: number, fromScreen: number, ms: number}>} what happened.
+   */
+  async pictureSettled(timeout) {
+    const probe = `(() => {
+      const seen = []
+      const blind = []
+      const walk = (doc) => {
+        for (const one of doc.querySelectorAll('canvas, video')) {
+          try {
+            const w = Math.round(one.width || one.clientWidth || 0)
+            const h = Math.round(one.height || one.clientHeight || 0)
+            let sig = 0
+            if (one.tagName === 'CANVAS') {
+              const board = document.createElement('canvas')
+              board.width = 16
+              board.height = 16
+              const ctx = board.getContext('2d')
+              ctx.drawImage(one, 0, 0, 16, 16)
+              const px = ctx.getImageData(0, 0, 16, 16).data
+              for (let i = 0; i < px.length; i += 4) sig = (sig * 31 + px[i] + px[i + 1] * 3 + px[i + 2] * 7) % 1000003
+            } else sig = Math.round(Number(one.currentTime || 0) * 10)
+            seen.push(w + 'x' + h + ':' + sig)
+          } catch (error) {
+            const box = one.getBoundingClientRect()
+            if (box.width >= 8 && box.height >= 8) {
+              const view = doc.defaultView
+              blind.push([Math.round(box.left + (view ? view.scrollX : 0)), Math.round(box.top + (view ? view.scrollY : 0)), Math.round(box.width), Math.round(box.height)])
+            } else seen.push('unreadable')
+          }
+        }
+        for (const frame of doc.querySelectorAll('iframe')) {
+          try { if (frame.contentDocument) walk(frame.contentDocument) } catch (error) { /* another origin */ }
+        }
+      }
+      walk(document)
+      return JSON.stringify({ seen: seen, blind: blind })
+    })()`
+    const started = Date.now()
+    /* A surface that toggles can look still for one sample: a picture counts as
+       settled only after it held the same fingerprint for a quarter of a second,
+       sampled often enough to see a flicker of a tenth of a second. */
+    const SAMPLE_MS = 150
+    const QUIET_MS = 400
+    let last = ''
+    let since = started
+    let surfaces = 0
+    let fromScreen = 0
+    while (Date.now() - started < timeout) {
+      let said = { seen: [], blind: [] }
+      try {
+        const answer = await this.cdp.send('Runtime.evaluate', { expression: probe, returnByValue: true })
+        said = JSON.parse(String(answer.result?.value ?? '{}'))
+      } catch (error) { /* a page mid-navigation has nothing to fingerprint */ }
+      const parts = Array.isArray(said.seen) ? said.seen.map(String) : []
+      const blind = Array.isArray(said.blind) ? said.blind : []
+      fromScreen = blind.length
+      for (const box of blind.slice(0, 3)) {
+        try {
+          const shot = await this.cdp.send('Page.captureScreenshot', {
+            format: 'jpeg',
+            quality: 55,
+            fromSurface: true,
+            captureBeyondViewport: true,
+            clip: { x: box[0], y: box[1], width: box[2], height: box[3], scale: 0.3 },
+          })
+          parts.push('screen:' + createHash('sha1').update(String(shot.data ?? '')).digest('hex'))
+        } catch (error) { parts.push('screen:?') }
+      }
+      surfaces = parts.length
+      /* Nothing to watch: saying "kept changing" for the whole timeout made a
+         page without pictures look busy. */
+      if (surfaces === 0) return { settled: true, surfaces: 0, fromScreen: 0, ms: Date.now() - started }
+      const now = parts.join('|')
+      if (now !== last) {
+        last = now
+        since = Date.now()
+      } else if (Date.now() - since >= QUIET_MS) {
+        return { settled: true, surfaces, fromScreen, ms: Date.now() - started }
+      }
+      await wait(SAMPLE_MS)
+    }
+    return { settled: false, surfaces, fromScreen, ms: Date.now() - started }
+  }
+
   async cursorAt(point) {
     const expression = `(() => {
       const el = document.elementFromPoint(${Math.round(point.x)}, ${Math.round(point.y)})

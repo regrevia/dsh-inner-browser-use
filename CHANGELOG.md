@@ -1,3 +1,24 @@
+## 0.47.83 — 「等图不动」不许把读不到的画当成不动
+
+`browser_wait {picture:true}` 的手法是：每 250 ms 取一次画布指纹，两次一样就算「停了」。可画布一旦被另一个站点的像素污染（图表库、地图、验证码的常态），`getImageData` 必然抛异常，旧代码 `catch { out.push('unreadable') }` 把异常变成一个固定字符串——**每次都一样**。于是同一页上，画布每 120 ms 在红蓝之间重绘，截图哈希每次都不同，这个工具却在 **263 ms** 就宣布 `the picture settled: 1 surface(s) stopped changing`。agent 据此认为图表加载完了，读到的是一帧随机颜色。
+
+两条路一起修：
+
+1. **读不到的画，从屏幕读。** 页内指纹只负责「读得懂的画面」；抛异常的画布改成上报它在文档里的位置，循环里用 `Page.captureScreenshot` 按这块区域截图、对字节做 sha1，和页内指纹拼进同一个签名。屏幕上的东西骗不了人。返回值多一个 `fromScreen`，工具话术补 `(1 of them read from the screen)`，让「等到了」这句话可核对。
+2. **一个采样相等不算停。** 第一次修完就露了新问题：画布 120 ms 一翻，250 ms 的采样间隔偶尔两次落在同一相位，循环仍会误判 settled（POST 首测 647 ms 就停了）。改成每 **150 ms** 采一次、要求同一指纹连续保持 **400 ms** 才算停。同一张动画图现在会老老实实报 `kept changing`。
+
+顺带修掉一条永远走不到的分支：页面上一张 canvas/video 都没有时，旧循环的 `last !== ''` 条件恒为假，于是空等满 `timeout`（默认 8 s）之后回答 `the picture kept changing for 8000 ms`——一页纯文字被说成一直在变。现在没有可等的画面就直接回 `the page shows no picture to wait for`，**1–3 ms**。
+
+PRE/POST（真 Chrome，探针 `/tmp/wait83.mjs`，本机 HTTP 服务：`127.0.0.1` 页面 + `localhost` 图片制造跨源污染；PRE 用 0.47.82 里内联的那段签名逐字重放）：
+
+| 项 | PRE 0.47.82 | POST 0.47.83 |
+| --- | --- | --- |
+| 污染的画布每 120 ms 重绘 | `settled: 1 surface(s) stopped changing`，**263 ms** | `the picture kept changing for 1500 ms`，1672 ms（如实） |
+| 同一张画布画完就不动 | — | `settled`，585 ms，`fromScreen: 1` |
+| 纯文字页（没有 canvas/video） | `the picture kept changing for 1500 ms`，1527 ms | `the page shows no picture to wait for`，3 ms |
+| 页内指纹是否还信「unreadable」 | 是（死字符串） | 否，改从屏幕取 sha1 |
+| 单元测试 | 420 | 424 |
+
 ## 0.47.82 — 画在 iframe 里的图，也是这一页的图
 
 仪表盘、地图、统计图十有八九把画布塞在同源 iframe 里。读页早就数得到这类框（`1 embedded frame(s)`、框里的画布还带编号），可 `browser_grab` 只在主文档里找图：整页只有一张 300×200 的图，它回 **`There is no picture on the page.`**——读页刚说「用 browser_grab 取图」，取图工具说没有图，agent 只能去截图然后看图。

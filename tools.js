@@ -4028,19 +4028,13 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
            arrives on a remote desktop or a game. This reads the surface itself:
            its size, and a fingerprint of what it holds. */
         if (args?.picture === true) {
-          const signature = `(() => { const out = []; const walk = (root) => { for (const one of root.querySelectorAll('canvas, video')) { try { const w = Math.round(one.width || one.clientWidth || 0); const h = Math.round(one.height || one.clientHeight || 0); let sig = 0; if (one.tagName === 'CANVAS') { const board = document.createElement('canvas'); board.width = 16; board.height = 16; const ctx = board.getContext('2d'); ctx.drawImage(one, 0, 0, 16, 16); const px = ctx.getImageData(0, 0, 16, 16).data; for (let i = 0; i < px.length; i += 4) sig = (sig * 31 + px[i] + px[i + 1] * 3 + px[i + 2] * 7) % 1000003 } else sig = Math.round(Number(one.currentTime || 0) * 10); out.push(w + 'x' + h + ':' + sig) } catch (error) { out.push('unreadable') } } for (const frame of root.querySelectorAll('iframe')) { try { if (frame.contentDocument) walk(frame.contentDocument) } catch (error) { /* a frame from another origin cannot be read */ } } }; walk(document); return out.join('|') })()`
-          const started = Date.now()
-          let last = ''
-          while (Date.now() - started < timeout) {
-            const now = String(await evaluate(page, signature).catch(() => '') ?? '')
-            if (last !== '' && now === last) {
-              const surfaces = now.split('|').filter((one) => one !== '').length
-              return surfaces === 0 ? 'the page shows no picture to wait for' : `the picture settled: ${surfaces} surface(s) stopped changing`
-            }
-            last = now
-            await wait(250)
-          }
-          return `the picture kept changing for ${timeout} ms`
+          const done = await page.pictureSettled(timeout)
+          if (done.surfaces === 0) return 'the page shows no picture to wait for'
+          if (done.settled !== true) return `the picture kept changing for ${timeout} ms`
+          /* A surface read from the screen is still a surface that stopped
+             changing, but saying which ones came from the screen keeps the
+             claim checkable. */
+          return `the picture settled: ${done.surfaces} surface(s) stopped changing${done.fromScreen > 0 ? ` (${done.fromScreen} of them read from the screen)` : ''}`
         }
         if (typeof args?.text === 'string' && args.text !== '') {
           const seen = await until(page, `document.body !== null && document.body.innerText.includes(${JSON.stringify(String(args.text))})`, timeout)
