@@ -193,11 +193,16 @@ export function snapshot(mode, budget, max) {
   const controls = []
   const seen = new Set()
   let halt = false
+  let total = 0
+  let described = 0
+  /* Filtering is for what the reader is shown, never for what can be acted on:
+     every control the selector matches gets its number, even the ones past the
+     describing budget, so a ref to the thousandth row still clicks. Numbering
+     is a map write; measuring and naming are the expensive half. */
   each((el) => {
-    if (controls.length >= max * 3) {
-      halt = true
-      return
-    }
+    total += 1
+    reg.id(el)
+    if (described >= max * 3) return
     const b = box(el)
     if (b.width < 2 || b.height < 2) return
     if (!shown(el)) return
@@ -222,6 +227,7 @@ export function snapshot(mode, budget, max) {
       href: kind === 'link' ? String(el.href ?? '').slice(0, 120) : '',
     })
     seen.add(el)
+    described += 1
   })
   /* Refs that pointed at elements now gone are dropped, so a later number
      cannot quietly mean a different control. */
@@ -424,6 +430,8 @@ export function snapshot(mode, budget, max) {
       return { ref: reg.id(el), kind: role(el), name: name(el) }
     })(),
     controls: picked,
+    total,
+    described,
     capped,
     nodes,
     huge,
@@ -1677,6 +1685,8 @@ export async function readPage(page, options = {}) {
     scroll: read?.scroll,
     focused: read?.focused ?? null,
     controls: Array.isArray(read?.controls) ? read.controls : [],
+    total: Number(read?.total ?? 0),
+    described: Number(read?.described ?? 0),
     capped: read?.capped === true,
     nodes: Number(read?.nodes ?? 0),
     blind: (() => {
@@ -1838,6 +1848,13 @@ export function renderPage(read, options = {}) {
   }
   if (hidden > 0 && mode !== 'links' && mode !== 'forms') lines.push(`… ${hidden} more controls off screen`)
   if (shown.length > listed.length) lines.push(`… ${shown.length - listed.length} more controls on this screen — browser_scroll, or ask for mode links or forms`)
+  /* Describing a control costs a box and a style pass; numbering it costs a map
+     write. When a page holds more than the read describes, say how many and
+     say the numbers still work, so a ref past the listed ones is not read as
+     "this page has no such button". */
+  if (Number(read.total ?? 0) > Number(read.described ?? 0)) {
+    lines.push(`this page holds ${String(read.total)} controls; ${String(read.described)} of them are described here, and every one of them has a ref — browser_find for one by name, or browser_click with its ref`)
+  }
   if (read.focused) lines.push(`focus ${read.focused.ref} [${read.focused.kind}] ${read.focused.name}`)
   let body = read.text
   /* A listing page's words are its button labels again: printing them twice

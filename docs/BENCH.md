@@ -1,3 +1,15 @@
+## 四万个按钮：过滤可以少描述，不能少编号 — 0.47.79
+
+探针 `/tmp/refs79.mjs`：真 Chrome，自起 `Sidecar`，页面同 0.47.78 的 40000 行 40000 个按钮；`readPage(page, {mode:'text', maxChars:6000})` 之后**只读**页面里的编号表（`window.__dshRead.refs`），不去调 `id()`——探针自己一调就会补出编号，把缺口盖掉。PRE 跑 0.47.78 工作树，POST 跑本轮。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 编号表大小 | 270 | 40000 |
+| 第 1000 个按钮的编号 | 不存在 | 1001，`find()` 解出 `open 1000` |
+| 读一次 | 772 ms | 605 ms |
+| 提示 | 无 | `this page holds 40000 controls; 270 of them are described here, and every one of them has a ref` |
+| 单元测试 | 414 | 416 |
+
 ## 十二万个元素的页面：读得完，也要说停在哪 — 0.47.78
 
 探针 `/tmp/dom78.mjs`：真 Chrome，自起 `Sidecar`，页面 40000 行（`div.row > span.name + button`，文字和按钮标签都不重样），共 **120003** 个元素；`readPage(page, {mode:'text', maxChars:6000})` 计时并看返回值。PRE 跑 0.47.77 的 worktree，POST 跑本轮工作区。

@@ -155,3 +155,22 @@ test('the picture reader hands a drawing surface its own pixels back', () => {
   assert.match(code, /toDataURL\('image\/png'\)/, 'a canvas is asked for its own pixels')
   assert.match(code, /putImageData|drawImage/, 'and copied through a board when it will not answer')
 })
+
+test('every control a read can find is numbered, not just the described ones', () => {
+  const source = snapshot('text', 6000, 90)
+  /* Numbering has to happen before the describing budget is checked: a control
+     past the budget still needs a ref, or a click on it has nothing to name. */
+  const numbered = source.indexOf('reg.id(el)')
+  const gate = source.indexOf('if (described >= max * 3)')
+  assert.ok(numbered !== -1, 'a control is never numbered')
+  assert.ok(gate !== -1, 'nothing bounds the describing half')
+  assert.ok(numbered < gate, 'numbering happens after the budget, so the rest never gets a ref')
+  assert.ok(!/halt\s*=\s*true/.test(source), 'the walk stops instead of skipping the expensive half')
+})
+
+test('a page holding more controls than it describes says how many, and that the rest have refs', () => {
+  const line = (total, described) => renderPage({ url: 'https://example.com/', title: '', text: '', textChars: 0, controls: [], total, described }, {})
+  assert.match(line(400, 90), /holds 400 controls; 90 of them are described here, and every one of them has a ref/)
+  assert.doesNotMatch(line(400, 90), /no such button/i)
+  assert.doesNotMatch(line(90, 90), /holds \d+ controls/)
+})
