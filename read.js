@@ -244,6 +244,7 @@ export function snapshot(mode, budget, max) {
   let full = 0
   let capped = false
   let nodes = 0
+  let hiddenWords = 0
   let lastSaid = ''
   const take = (text) => {
     if (text === '') return
@@ -252,6 +253,19 @@ export function snapshot(mode, budget, max) {
     const room = budget - used
     parts.push(room >= text.length ? text : text.slice(0, room))
     used += Math.min(room, text.length)
+  }
+  /* Words a person cannot read are not words this page says. Only the text
+     walker asks this: a transparent button is still clickable, so the control
+     path keeps numbering it — hiding words must never hide an action. */
+  const unreadable = (el, style) => {
+    if (Number(style.opacity) <= 0.05) return true
+    if (style.color === 'rgba(0, 0, 0, 0)' || style.webkitTextFillColor === 'rgba(0, 0, 0, 0)') return true
+    if (el.closest('[aria-hidden="true"]') !== null) return true
+    let node = el.parentElement
+    for (let depth = 0; node !== null && depth < 4 && node !== document.body; depth += 1, node = node.parentElement) {
+      if (Number(getComputedStyle(node).opacity) <= 0.05) return true
+    }
+    return false
   }
   const main = document.querySelector('main, article, [role="main"]') ?? document.body
   const texts = [main, ...roots.slice(1)]
@@ -280,6 +294,10 @@ export function snapshot(mode, budget, max) {
         const style = getComputedStyle(parent)
         const fits = style.display !== 'none' && style.visibility !== 'hidden' && b.width > 1 && b.height > 1
         if (!fits || !inView(b)) continue
+        if (unreadable(parent, style)) {
+          hiddenWords += 1
+          continue
+        }
         emitted.add(parent)
         if (text === lastSaid) continue
         lastSaid = text
@@ -432,6 +450,7 @@ export function snapshot(mode, budget, max) {
     controls: picked,
     total,
     described,
+    hidden: hiddenWords,
     capped,
     nodes,
     huge,
@@ -1687,6 +1706,7 @@ export async function readPage(page, options = {}) {
     controls: Array.isArray(read?.controls) ? read.controls : [],
     total: Number(read?.total ?? 0),
     described: Number(read?.described ?? 0),
+    hidden: Number(read?.hidden ?? 0),
     capped: read?.capped === true,
     nodes: Number(read?.nodes ?? 0),
     blind: (() => {
@@ -1883,6 +1903,9 @@ export function renderPage(read, options = {}) {
   }
   /* A page can hold more than one read is allowed to carry: say where the read
      stopped, so nobody mistakes the end of the budget for the end of the page. */
+  /* Filtering that cannot be seen is indistinguishable from a page that never
+     had the text: a count says the reader skipped something on purpose. */
+  if (Number(read.hidden ?? 0) > 0) lines.push(`… ${String(read.hidden)} block(s) of text are hidden or transparent on the page and were not read`)
   if (read.capped === true) {
     lines.push(`the page is longer than this read: text stopped at ${String(read.textChars)} characters — browser_scroll for the next screen, browser_find for one thing, or browser_read with query for one answer`)
   }

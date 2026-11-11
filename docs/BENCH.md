@@ -1,3 +1,15 @@
+## 看不见的字：过滤掉，但要说一声 — 0.47.80
+
+探针 `/tmp/hide80.mjs`：一页正常说明文 + 五类隐形文本（`opacity:0`、`aria-hidden="true"`、`color:transparent`、`left:-99999px`、`font-size:0`）+ 一个可见按钮和藏在 `opacity:0` 里的按钮。`readPage({mode:'text'})` 后数正文里还能不能找到标记词，并点一次可见按钮确认没被误伤。PRE 跑 0.47.79 工作树。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 泄漏标记 | 3 处（opacity / aria-hidden / transparent） | 0 |
+| 正文字数 | 208 | 79 |
+| `hidden` 计数与提示 | 无 | 4，`… 4 block(s) of text are hidden or transparent on the page and were not read` |
+| 可见按钮点击 | 生效 | 生效 |
+| 40000 按钮页读一次 | 605 ms | 614 ms |
+
 ## 四万个按钮：过滤可以少描述，不能少编号 — 0.47.79
 
 探针 `/tmp/refs79.mjs`：真 Chrome，自起 `Sidecar`，页面同 0.47.78 的 40000 行 40000 个按钮；`readPage(page, {mode:'text', maxChars:6000})` 之后**只读**页面里的编号表（`window.__dshRead.refs`），不去调 `id()`——探针自己一调就会补出编号，把缺口盖掉。PRE 跑 0.47.78 工作树，POST 跑本轮。

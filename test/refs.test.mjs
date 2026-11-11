@@ -174,3 +174,16 @@ test('a page holding more controls than it describes says how many, and that the
   assert.doesNotMatch(line(400, 90), /no such button/i)
   assert.doesNotMatch(line(90, 90), /holds \d+ controls/)
 })
+
+test('text a person cannot read is not read out, and the page is told why', () => {
+  const source = snapshot('text', 6000, 90)
+  assert.match(source, /const unreadable = \(el, style\)/)
+  assert.match(source, /aria-hidden="true"/)
+  assert.match(source, /style\.color === 'rgba\(0, 0, 0, 0\)'/)
+  /* Hiding words must never hide an action: the numbering happens before this
+     test and the control path never calls it. */
+  assert.ok(source.indexOf('reg.id(el)') < source.indexOf('if (unreadable(parent, style))'))
+  const read = { url: 'https://example.com/', title: '', text: 'ok', textChars: 2, controls: [], hidden: 4 }
+  assert.match(renderPage(read, {}), /4 block\(s\) of text are hidden or transparent on the page and were not read/)
+  assert.doesNotMatch(renderPage({ ...read, hidden: 0 }, {}), /hidden or transparent/)
+})
