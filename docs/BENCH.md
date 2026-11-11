@@ -1,3 +1,20 @@
+## 停了的浏览器不许交页面 — 0.47.85
+
+PRE 跑 0.47.84 提交 `5748d24`。三组探针：A `/tmp/pre85.mjs` 直接调发版的 `noteDeath`（模拟 Chrome 启动 900 ms 后 exit 0）；B 用假 page + 可切换的 `sidecar.alive` 直接驱动发版的 `browser_view` / `browser_open`，页面固定回 `hello from the tab` / `# Dense`；C 真 Chrome，把 `~/.dsh/inner-browser-use/chrome/probe88/SingletonLock` 做成目录，让 Chrome 启动即退出。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| A 早死留下的日志行 | 0 | 1（`exit code 0 signal none after ms 900`） |
+| A 日志行里的 stderr | — | 有（本次运行那一段） |
+| C 真 Chrome 早死 | 无行、无解释，等端口 15 s | `exit code 21 … after ms 203 stderr …ProcessSingleton…` |
+| C 抛出的错误 | `sidecar: Chrome did not open a debugging port`（15 s 后） | 同一条，203 ms 死、立刻抛 |
+| `browser_open` 里 `sidecar.alive` 检查 | 0 次 | 读前 + 读后各 1 次 |
+| 停掉的浏览器上 `browser_view` | 页面文字（`# Dense`） | 只回「读的时候浏览器关了」 |
+| 停掉的浏览器上 `browser_open` | 整页快照 | 同上 |
+| 活着的浏览器 | 正常 | 正常 |
+| 自己关掉的浏览器 | 写死亡行 | 不写 |
+| 套件 | 426 | 432 |
+
 ## 框里的图：坐标要按框在页面上的位置算 — 0.47.84
 
 探针 `/tmp/frame84.mjs`：本机 HTTP 服务给外壳页 `/outer.html`，页面上方 380 px 静态内容，下面一个 400×240 的同源 `<iframe>`；框内 `/inner.html` 用同端口 `localhost` 的 SVG 图片污染画布，然后每 120 ms 红蓝重绘。第一段直接调 `pictureSettled(1600)`，第二段把 `sidecar.js` 里发货的那段探针原样取出来在页面里执行，读出它交给 `Page.captureScreenshot` 的盲区矩形。PRE 跑 0.47.83 的提交。

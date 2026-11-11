@@ -1,3 +1,28 @@
+## 0.47.85 — 浏览器停了就说到停，别说页面读到了
+
+有人报了一个必须当错误处理的现象：右栏的浏览器起不来，`browser_open` 却照样回一整页文字，`browser_state` 同时说 `stopped`，接下来的 `browser_click` / `browser_do` 一律回 `The sidecar browser is not running`。整页文字是真的——那是**已经停掉的那次运行留下的**一版页面，读的时候浏览器还活着，交给模型的时候已经不在了。这类「成功」比报错更贵：模型拿着过期页面继续点，每一步都失败。
+
+两处漏洞，两处都补：
+
+- **读完之后没有再看一眼浏览器还在不在。** `browser_open` 直接走 `sidecar.ensure`，绕过了所有工具共用的 `withRead`，全程 `sidecar.alive` 检查 **0 次**；`browser_view` 走 `withRead`，但 `withRead` 也只在读之前查。现在 `withRead` 在 `work(page)` 之后、`browser_open` 在 `look(...)` 之后都调新导出的 `goneMidRead(sidecar)`：浏览器不在了，就把「它读的时候浏览器关了」这句话交回去，页面文字一个字都不带。活着的浏览器不受影响（同一条测试里先读一次确认正常，再让它死掉确认报停）。
+- **它为什么会静默地死，日志里一个字都没有。** `spawnChrome` 用 `stdio: 'ignore'` 丢掉 Chrome 的 stderr，退出处理又把「启动 3 秒内退出」当成「我们让它退出的」直接 `return`，于是 `exit code 0` 这种死法既不写 `browser.log`，也没有任何解释——11 月 11 日那几十条 `exit code 0` 就是这么留下来的，最新的故障段反而一条都没有。现在只有**真的被命令关闭**（`stopping === true || closing !== null`）才安静；其它每一次结束都写一行，并在 3 秒内的早死后面加 `after ms N`、在末尾引一段本次运行的 stderr（写到 `chrome/browser.err.log`，按本次启动的文件长度切片，不会把上一次的旧话当成本次的）。
+
+PRE/POST（PRE 跑 0.47.84 提交 `5748d24`；A 用 `/tmp/pre85.mjs` 直接喂 `noteDeath`，B 用假 page 驱动发版的 `browser_view` / `browser_open`，C 用真 Chrome 把 profile 里的 `SingletonLock` 做成目录逼它 203 ms 退出）：
+
+| 项 | PRE 0.47.85 前 | POST 0.47.85 |
+| --- | --- | --- |
+| A 900 ms 自杀留几行日志 | **0 行** | 1 行：`… exit code 0 signal none after ms 900` |
+| C 真 Chrome 早死（203 ms，exit 21） | 无日志，只能看到 15 秒等端口超时 | `… exit code 21 signal none after ms 203 stderr …Failed to create a ProcessSingleton…`，并抛 `sidecar: Chrome did not open a debugging port` |
+| browser_open 里 `sidecar.alive` 检查次数 | **0** | 读前 1 次 + 读后 1 次 |
+| 已停止的浏览器上 `browser_view` | 返回页面文字（`http://x/dense` / `# Dense`） | `The browser closed while it was reading that page. …`（不含页面文字） |
+| 已停止的浏览器上 `browser_open` | 返回整页快照 | 同上，明确说浏览器在读到一半时关了 |
+| 活着的浏览器读同一页 | 正常 | 正常（同一条测试里先验证，未被误判） |
+| 自己关掉的浏览器写不写死亡行 | 写（`exit code 0` 噪音） | 不写（`asked` 只认真被命令关闭） |
+| Chrome stderr 落哪 | 丢弃 | `~/.dsh/inner-browser-use/chrome/browser.err.log`（一次运行 2028 字节） |
+| 单元测试 | 426 通过 | **432 通过**，9392 ms |
+
+一句话：把「还在跑」当成读页面的前提，读之前查一次、读之后查一次；浏览器死了就只回报死亡，把最后一句话（stderr + 退出码 + 活了几毫秒）留在日志里。
+
 ## 0.47.84 — 框里的图，按框在页面上的位置看
 
 0.47.83 修好了「读不到的画从屏幕读」，但屏幕读的位置算错了：页内探针走进同源 iframe 时，把框内画布**在自己文档里**的坐标 `[0,0,320,200]` 直接当成整页坐标去截图。这张演示页在 iframe 上方有 380 px 内容，于是截图截的是页面顶部的静态背景——每次哈希都一样。探针实测：框内画布每 120 ms 红蓝重绘，`browser_wait {picture:true}` 在 **1110 ms** 就回 `the picture settled: 1 surface(s) stopped changing`。

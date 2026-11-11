@@ -7,9 +7,9 @@
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GapClock, MAX_REST_MS, MIN_REST_MS, decide } from './rest.js'
 import flashInputPlanner from './runtime/flash-input.cjs'
@@ -632,7 +632,14 @@ export function pidsWithMark(psOutput, mark) {
 export function deathNote(gone) {
   const at = new Date().toISOString()
   const code = gone.code === null || gone.code === undefined ? 'none' : String(gone.code)
-  return `${at} browser pid ${String(gone.pid ?? 0)} profile ${String(gone.profile ?? 'default')} exit code ${code} signal ${String(gone.signal ?? 'none')}`
+  /* A browser that ends in its first seconds is the case nobody can see: it
+     never reached a page, so nothing else records why. Say how soon, and what
+     Chrome printed on its way out — the one line that turns "started and
+     stopped" into a reason. */
+  const fast = gone.fast === true ? ' after ms ' + String(Number(gone.ms ?? 0) || 0) : ''
+  const err = String(gone.err ?? '').replace(/\s+/g, ' ').trim()
+  const why = err === '' ? '' : ' stderr ' + err.slice(-300)
+  return `${at} browser pid ${String(gone.pid ?? 0)} profile ${String(gone.profile ?? 'default')} exit code ${code} signal ${String(gone.signal ?? 'none')}${fast}${why}`
 }
 
 /**
@@ -4197,12 +4204,50 @@ export class Sidecar {
        that survive a signal sent to the launcher alone, and a leftover renderer
        keeps drawing (and playing) in the background. Its own group makes one
        kill cover the whole tree. */
-    const child = spawn(binary, args, { detached: process.platform !== 'win32', stdio: 'ignore', env: flashEnv })
+    /* Chrome writes nothing into a profile directory it cannot make, and the
+       person is left looking at an empty folder: make it here, where the
+       failure, if there is one, is ours and is reported. */
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch {
+      /* Chrome still gets its chance to say why it disagreed. */
+    }
+    /* Chrome's stderr used to go nowhere, so a browser that ended in its first
+       second left no reason at all. Keep the last thing it said, next to the
+       profile, so the death line below can quote it. */
+    const errFile = join(dirname(dir), 'browser.err.log') // ui-copy-ignore
+    let errFd = 'ignore'
+    let errMark = 0
+    try {
+      if (existsSync(errFile) && statSync(errFile).size > 1_000_000) truncateSync(errFile, 0)
+      /* Only what this run prints belongs to this run: the file outlives it. */
+      errMark = existsSync(errFile) ? statSync(errFile).size : 0
+      errFd = openSync(errFile, 'a')
+    } catch {
+      /* A log is a convenience, not a promise. */
+    }
+    const child = spawn(binary, args, { detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', errFd], env: flashEnv })
     const born = Date.now()
     child.on('exit', (code, signal) => {
-      /* A browser that ends without being asked is the one case nobody can see:
-         Chrome's own stderr goes nowhere, so leave a line behind. */
-      noteDeath({ pid: child.pid, code, signal, profile: this.profile, asked: this.stopping === true || Date.now() - born < 3000 })
+      /* A browser that ends without being asked is the one case nobody can see,
+         and a browser that ends within a few seconds of starting is that same
+         case with no page behind it: only the process that stopped it on
+         purpose may be silent about it. */
+      const ms = Date.now() - born
+      let err = ''
+      try {
+        err = String(readFileSync(errFile, 'utf8') ?? '').slice(errMark)
+      } catch {
+        /* It never wrote anything: the exit code is the whole story. */
+      }
+      if (typeof errFd === 'number') {
+        try {
+          closeSync(errFd)
+        } catch {
+          /* Already closed. */
+        }
+      }
+      noteDeath({ pid: child.pid, code, signal, profile: this.profile, asked: this.stopping === true || this.closing !== null, fast: ms < 3000, ms, err })
       if (this.child === child) {
         this.child = null
         this.cdp?.close()

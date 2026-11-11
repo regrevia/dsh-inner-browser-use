@@ -718,6 +718,20 @@ export function isErrorPage(page) {
   return url.startsWith('chrome-error://') || url.startsWith('edge-error://')
 }
 
+/**
+ * Whether the page a tool just read is still the page of a browser that is
+ * running. A browser that closes while a read is in flight leaves the read with
+ * words that were true a moment ago; handing those back as this call's result is
+ * how a person sees a full page and the status line says the browser stopped.
+ * An unreadable page is a page that stopped: say so, never show the words.
+ * @param {any} sidecar - the driver, whose liveness is the only proof.
+ * @returns {string} why the read is not a live page, or '' when it is.
+ */
+export function goneMidRead(sidecar) {
+  if (sidecar?.alive === true) return ''
+  return 'The browser closed while it was reading that page. What it read belonged to the tab it had open, not to a browser that is running now — showing it would pass off a stopped browser as a working one. Call browser_open to start it again.'
+}
+
 export async function unreachable(page) {
   if (!isErrorPage(page)) return ''
   /* The code is the part a model can act on: ERR_NAME_NOT_RESOLVED is a typo,
@@ -2342,6 +2356,11 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
     const dead = await unreachable(page)
     if (dead !== '') return { text: dead + personNote(sidecar) }
     const text = await work(page)
+    /* The read may have outlived the browser it read from: a browser that closed
+       mid-read leaves words that were true a moment ago, and handing those back
+       is how the column shows a page while the status line says it stopped. */
+    const gone = goneMidRead(sidecar)
+    if (gone !== '') return { text: gone + personNote(sidecar) }
     /* Why a page stopped working is usually in its own log, and looking it up
        costs another call. This is the one place every read passes through, so
        say what went wrong since the previous one, once. */
@@ -2450,7 +2469,12 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
            now or never is a second of the person's cold start. */
         const unseen = who === '' || typeof host?.want !== 'function' ? '' : viewerNote(await watchForViewer(sidecar, page, 250))
         const runtime = flashNote()
-        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + (runtime === '' ? '' : `${runtime}\n`) + await look(page, { mode: 'text' }) + (await pdfNote(page)) }
+        const body = await look(page, { mode: 'text' })
+        /* A page read from a browser that has already gone is not a page this
+           call opened: report the stop, not the words it left behind. */
+        const gone = goneMidRead(sidecar)
+        if (gone !== '') return { text: gone }
+        return { text: windowed + (unseen === '' ? '' : `${unseen}\n`) + (runtime === '' ? '' : `${runtime}\n`) + body + (await pdfNote(page)) }
       },
     },
     {
