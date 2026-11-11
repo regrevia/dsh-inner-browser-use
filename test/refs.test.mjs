@@ -187,3 +187,30 @@ test('text a person cannot read is not read out, and the page is told why', () =
   assert.match(renderPage(read, {}), /4 block\(s\) of text are hidden or transparent on the page and were not read/)
   assert.doesNotMatch(renderPage({ ...read, hidden: 0 }, {}), /hidden or transparent/)
 })
+
+test('a picture that was never sampled is not described as if it were', () => {
+  /* A drawing surface fed from another site refuses to be read. The read used
+     to hand back colours: 0 and be rendered as "a few colours" — a statement
+     about content nobody saw. */
+  const source = snapshot('text', 6000, 90)
+  assert.match(source, /said\.sampled = false/)
+  assert.ok(source.indexOf('said.sampled = true') > source.indexOf('said.sampled = false'), 'only a real sample flips it')
+  const read = (picture) => ({ url: 'https://example.com/', title: '', text: '', textChars: 0, controls: [], picture })
+  const tainted = renderPage(read({ kind: 'canvas', width: 300, height: 200, colors: 0, flat: 0, sampled: false, name: '' }), {})
+  assert.match(tainted, /picture 300x200 — its pixels come from another site/)
+  assert.doesNotMatch(tainted, /a few colours/)
+  const sampled = renderPage(read({ kind: 'canvas', width: 300, height: 200, colors: 1, flat: 1, sampled: true, name: '' }), {})
+  assert.match(sampled, /mostly one colour/)
+})
+
+test('a surface that hands back nothing says why, and points at the screen', () => {
+  const code = pictures(undefined, 1)
+  assert.match(code, /let why = ''/)
+  assert.match(code, /why = item\.kind === 'canvas' \? 'its pixels come from another site/)
+  assert.match(code, /out\.push\(\{ kind: item\.kind, width: item\.w, height: item\.h, type, data, why/)
+  const tools = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
+  /* browser_grab has to repeat the reason: "could not be saved" alone leaves
+     the reader trying the same call again. */
+  assert.match(tools, /skipped \$\{size\}: \$\{why === '' \? 'that surface holds no picture/)
+  assert.match(tools, /browser_shot shows it on screen/)
+})

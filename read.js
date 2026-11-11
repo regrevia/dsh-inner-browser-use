@@ -344,6 +344,10 @@ export function snapshot(mode, budget, max) {
     said.height = best.h
     said.colors = 0
     said.flat = 0
+    /* Whether the two numbers above are a sample of this picture at all: a
+       drawing surface fed from another site refuses to be read, and a read of
+       nothing must not look like a read of something flat. */
+    said.sampled = false
     try {
       const board = document.createElement('canvas')
       board.width = 32
@@ -361,6 +365,7 @@ export function snapshot(mode, budget, max) {
       for (const count of tally.values()) most = Math.max(most, count)
       said.colors = tally.size
       said.flat = Math.round((most / 1024) * 100) / 100
+      said.sampled = true
     } catch {
       /* A picture from elsewhere cannot be sampled: report its size only. */
     }
@@ -722,6 +727,7 @@ export function pictures(ref, count) {
   const out = []
   for (const item of picked.slice(0, ${limit})) {
     let data = ''
+    let why = ''
     let type = 'image/png'
     try {
       if (item.kind === 'canvas') {
@@ -763,9 +769,12 @@ export function pictures(ref, count) {
       }
     } catch {
       data = ''
+      /* A surface refuses to hand itself over only when its pixels belong to
+         another site; anything else is the page's own doing. */
+      why = item.kind === 'canvas' ? 'its pixels come from another site, so they cannot be read from this page' : 'the page did not hand it over'
     }
     const feel = data ? await look(data) : null
-    out.push({ kind: item.kind, width: item.w, height: item.h, type, data, colors: feel?.colors ?? 0, flat: feel?.flat ?? 0 })
+    out.push({ kind: item.kind, width: item.w, height: item.h, type, data, why, colors: feel?.colors ?? 0, flat: feel?.flat ?? 0 })
   }
   return JSON.stringify({ pictures: out })
 })()`
@@ -1936,9 +1945,15 @@ export function renderPage(read, options = {}) {
     }
   } else if (read.picture) {
     const pic = read.picture
-    const look = Number(pic.flat) >= 0.9 ? 'mostly one colour' : Number(pic.colors) <= 3 ? 'a few colours' : 'a picture with detail'
     const size = `${Math.round(Number(pic.width) || 0)}x${Math.round(Number(pic.height) || 0)}`
-    lines.push(`picture ${size} ${look}${pic.name === '' ? '' : ` "${pic.name}"`} — browser_grab saves it as a file`)
+    /* A picture whose pixels cannot be read is not a picture with few colours:
+       saying so would describe something the read never saw. */
+    if (pic.sampled === false) {
+      lines.push(`picture ${size}${pic.name === '' ? '' : ` "${pic.name}"`} — its pixels come from another site, so they cannot be read from this page; browser_shot shows what it looks like on screen`)
+    } else {
+      const look = Number(pic.flat) >= 0.9 ? 'mostly one colour' : Number(pic.colors) <= 3 ? 'a few colours' : 'a picture with detail'
+      lines.push(`picture ${size} ${look}${pic.name === '' ? '' : ` "${pic.name}"`} — browser_grab saves it as a file`)
+    }
   }
   if (read.scroll && read.scroll.height > read.scroll.viewport + 40) {
     lines.push(`scroll ${read.scroll.y}/${read.scroll.height - read.scroll.viewport}`)

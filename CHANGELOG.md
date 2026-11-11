@@ -1,3 +1,20 @@
+## 0.47.81 — 没读到的图，不许写成「颜色很少」
+
+页面用另一个站点的图片画到 canvas 上（图表库、地图、验证码很常见），canvas 就被「污染」了：`toDataURL`、`drawImage`+`getImageData` 全部抛异常。读页的采样兜底 `catch {}` 把异常吞掉，留下 `colors: 0, flat: 0`，渲染时按「颜色数 ≤ 3」判成 **`picture 300x200 a few colours`**——一张纯红的图被描述成「颜色很少」，模型据此以为看到了一张近乎空白的画。`browser_grab` 同一条路：抓不到像素，只回一句「could not be saved」，不说为什么，也不说下一步。
+
+改成两句话都说真话：采样成功才置 `sampled: true`，没成功就是 `sampled: false`，渲染分叉——`picture 300x200 — its pixels come from another site, so they cannot be read from this page; browser_shot shows what it looks like on screen`；`pictures()` 的空载荷带上 `why`，`browser_grab` 把它翻成 `skipped 300x200: its pixels come from another site… — browser_shot shows it on screen`。同源 canvas 的采样与描述一字不改。
+
+PRE/POST（真 Chrome，探针 `/tmp/taint81.mjs`，127.0.0.1 提供页面、`localhost` 提供图片，两端口不同源，`#away` 只画被污染的那张；PRE 跑 0.47.78 worktree）：
+
+| 项 | PRE 0.47.80 | POST 0.47.81 |
+| --- | --- | --- |
+| 被污染 canvas 的描述 | `picture 300x200 a few colours`（假话） | `picture 300x200 — its pixels come from another site…；browser_shot shows what it looks like on screen` |
+| `picture.sampled` | 无此字段 | `false` |
+| `browser_grab` 抓空载荷 | `That picture could not be saved.`（无原因） | `skipped 300x200: its pixels come from another site… — browser_shot shows it on screen` |
+| 同源 canvas（对照） | `mostly one colour`，2794 字节 PNG | 不变（`sampled: true`，2794 字节） |
+| 读一次 | 19 ms | 20 ms |
+| 单元测试 | 417 | 419 |
+
 ## 0.47.80 — 看不见的字不进上下文，但透明按钮照样能点
 
 读页把三种「人看不见、爬虫爱写」的文本当成正文喂给模型：`opacity:0` 的促销段、`aria-hidden="true"` 的塞词段、`color:transparent` 的白字。208 字里混进三处 SEO 垃圾，模型的上下文就在替别人的关键词买单。

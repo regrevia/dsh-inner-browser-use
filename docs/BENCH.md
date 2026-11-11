@@ -1,3 +1,16 @@
+## 没读到的图不许编：跨站像素与「颜色很少」 — 0.47.81
+
+探针 `/tmp/taint81.mjs`：一个本地 HTTP 服务，页面走 `127.0.0.1`、图片走 `localhost`（端口相同、主机不同，即不同源）。页面把这张纯红图 `drawImage` 进 canvas 后 `toDataURL` 必然抛异常——就是真实站点里图表库、地图、验证码画布的常态。`readPage({mode:'text'})` 看 `picture` 与渲染句，再直接调 `pictures()` 看 `browser_grab` 拿到的载荷与原因。PRE 跑 0.47.80 工作树。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 被污染 canvas 的渲染句 | `picture 300x200 a few colours` | `picture 300x200 — its pixels come from another site…` |
+| `picture.sampled` | 无 | `false` |
+| `browser_grab` 空载荷的原因 | 无（只说存不下） | `skipped 300x200: its pixels come from another site…` |
+| 同源 canvas 对照 | `mostly one colour` | 不变 |
+| 读一次 | 19 ms | 20 ms |
+| 全量单测 | 417 | 419 |
+
 ## 看不见的字：过滤掉，但要说一声 — 0.47.80
 
 探针 `/tmp/hide80.mjs`：一页正常说明文 + 五类隐形文本（`opacity:0`、`aria-hidden="true"`、`color:transparent`、`left:-99999px`、`font-size:0`）+ 一个可见按钮和藏在 `opacity:0` 里的按钮。`readPage({mode:'text'})` 后数正文里还能不能找到标记词，并点一次可见按钮确认没被误伤。PRE 跑 0.47.79 工作树。

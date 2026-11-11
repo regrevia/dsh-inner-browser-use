@@ -3712,10 +3712,16 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const item = list[index]
           const body = String(item?.data ?? '')
           const mark = body.indexOf(',')
-          if (mark < 0) continue
           const type = String(item?.type ?? 'image/png')
           const ext = type.includes('jpeg') ? 'jpg' : type.includes('webp') ? 'webp' : type.includes('svg') ? 'svg' : 'png'
           const size = `${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`
+          /* No pixels came back: say why. A drawing surface fed from another
+             site cannot be saved at all, and the screen is the way to see it. */
+          if (mark < 0) {
+            const why = String(item?.why ?? '')
+            rows.push(`skipped ${size}: ${why === '' ? 'that surface holds no picture (blank, or its source is gone)' : `${why} — browser_shot shows it on screen`}`)
+            continue
+          }
           /* A drawing surface that lost its source is still an element with a
              size: its picture is empty, and a file of nothing is worse than a
              sentence saying so. */
