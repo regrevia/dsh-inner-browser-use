@@ -11,7 +11,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { VIEW, DESKTOP_UA } from './sidecar.js?v=1'
 import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
@@ -162,17 +162,66 @@ async function ignoreInProject(root) {
  * @param {{name?: string, ext?: string, prefix?: string}} [options] - file name.
  * @returns {Promise<string>} absolute path.
  */
+/**
+ * Split a script body at its last top-level statement, so that statement can be
+ * returned: a block body has no value, and "await fetch(...)" as a last line is
+ * the shape people write when they expect one.
+ * @param {string} code - the whole body.
+ * @returns {{head: string, last: string}} everything before the last statement, and the last statement.
+ */
+function lastStatement(code) {
+  let depth = 0
+  let quote = ''
+  let cut = -1
+  for (let index = 0; index < code.length; index += 1) {
+    const ch = code[index]
+    if (quote !== '') {
+      if (ch === '\\') index += 1
+      else if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') quote = ch
+    else if (ch === '/' && code[index + 1] === '/') {
+      const line = code.indexOf('\n', index)
+      index = line < 0 ? code.length : line
+    } else if (ch === '/' && code[index + 1] === '*') {
+      const close = code.indexOf('*/', index + 2)
+      index = close < 0 ? code.length : close + 1
+    } else if (ch === '(' || ch === '[' || ch === '{') depth += 1
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+    else if (ch === ';' && depth === 0) cut = index
+  }
+  if (cut < 0) return { head: '', last: code.trim() }
+  return { head: code.slice(0, cut).trim(), last: code.slice(cut + 1).trim() }
+}
+
 export async function saveArtifact(kind, body, options = {}) {
+  const ext = String(options.ext ?? '.png')
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+  const wanted = String(options.path ?? '').trim()
+  let file
+  if (wanted !== '') {
+    /* A path that was asked for is the path that is used: an absolute one wins,
+       a relative one is taken from the working directory, and neither is a name
+       to be cleaned up into the artifact folder. */
+    file = isAbsolute(wanted) ? wanted : resolve(wanted)
+    if (/\.[a-z0-9]{2,5}$/i.test(file) !== true) file = `${file}${ext}`
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, Buffer.from(body, 'base64'))
+    return file
+  }
   const dir = artifactDir(kind)
   await mkdir(dir, { recursive: true })
   await ignoreInProject(artifactRoot())
-  const ext = String(options.ext ?? '.png')
-  /* A name is a name: no separators, no runs of dots that could read as a path
-     climb, and no leading dot to hide the file. */
-  const wanted = String(options.name ?? '').replace(/[^\w.-]/g, '').replace(/\.(png|jpe?g|webp|pdf)$/i, '').replace(/\.{2,}/g, '.').replace(/^\.+/, '')
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+  /* A name is a name, but it may name a folder: "run/login" keeps one folder
+     instead of being silently flattened into "runlogin". */
+  const parts = String(options.name ?? '')
+    .split(/[\\/]+/)
+    .map((part) => part.replace(/[^\w.-]/g, '').replace(/\.(png|jpe?g|webp|pdf|svg)$/i, '').replace(/\.{2,}/g, '.').replace(/^\.+/, ''))
+    .filter((part) => part !== '' && part !== '.' && part !== '..')
   const prefix = String(options.prefix ?? kind)
-  const file = join(dir, `${wanted === '' ? `${prefix}-${stamp}` : wanted}${ext}`)
+  file = join(dir, `${parts.length === 0 ? `${prefix}-${stamp}` : parts.join('/')}${ext}`)
+  await mkdir(dirname(file), { recursive: true })
   await writeFile(file, Buffer.from(body, 'base64'))
   await pruneArtifacts(dir, ARTIFACT_KEEP)
   return file
@@ -2598,8 +2647,8 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const scale = Math.min(1, (cols * 6) / Math.max(1, box.width))
         let grid
         try {
-          const data = await page.shot({ rect: box, scale })
-          grid = gridOf(decodePng(Buffer.from(data, 'base64')), cols)
+          const grabbed = await page.shot({ rect: box, scale })
+          grid = gridOf(decodePng(Buffer.from(typeof grabbed === 'string' ? grabbed : grabbed.data, 'base64')), cols)
         } catch (error) {
           return { text: `The screen could not be read as pixels (${String(error?.message ?? error)}). browser_shot still saves a picture of it.` }
         }
@@ -2921,10 +2970,18 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const before = args?.read === true ? '' : await pageMark(page)
         const pressedAt = Date.now()
         await page.mouse('mouseMoved', point)
-        await page.mouse('mousePressed', { ...point, clickCount: args?.double === true ? 2 : 1, button })
+        /* A double click is two clicks in a row, and the page counts them
+           itself: press 1, release 1, press 2, release 2. A single press that
+           claims to be the second click never makes a dblclick — it only
+           selects the word under the pointer. */
+        const counts = args?.double === true ? [1, 2] : [1]
         const hold = Math.max(0, Math.min(60_000, Number(args?.hold_ms ?? 0)))
-        if (hold > 0) await new Promise((settle) => setTimeout(settle, hold))
-        await page.mouse('mouseReleased', { ...point, clickCount: args?.double === true ? 2 : 1, button })
+        for (const count of counts) {
+          await page.mouse('mousePressed', { ...point, clickCount: count, button })
+          if (hold > 0 && count === counts[counts.length - 1]) await new Promise((settle) => setTimeout(settle, hold))
+          await page.mouse('mouseReleased', { ...point, clickCount: count, button })
+          if (count < counts[counts.length - 1]) await wait(14)
+        }
         await settle(page, 5000, pressedAt)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 3000 }), `click ${label}`)
         return said + cover + (followed === '' ? '' : ` (${followed})`) + (await outcome(page, before))
@@ -3127,6 +3184,9 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           key: { type: 'string', description: 'Key name, or several joined by + to hold them together (ArrowLeft+ArrowUp, Shift+ArrowLeft). Letters, digits, punctuation and shifted symbols work too.' },
           modifiers: { type: 'string', description: 'Held while pressing: Ctrl, Alt, Shift, Meta/Cmd, or Mod (Command on macOS, Control on Windows and Linux), joined by +.' },
           hold_ms: { type: 'integer', description: 'Keep the key down this long before releasing. Games move while a key is held.' },
+          key_code: { type: 'integer', description: 'The number itself, for a page that reads event.keyCode and ignores named keys.' },
+          code: { type: 'string', description: 'The physical key the page should see in event.code, such as KeyA or ControlLeft.' },
+          text: { type: 'string', description: 'The character the key types, for key_code presses.' },
           read: { type: 'boolean', description: 'Read the page after the action, instead of a one-line confirmation.' },
         },
         required: ['key'], // ui-copy-ignore
@@ -3142,6 +3202,26 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         const mods = chord.modifiers
         const hold = Math.max(0, Math.min(60_000, Number(args?.hold_ms ?? 0)))
         if (chord.names.length === 0) throw new Error(`sidecar: ${name} holds no key, only modifiers`) // ui-copy-ignore
+        /* A key with a number of its own: a page that reads event.keyCode — a
+           remote desktop, a Flash movie — ignores a key that arrives as 0, and
+           some keys have no name in the list above. */
+        const numbered = Math.round(Number(args?.key_code ?? 0))
+        if (Number.isFinite(numbered) && numbered > 0) {
+          const own = typeof args?.text === 'string' ? args.text : ''
+          const base = {
+            key: own === '' ? name : own,
+            code: String(args?.code ?? ''),
+            windowsVirtualKeyCode: numbered,
+            nativeVirtualKeyCode: numbered,
+            modifiers: mods,
+          }
+          const typed = own !== '' && mods === 0 ? own : undefined
+          await page.key('keyDown', { ...base, text: typed, unmodifiedText: typed })
+          if (hold > 0) await new Promise((settle) => setTimeout(settle, hold))
+          await page.key('keyUp', { ...base, text: undefined, unmodifiedText: undefined })
+          if (hold === 0) await settle(page, 3000)
+          return acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), `key ${name}`)
+        }
         /* One key goes through the plain path so an editing shortcut is sent as
            the browser command it is; a chord holds every key down together. */
         if (chord.names.length > 1) await pressChord(page, chord.names, mods, hold)
@@ -3340,6 +3420,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         properties: {
           code: { type: 'string', description: 'Expression or statements. A returned value is handed back, trimmed.' },
           await: { type: 'boolean', description: 'Await the result if it is a promise.' },
+          frame: { type: 'integer', description: 'Run in this frame instead of the top document: the number browser_view prints next to it.' },
         },
         required: ['code'], // ui-copy-ignore
         additionalProperties: false,
@@ -3349,20 +3430,54 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       isConcurrencySafe: () => false,
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} the value. */
       execute: async (args) => withRead(async (page) => {
-        const code = String(args?.code ?? '')
-        if (code === '') return 'Give code to run.'
-        const wrapped = args?.await === true ? `(async () => { ${code} })()` : code
-        const { result, exceptionDetails } = await page.cdp.send('Runtime.evaluate', {
-          expression: wrapped,
-          returnByValue: true,
-          awaitPromise: args?.await === true,
-          userGesture: true,
-        })
-        if (exceptionDetails !== undefined) return String(exceptionDetails.exception?.description ?? exceptionDetails.text ?? 'evaluate failed').slice(0, 2000)
-        const value = result?.value
-        const text = typeof value === 'string' ? value : JSON.stringify(value)
-        if (text === undefined) return 'undefined'
-        return text.length > 4000 ? `${text.slice(0, 4000)}\n… ${text.length - 4000} more characters` : text
+        const body = String(args?.code ?? '').trim()
+        if (body === '') return 'Give code to run.'
+        /** Where to run it: a frame number from browser_view, or the top document. */
+        let contextId
+        if (args?.frame !== undefined && args.frame !== null) {
+          const frames = typeof page.frameList === 'function' ? await page.frameList().catch(() => []) : []
+          const pick = Array.isArray(frames) ? frames[Math.max(0, Math.round(Number(args.frame)))] : undefined
+          if (pick === undefined) return `there is no frame ${String(args.frame)}; the page has ${Array.isArray(frames) ? frames.length : 0} frame(s)` // ui-copy-ignore
+          contextId = pick.contextId
+          if (contextId === undefined) return `frame ${String(args.frame)} has no script context of its own (an out-of-process frame); the top document cannot read it` // ui-copy-ignore
+        }
+        /* A block body has no value, so the final statement is returned
+           explicitly when it can be. The plain form is tried first, because a
+           single expression already answers with its value. */
+        const parts = lastStatement(body)
+        const blockForm = /\breturn\b/.test(body) || parts.last === ''
+          ? `(async () => { ${body} })()`
+          : parts.head === ''
+            ? `(async () => (${parts.last}))()`
+            : `(async () => { ${parts.head}; return (${parts.last}) })()`
+        const tries = args?.await === true ? [`(async () => (${body}))()`, blockForm] : [body, `(async () => (${body}))()`, blockForm]
+        let lastError = ''
+        for (const expression of tries) {
+          const sent = await page.cdp.send('Runtime.evaluate', {
+            expression,
+            returnByValue: true,
+            awaitPromise: args?.await === true,
+            userGesture: true,
+            ...(contextId === undefined ? {} : { contextId }),
+          }).catch((error) => ({ threw: String(error?.message ?? error) }))
+          if (sent.threw !== undefined) {
+            lastError = sent.threw
+            continue
+          }
+          if (sent.exceptionDetails !== undefined) {
+            const said = String(sent.exceptionDetails.exception?.description ?? sent.exceptionDetails.text ?? 'evaluate failed').slice(0, 2000)
+            /* Only a shape that does not parse is worth another attempt; a real
+               exception is the answer. */
+            if (said.includes('SyntaxError') !== true) return said
+            lastError = said
+            continue
+          }
+          const value = sent.result?.value
+          const text = typeof value === 'string' ? value : JSON.stringify(value)
+          if (text === undefined) return 'the code ran and returned nothing'
+          return text.length > 4000 ? `${text.slice(0, 4000)}\n… ${text.length - 4000} more characters` : text
+        }
+        return lastError === '' ? 'the code ran and returned nothing' : lastError
       }),
     },
     {
@@ -3466,6 +3581,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         type: 'object', // ui-copy-ignore
         properties: {
           name: { type: 'string', description: 'File name without extension.' },
+          path: { type: 'string', description: 'Where to save it, absolute or from the working directory; the file lands exactly there.' },
           full: { type: 'boolean', description: 'The whole page, not just the screen.' },
           ref: { type: 'integer', description: 'One control from browser_view.' },
           region: { type: 'array', items: { type: 'number' }, description: 'One box instead of the whole screen: [x, y, width, height] in page pixels, the same numbers browser_prepare and browser_find report.' },
@@ -3517,10 +3633,38 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
             height: Math.max(8, Math.round(Number(rect.height) + pad * 2)),
           }
         }
-        const data = await page.shot({ full: args?.full === true, rect: clip, scale })
-        const file = await saveArtifact('shots', data, { name: args?.name, prefix: 'shot' })
+        const shot = await page.shot({ full: args?.full === true, rect: clip, scale })
+        const data = typeof shot === 'string' ? shot : String(shot.data ?? '')
+        const realWidth = typeof shot === 'string' ? 0 : Number(shot.width) || 0
+        const realHeight = typeof shot === 'string' ? 0 : Number(shot.height) || 0
+        /* A picture of nothing is not evidence: a canvas whose connection
+           dropped comes back a few pixels tall and a few hundred bytes, and
+           saving it silently would look like the page was fine. */
+        if (data.length < 400 || (realWidth > 0 && (realWidth < 8 || realHeight < 8))) {
+          return `the screen came back blank (${data.length} bytes${realWidth > 0 ? `, ${realWidth}x${realHeight}` : ''}) — nothing to look at, so nothing was saved` // ui-copy-ignore
+        }
+        const file = await saveArtifact('shots', data, { name: args?.name, path: args?.path, ext: '.png', prefix: 'shot' })
         taken = { data, file }
-        return file
+        /* Say what the file is, in its own units: a clip is asked for in CSS
+           pixels and a zoomed page answers in device pixels, so a caller that
+           crops against its own numbers would mark the wrong box. */
+        const facts = []
+        if (clip !== undefined) facts.push(`region ${clip.width}x${clip.height} css at ${clip.x},${clip.y}`)
+        else facts.push(args?.full === true ? 'the whole page' : 'the whole screen')
+        if (realWidth > 0) {
+          facts.push(`${realWidth}x${realHeight} pixels`)
+          if (clip !== undefined) facts.push(`${Math.round((realWidth / clip.width) * 100) / 100} px per css px`)
+        }
+        const view = await evaluate(page, 'JSON.stringify({w: innerWidth, h: innerHeight, dpr: devicePixelRatio})').catch(() => '')
+        if (typeof view === 'string' && view.startsWith('{')) {
+          try {
+            const one = JSON.parse(view)
+            facts.push(`viewport ${one.w}x${one.h} @${one.dpr}x`)
+          } catch {
+            /* an unreadable viewport is not worth an error */
+          }
+        }
+        return `${file} — ${facts.join(', ')}`
         })
         if (taken === undefined) return said
         let image
@@ -3544,6 +3688,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         properties: {
           ref: { type: 'integer', description: 'Only the picture at or inside this control.' },
           name: { type: 'string', description: 'File name without extension.' },
+          path: { type: 'string', description: 'Where to save it, absolute or from the working directory; the file lands exactly there.' },
           count: { type: 'integer', description: 'How many, largest first. Default 1, at most 4.' },
         },
         additionalProperties: false,
@@ -3570,12 +3715,20 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           if (mark < 0) continue
           const type = String(item?.type ?? 'image/png')
           const ext = type.includes('jpeg') ? 'jpg' : type.includes('webp') ? 'webp' : type.includes('svg') ? 'svg' : 'png'
+          const size = `${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`
+          /* A drawing surface that lost its source is still an element with a
+             size: its picture is empty, and a file of nothing is worse than a
+             sentence saying so. */
+          if ((Number(item.width) || 0) < 24 || (Number(item.height) || 0) < 24 || body.length < 200) {
+            rows.push(`skipped ${size}: that surface holds no picture (blank, or its source is gone)`)
+            continue
+          }
           const file = await saveArtifact('pictures', body.slice(mark + 1), {
             name: base === '' ? '' : `${base}${list.length > 1 ? `-${index + 1}` : ''}`,
+            path: list.length === 1 ? args?.path : undefined,
             ext: `.${ext}`,
             prefix: 'picture',
           })
-          const size = `${Math.round(Number(item.width) || 0)}x${Math.round(Number(item.height) || 0)}`
           /* Say what the picture looks like in words: a model that cannot open
              a file still needs to know a chart came back blank. */
           const flat = Number(item.flat) || 0
@@ -3852,6 +4005,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           gone: { type: 'string', description: 'Text to wait to disappear.' },
           url: { type: 'string', description: 'Address piece to wait for.' },
           idle: { type: 'boolean', description: 'Wait for the page to settle.' },
+          picture: { type: 'boolean', description: 'Wait for the picture itself to stop changing: a canvas, a video, a remote desktop or a chart that paints itself.' },
           timeout: { type: 'integer', description: 'Ceiling in milliseconds. Default 8000.' },
         },
         additionalProperties: false,
@@ -3862,6 +4016,24 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} whether it happened. */
       execute: async (args) => withRead(async (page) => {
         const timeout = Math.max(500, Math.min(30_000, Number(args?.timeout ?? 8000)))
+        /* A canvas paints without the DOM changing at all, so "idle" never
+           arrives on a remote desktop or a game. This reads the surface itself:
+           its size, and a fingerprint of what it holds. */
+        if (args?.picture === true) {
+          const signature = `(() => { const out = []; const walk = (root) => { for (const one of root.querySelectorAll('canvas, video')) { try { const w = Math.round(one.width || one.clientWidth || 0); const h = Math.round(one.height || one.clientHeight || 0); let sig = 0; if (one.tagName === 'CANVAS') { const board = document.createElement('canvas'); board.width = 16; board.height = 16; const ctx = board.getContext('2d'); ctx.drawImage(one, 0, 0, 16, 16); const px = ctx.getImageData(0, 0, 16, 16).data; for (let i = 0; i < px.length; i += 4) sig = (sig * 31 + px[i] + px[i + 1] * 3 + px[i + 2] * 7) % 1000003 } else sig = Math.round(Number(one.currentTime || 0) * 10); out.push(w + 'x' + h + ':' + sig) } catch (error) { out.push('unreadable') } } for (const frame of root.querySelectorAll('iframe')) { try { if (frame.contentDocument) walk(frame.contentDocument) } catch (error) { /* a frame from another origin cannot be read */ } } }; walk(document); return out.join('|') })()`
+          const started = Date.now()
+          let last = ''
+          while (Date.now() - started < timeout) {
+            const now = String(await evaluate(page, signature).catch(() => '') ?? '')
+            if (last !== '' && now === last) {
+              const surfaces = now.split('|').filter((one) => one !== '').length
+              return surfaces === 0 ? 'the page shows no picture to wait for' : `the picture settled: ${surfaces} surface(s) stopped changing`
+            }
+            last = now
+            await wait(250)
+          }
+          return `the picture kept changing for ${timeout} ms`
+        }
         if (typeof args?.text === 'string' && args.text !== '') {
           const seen = await until(page, `document.body !== null && document.body.innerText.includes(${JSON.stringify(String(args.text))})`, timeout)
           return seen ? `saw ${String(args.text)}` : `did not see ${String(args.text)} within ${timeout} ms`

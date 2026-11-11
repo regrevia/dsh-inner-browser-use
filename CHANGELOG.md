@@ -1,3 +1,33 @@
+## 0.47.78 — 超大页面的 DOM 先过滤再交给 agent，一串现场缺陷同时收掉
+
+一个页面可以有十几万个节点。读页时把每个节点都走一遍，把每个控件都收进来，再跨 CDP 把整包 JSON 搬回来：慢是次要的，**真正的问题是它把自己的预算当成整页**——读完不告诉你停在哪，agent 以为页面就这么短，接着对不存在的控件点下去；画布类自绘页面更糟，文本树本来就是空的，读回来一片空白，也不说为什么。Oxrail 那套的处理方式是先裁：能扫的扫有限个、看到的控件收有限个、重复的行收一次、停下的地方报出来。本轮照这个做法在页面内就把预算花完，并把话说清楚。
+
+页面内的 `snapshot()` 现在有硬预算：影子根最多扫 24000 个元素、控件最多收 `max * 3` 个、文本最多走 12000 个节点或 `budget` 个字符，先到哪条停哪条，并把 `capped`（是否截断）、`nodes`（走了多少节点）、`huge`（影子根是不是超了）一起带回。`readPage` 把它们带出来，`renderPage` 在每个模式里都补一句 `the page is longer than this read: text stopped at N characters — browser_scroll for the next screen, browser_find for one thing, or browser_read with query for one answer`；画布页在文本几乎为空而 `blind.canvases > 0` 时说 `this page paints itself on a drawing surface: there is no text tree to read — browser_shot for the screen, browser_grab for the picture, browser_wait {picture:true} for it to settle`。同一段文字只在树里出现一次（连续相同行去重），重复的控件标签仍旧折成 `×count`。
+
+同轮一起收掉的现场缺陷：
+
+- **打字**：`humanType` 以前对每个字符只发 `Input.insertText`，页面看到的是一个提交，不是按键。现在每个字符发真正的 `keyDown`/`keyUp`（`key`、`code`、`windowsVirtualKeyCode`/`nativeVirtualKeyCode`、大小写走 `modifiers: 8`），只有键盘根本打不出来的字符（中文、emoji）才退回输入法提交。远程桌面、游戏、自带键位的编辑器以前收不到，现在收得到。
+- **截图**：`page.shot()` 返回 `{data, width, height, scale, asked}`；按 PNG 头量真实像素，和 `rect × scale` 差超过 1 px 就按实测比例重拍一次。空白结果（< 400 字节或 < 8 px）不再当成成功。`browser_shot` 的说明带上区域、实测像素、每 CSS 像素比和 `dpr`。
+- **保存**：`browser_shot`/`browser_grab` 的 `path` 可以是绝对路径、可以带子目录（自动建目录），不再在默认目录里留下 `_cur.png`、`_probe.png`；只有落回默认目录才修剪旧文件。
+- **双击**：一次按下再抬起却标 `clickCount: 2`，Chrome 不会合出 `dblclick`。改成 `[1, 2]` 两次真按，双击真的触发一次 `dblclick`。
+- **按键**：`browser_key` 支持 `key_code`/`code`/`text`，给只认 `keyCode` 的页面（noVNC 一类）发原生键；组合键不再在 noVNC 里抛 `Cannot read properties of undefined (reading 'saveType')`。
+- **eval**：`await: true` 配 `fetch` 不再返回 `undefined`——块形式回退会把最后一句变成 `return`（不重复执行），字符串以外的值 `JSON.stringify` 回来；`frame: n` 可以指任意 iframe，OOPIF 会明确说读不到。
+- **等画面**：`browser_wait {picture: true}` 用 canvas 像素签名（16×16 `drawImage` + `getImageData`）等画面停下，不再只等 DOM——动画、地图、视频都有得等。
+- **抓图**：canvas 先要它自己的像素（`toDataURL`，`putImageData`/WebGL 画的也能拿到），拿不到才退回画板拷贝；太小或空的表面直接报出来，不再当成抓到了。
+
+PRE/POST（同机真 Chrome，探针 `/tmp/dom78.mjs`：自起 `Sidecar`，页面是 40000 行、共 120003 个元素、每行文字和按钮都不重样）：
+
+| 指标 | PRE（0.47.77） | POST（0.47.78） |
+| --- | --- | --- |
+| 读这一页（`readPage` text 模式） | 418 ms | 243 ms |
+| 是否说明自己停在哪 | 不说明（没有 `capped` 字段） | `capped: true`、`nodes: 12001` |
+| `renderPage` 里的提示 | 无 | `the page is longer than this read …` |
+| 画布页的读法 | 空文本，不说为什么 | `this page paints itself on a drawing surface …` |
+| 打 `A` 的按键事件 | `keyCode 0`、`code ""` | `keyCode 65`、`code "KeyA"`、shift 按下 |
+| `page.shot` 返回 | base64 字符串 | `{data,width,height,scale,asked}` |
+| 400×300 @2x 截图 | 800×600（没核对过） | 800×600（PNG 头核对） |
+| 单元测试 | 408 | 414 |
+
 ## 0.47.77 — 右键和中键按下去就一直按着：右键拖、中键自动滚动
 
 面板把右键和中键都当成「按一下就抬手」：中键在 `pointerdown` 里立刻发一个 `{kind:'click', button:'middle'}`，右键直接从 `pointerdown` 返回，全靠 `contextmenu` 事件补一个合成 click。结果是页面在一次突发里看到按下+抬起，**按钮从来没有保持按下**——右键拖画布、地图、滑杆拖不动，中键自动滚动也起不来。

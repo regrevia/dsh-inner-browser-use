@@ -128,3 +128,30 @@ test('the page-side scripts the browser runs are valid JavaScript', () => {
   assert.match(read, /\\s\+/, 'whitespace regexes keep their backslash')
   assert.ok(read.includes('application\\/x-swf'), 'a slash inside a regex is escaped')
 })
+
+
+const quiet = { url: 'https://example.com/', title: 'Example', text: '', textChars: 0, controls: [], scroll: { y: 0, height: 100, viewport: 800 }, focused: null }
+
+test('a read that ran out of budget says where it stopped', () => {
+  const said = renderPage({ ...quiet, text: 'words '.repeat(900), textChars: 6000, capped: true })
+  assert.match(said, /longer than this read/)
+  assert.match(said, /6000/)
+  assert.match(said, /browser_scroll/)
+})
+
+test('a short page says nothing about budgets', () => {
+  const said = renderPage({ ...quiet, text: 'A short page.', textChars: 13, capped: false })
+  assert.doesNotMatch(said, /longer than this read/)
+})
+
+test('a page that paints itself is named as such instead of read as empty', () => {
+  const said = renderPage({ ...quiet, blind: { pictures: 0, canvases: 1, videos: 0, frames: 0, flash: 0 } })
+  assert.match(said, /paints itself/)
+  assert.match(said, /browser_shot/)
+})
+
+test('the picture reader hands a drawing surface its own pixels back', () => {
+  const code = pictures(undefined, 1)
+  assert.match(code, /toDataURL\('image\/png'\)/, 'a canvas is asked for its own pixels')
+  assert.match(code, /putImageData|drawImage/, 'and copied through a board when it will not answer')
+})

@@ -156,13 +156,26 @@ export function snapshot(mode, budget, max) {
      querySelectorAll on the document never looks. Open roots are collected
      first, so a control inside one is numbered like any other. */
   const roots = [document]
+  let scanned = 0
+  let huge = false
   for (let i = 0; i < roots.length; i += 1) {
     for (const el of roots[i].querySelectorAll('*')) {
+      scanned += 1
+      if (scanned > 24000) {
+        huge = true
+        break
+      }
       if (el.shadowRoot) roots.push(el.shadowRoot)
     }
+    if (huge) break
   }
   const each = (fn) => {
-    for (const root of roots) for (const el of root.querySelectorAll(reg.selector)) fn(el)
+    for (const root of roots) {
+      for (const el of root.querySelectorAll(reg.selector)) {
+        if (halt) return
+        fn(el)
+      }
+    }
   }
   const role = (el) => {
     const explicit = el.getAttribute?.('role')
@@ -179,8 +192,12 @@ export function snapshot(mode, budget, max) {
   }
   const controls = []
   const seen = new Set()
+  let halt = false
   each((el) => {
-    if (controls.length >= max * 3) return
+    if (controls.length >= max * 3) {
+      halt = true
+      return
+    }
     const b = box(el)
     if (b.width < 2 || b.height < 2) return
     if (!shown(el)) return
@@ -219,6 +236,9 @@ export function snapshot(mode, budget, max) {
   const parts = []
   let used = 0
   let full = 0
+  let capped = false
+  let nodes = 0
+  let lastSaid = ''
   const take = (text) => {
     if (text === '') return
     full += text.length
@@ -232,8 +252,21 @@ export function snapshot(mode, budget, max) {
   if (mode !== 'links' && mode !== 'forms') {
     const emitted = new Set()
     for (const root of texts) {
+      if (capped) break
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
       for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        nodes += 1
+        /* A page can hold a hundred thousand text nodes; the budget is what the
+           reader is allowed to see, so stop looking once it is spent instead of
+           styling and measuring the rest. */
+        if (nodes > 12000) {
+          capped = true
+          break
+        }
+        if (used >= budget) {
+          capped = true
+          break
+        }
         const text = String(node.nodeValue ?? '').replace(/\\s+/g, ' ').trim()
         const parent = node.parentElement
         if (text === '' || !parent || emitted.has(parent)) continue
@@ -242,6 +275,8 @@ export function snapshot(mode, budget, max) {
         const fits = style.display !== 'none' && style.visibility !== 'hidden' && b.width > 1 && b.height > 1
         if (!fits || !inView(b)) continue
         emitted.add(parent)
+        if (text === lastSaid) continue
+        lastSaid = text
         take(text)
         if (parent.tagName === 'P' || parent.tagName === 'DIV' || parent.tagName === 'LI' || /^H[1-6]$/.test(parent.tagName)) take('\\n')
       }
@@ -389,6 +424,9 @@ export function snapshot(mode, budget, max) {
       return { ref: reg.id(el), kind: role(el), name: name(el) }
     })(),
     controls: picked,
+    capped,
+    nodes,
+    huge,
     picture,
     blind,
   })
@@ -659,9 +697,25 @@ export function pictures(ref, count) {
     let data = ''
     let type = 'image/png'
     try {
-      if (item.kind === 'canvas' || item.kind === 'video') {
-        /* Same path for both: a video frame is copied onto a board and read as
-           a picture. Nothing here needs the video to be playing. */
+      if (item.kind === 'canvas') {
+        /* Ask the drawing surface for its own pixels first: a canvas painted
+           with putImageData or WebGL still knows how to hand itself over, and
+           copying it through a second board can come back empty when the
+           element has no painted box to read from. */
+        try {
+          data = item.el.toDataURL('image/png')
+        } catch {
+          const board = document.createElement('canvas')
+          board.width = Math.max(1, Math.round(item.w))
+          board.height = Math.max(1, Math.round(item.h))
+          const pen = board.getContext('2d')
+          pen.drawImage(item.el, 0, 0, board.width, board.height)
+          data = board.toDataURL('image/png')
+        }
+        if (!data || data.length < 40) throw new Error('empty surface')
+      } else if (item.kind === 'video') {
+        /* A video frame is copied onto a board and read as a picture. Nothing
+           here needs the video to be playing. */
         const board = document.createElement('canvas')
         board.width = Math.max(1, Math.round(item.w))
         board.height = Math.max(1, Math.round(item.h))
@@ -1623,6 +1677,8 @@ export async function readPage(page, options = {}) {
     scroll: read?.scroll,
     focused: read?.focused ?? null,
     controls: Array.isArray(read?.controls) ? read.controls : [],
+    capped: read?.capped === true,
+    nodes: Number(read?.nodes ?? 0),
     blind: (() => {
       const own = blindSpots(read?.blind, framed.frames)
       for (const key of Object.keys(own)) own[key] += Number(framed.blind?.[key] ?? 0)
@@ -1808,6 +1864,11 @@ export function renderPage(read, options = {}) {
     lines.push('')
     lines.push(`the words here are the ${listed.length} controls above — browser_view {mode:'full'} for the page's own wording`)
   }
+  /* A page can hold more than one read is allowed to carry: say where the read
+     stopped, so nobody mistakes the end of the budget for the end of the page. */
+  if (read.capped === true) {
+    lines.push(`the page is longer than this read: text stopped at ${String(read.textChars)} characters — browser_scroll for the next screen, browser_find for one thing, or browser_read with query for one answer`)
+  }
   if (read.blind !== undefined && read.blind !== null) {
     const bits = []
     if (read.blind.pictures > 0) bits.push(`${read.blind.pictures} picture(s) with no words`)
@@ -1818,6 +1879,9 @@ export function renderPage(read, options = {}) {
     /* Only when something is actually out of reach: a line saying "nothing is
        hidden" on every read is a line the reader learns to skip. */
     if (bits.length > 0) lines.push(`text cannot show: ${bits.join(', ')} — browser_grab takes the picture, browser_shot shows the screen`)
+    /* Nothing in the tree to read is not the same as an empty page: a canvas
+       app answers every read with the shell around the drawing. */
+    if (read.blind.canvases > 0 && Number(read.textChars ?? 0) < 200) lines.push('this page paints itself on a drawing surface: there is no text tree to read — browser_shot for the screen, browser_grab for the picture, browser_wait {picture:true} for it to settle')
     /* Almost no words but frames on screen is the shape of a plugin game. Saying
        it here is the difference between "blank page" and "this needs Flash". */
     if (read.blind.flash === 0 && read.blind.frames > 0 && Number(read.textChars ?? 0) < 400) {

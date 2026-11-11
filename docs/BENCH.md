@@ -1,3 +1,19 @@
+## 十二万个元素的页面：读得完，也要说停在哪 — 0.47.78
+
+探针 `/tmp/dom78.mjs`：真 Chrome，自起 `Sidecar`，页面 40000 行（`div.row > span.name + button`，文字和按钮标签都不重样），共 **120003** 个元素；`readPage(page, {mode:'text', maxChars:6000})` 计时并看返回值。PRE 跑 0.47.77 的 worktree，POST 跑本轮工作区。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 元素数 | 120003 | 120003 |
+| 读一次（`readPage`，text 模式） | 418 ms | 243 ms |
+| 说自己停在哪 | 无字段 | `capped: true`、`nodes: 12001` |
+| `renderPage` 的长页提示 | 无 | `the page is longer than this read …` |
+| 画布页 | 空文本、不解释 | `this page paints itself on a drawing surface …` |
+| 打 `A` 的按键事件 | `keyCode 0`、`code ""` | `keyCode 65`、`code "KeyA"`、shift 按下 |
+| `page.shot` 返回 | base64 字符串 | `{data,width,height,scale,asked}` |
+| 400×300 @2x 截图实测 | 800×600（没核对） | 800×600（按 PNG 头核对） |
+| 单元测试 | 408 | 414 |
+
 ## 右键拖、中键拖：按钮有没有真的按住 — 0.47.77
 
 探针 `/tmp/drag.mjs`：真 Chrome，`data:text/html` 页面上挂一个 600×400 的 `div`，捕获阶段记录 `mousedown/mousemove/mouseup/contextmenu/auxclick`（含 `button` 与 `buttons` 掩码）。PRE 按 0.47.76 面板的序列驱动（右键、中键各发一次合成 `click`，拖拽中的 move 是 `pressed: false`），POST 按 0.47.77 的序列（`down` → 带 `pressed: true, button` 的 `hover` → `up`）。

@@ -468,6 +468,70 @@ export function jpegSize(data) {
   return null
 }
 
+/**
+ * The picture's own size, read from its PNG header. A clip is asked for in CSS
+ * pixels and comes back in device pixels whenever the page zooms, so the file
+ * is the only thing that knows how many pixels it really has.
+ * @param {string} data - base64 PNG.
+ * @returns {{width: number, height: number}|null} the size in pixels, or null when it is not a PNG.
+ */
+export function pngSize(data) {
+  const text = typeof data === 'string' ? data : ''
+  if (text.length < 32) return null
+  const raw = Buffer.from(text, 'base64')
+  const magic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  if (raw.length < 24 || raw.subarray(0, 8).equals(magic) !== true) return null
+  return { width: raw.readUInt32BE(16), height: raw.readUInt32BE(20) }
+}
+
+/* Every key on a US keyboard that makes one character: the name, the physical
+   code and the number the page reads off the event. A page that keys off
+   `keyCode` (a remote desktop, a game, an editor with its own keymap) ignores a
+   synthetic key whose code is 0. */
+const CHAR_ROWS = [
+  ['a', 'KeyA', 65, 0], ['b', 'KeyB', 66, 0], ['c', 'KeyC', 67, 0], ['d', 'KeyD', 68, 0], ['e', 'KeyE', 69, 0],
+  ['f', 'KeyF', 70, 0], ['g', 'KeyG', 71, 0], ['h', 'KeyH', 72, 0], ['i', 'KeyI', 73, 0], ['j', 'KeyJ', 74, 0],
+  ['k', 'KeyK', 75, 0], ['l', 'KeyL', 76, 0], ['m', 'KeyM', 77, 0], ['n', 'KeyN', 78, 0], ['o', 'KeyO', 79, 0],
+  ['p', 'KeyP', 80, 0], ['q', 'KeyQ', 81, 0], ['r', 'KeyR', 82, 0], ['s', 'KeyS', 83, 0], ['t', 'KeyT', 84, 0],
+  ['u', 'KeyU', 85, 0], ['v', 'KeyV', 86, 0], ['w', 'KeyW', 87, 0], ['x', 'KeyX', 88, 0], ['y', 'KeyY', 89, 0],
+  ['z', 'KeyZ', 90, 0],
+  ['0', 'Digit0', 48, 0], ['1', 'Digit1', 49, 0], ['2', 'Digit2', 50, 0], ['3', 'Digit3', 51, 0], ['4', 'Digit4', 52, 0],
+  ['5', 'Digit5', 53, 0], ['6', 'Digit6', 54, 0], ['7', 'Digit7', 55, 0], ['8', 'Digit8', 56, 0], ['9', 'Digit9', 57, 0],
+  [' ', 'Space', 32, 0], ['\n', 'Enter', 13, 0], ['\t', 'Tab', 9, 0], ['\r', 'Enter', 13, 0],
+  ['-', 'Minus', 189, 0], ['=', 'Equal', 187, 0], ['[', 'BracketLeft', 219, 0], [']', 'BracketRight', 221, 0],
+  ['\\', 'Backslash', 220, 0], [';', 'Semicolon', 186, 0], ["'", 'Quote', 222, 0], [',', 'Comma', 188, 0],
+  ['.', 'Period', 190, 0], ['/', 'Slash', 191, 0], ['`', 'Backquote', 192, 0],
+]
+/* The shifted half of those keys: same physical key, one modifier bit, a
+   different character. Without the shift bit a page sees "1" where the hand
+   typed "!". */
+const SHIFT_ROWS = [
+  ['A', 'KeyA', 65], ['B', 'KeyB', 66], ['C', 'KeyC', 67], ['D', 'KeyD', 68], ['E', 'KeyE', 69], ['F', 'KeyF', 70],
+  ['G', 'KeyG', 71], ['H', 'KeyH', 72], ['I', 'KeyI', 73], ['J', 'KeyJ', 74], ['K', 'KeyK', 75], ['L', 'KeyL', 76],
+  ['M', 'KeyM', 77], ['N', 'KeyN', 78], ['O', 'KeyO', 79], ['P', 'KeyP', 80], ['Q', 'KeyQ', 81], ['R', 'KeyR', 82],
+  ['S', 'KeyS', 83], ['T', 'KeyT', 84], ['U', 'KeyU', 85], ['V', 'KeyV', 86], ['W', 'KeyW', 87], ['X', 'KeyX', 88],
+  ['Y', 'KeyY', 89], ['Z', 'KeyZ', 90],
+  ['!', 'Digit1', 49], ['@', 'Digit2', 50], ['#', 'Digit3', 51], ['$', 'Digit4', 52], ['%', 'Digit5', 53],
+  ['^', 'Digit6', 54], ['&', 'Digit7', 55], ['*', 'Digit8', 56], ['(', 'Digit9', 57], [')', 'Digit0', 48],
+  ['_', 'Minus', 189], ['+', 'Equal', 187], ['{', 'BracketLeft', 219], ['}', 'BracketRight', 221],
+  ['|', 'Backslash', 220], [':', 'Semicolon', 186], ['"', 'Quote', 222], ['<', 'Comma', 188], ['>', 'Period', 190],
+  ['?', 'Slash', 191], ['~', 'Backquote', 192],
+]
+const CHAR_KEYS = new Map()
+for (const [one, code, keyCode, modifiers] of CHAR_ROWS) CHAR_KEYS.set(one, { key: one, code, keyCode, modifiers })
+for (const [one, code, keyCode] of SHIFT_ROWS) CHAR_KEYS.set(one, { key: one, code, keyCode, modifiers: 8 })
+
+/**
+ * The event a keyboard sends for one character: its name, its physical code,
+ * the number a page reads, and whether a shift is behind it.
+ * @param {string} one - one character of text.
+ * @returns {{key: string, code: string, keyCode: number, modifiers: number}|null} the spec, or null when the character is not on a US keyboard.
+ */
+export function charSpec(one) {
+  const spec = CHAR_KEYS.get(String(one))
+  return spec === undefined ? null : { ...spec }
+}
+
 export function canArmWatcher() {
   const app = appPid()
   return app !== 0 && looksLikeApp(commandOf(app), process.platform) === true
@@ -2816,14 +2880,27 @@ export class SidecarPage {
             await this.flashKey('keyUp', { key: one })
             continue
           }
-          await this.input('Input.dispatchKeyEvent', {
-            type: 'keyDown', // ui-copy-ignore
-            key: one, // ui-copy-ignore
-            text: one, // ui-copy-ignore
-            unmodifiedText: one, // ui-copy-ignore
-            windowsVirtualKeyCode: 0,
-            nativeVirtualKeyCode: 0,
-          }).catch(() => {})
+          const spec = charSpec(one)
+          /* A character no key can make (Chinese, an emoji) arrives as an
+             input-method commit: inventing a keycode for it would be a lie. */
+          if (spec === null) {
+            await this.input('Input.insertText', { text: one }).catch(() => {})
+            continue
+          }
+          /* The shape a keyboard has: the down event carries the key's own code
+             and its text, the up event carries the code and no text. A page
+             that pairs the two — a remote desktop, a game, an editor with its
+             own keymap — sees nothing when the up half is missing, however
+             many downs arrive. */
+          const base = {
+            key: spec.key,
+            code: spec.code,
+            windowsVirtualKeyCode: spec.keyCode,
+            nativeVirtualKeyCode: spec.keyCode,
+            modifiers: spec.modifiers,
+          }
+          await this.input('Input.dispatchKeyEvent', { type: 'keyDown', ...base, text: one, unmodifiedText: one }).catch(() => {})
+          await this.input('Input.dispatchKeyEvent', { type: 'keyUp', ...base, text: undefined, unmodifiedText: undefined }).catch(() => {})
         }
       }
       at += size
@@ -2935,22 +3012,49 @@ export class SidecarPage {
    */
   async shot(options = {}) {
     this.touched = Date.now()
-    /** @type {any} */
-    const args = { format: 'png' }
-    if (options.rect) {
-      args.clip = { ...options.rect, scale: options.scale ?? 1 }
-      args.captureBeyondViewport = options.full === true
-    } else if (options.full === true) {
-      const { result } = await this.cdp.send('Runtime.evaluate', {
-        expression: 'JSON.stringify({w: Math.max(document.documentElement.scrollWidth, innerWidth), h: Math.max(document.documentElement.scrollHeight, innerHeight)})',
-        returnByValue: true,
-      })
-      const size = JSON.parse(String(result?.value ?? '{"w":1440,"h":900}'))
-      args.clip = { x: 0, y: 0, width: Math.min(size.w, 8000), height: Math.min(size.h, 20000), scale: options.scale ?? 1 }
-      args.captureBeyondViewport = true
+    const asked = Number(options.scale ?? 1)
+    const hand = Number.isFinite(asked) && asked > 0 ? Math.max(0.1, Math.min(4, asked)) : 1
+    /** @param {number} scale - the clip scale to try. @returns {Promise<{data: string, size: {width: number, height: number}|null}>} the capture and its real pixels. */
+    const once = async (scale) => {
+      /** @type {any} */
+      const args = { format: 'png' }
+      if (options.rect) {
+        args.clip = { ...options.rect, scale }
+        args.captureBeyondViewport = options.full === true
+      } else if (options.full === true) {
+        const { result } = await this.cdp.send('Runtime.evaluate', {
+          expression: 'JSON.stringify({w: Math.max(document.documentElement.scrollWidth, innerWidth), h: Math.max(document.documentElement.scrollHeight, innerHeight)})',
+          returnByValue: true,
+        })
+        const size = JSON.parse(String(result?.value ?? '{"w":1440,"h":900}'))
+        args.clip = { x: 0, y: 0, width: Math.min(size.w, 8000), height: Math.min(size.h, 20000), scale }
+        args.captureBeyondViewport = true
+      }
+      const { data } = await this.cdp.send('Page.captureScreenshot', args)
+      const body = String(data ?? '')
+      return { data: body, size: pngSize(body) }
     }
-    const { data } = await this.cdp.send('Page.captureScreenshot', args)
-    return String(data ?? '')
+    const rect = options.rect ?? null
+    const wantWidth = rect === null ? 0 : Math.max(1, Math.round(Number(rect.width) * hand))
+    const wantHeight = rect === null ? 0 : Math.max(1, Math.round(Number(rect.height) * hand))
+    let got = await once(hand)
+    /* The pixels a clip comes back with are not the CSS pixels it was asked
+       for: a page zoom or a device ratio multiplies them, and a caller that
+       crops the file against its own numbers then marks the wrong box. The
+       file says how many pixels it holds, so ask it, and when the answer is a
+       different scale, spend one more capture at the scale the page really
+       rendered. */
+    if (wantWidth > 0 && got.size !== null && Math.abs(got.size.width - wantWidth) > 1) {
+      const real = (got.size.width / wantWidth) * hand
+      if (real > 0.05 && real < 8 && Math.abs(real - hand) > 0.01) got = await once(real)
+    }
+    return {
+      data: got.data,
+      width: got.size === null ? 0 : got.size.width,
+      height: got.size === null ? 0 : got.size.height,
+      scale: hand,
+      asked: { width: wantWidth, height: wantHeight },
+    }
   }
 
   /** @returns {Promise<string>} base64 PDF of the whole document. */

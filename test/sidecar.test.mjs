@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Sidecar, SidecarPage, VIEW, canArmWatcher, WATCHER_SCRIPT, appFromTable, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, mayClaim, pidsWithMark, rootDir } from '../sidecar.js'
+import { Sidecar, SidecarPage, VIEW, canArmWatcher, WATCHER_SCRIPT, appFromTable, charSpec, deathNote, jpegSize, looksLikeApp, nextQuality, noteDeath, ownsBrowser, mayClaim, pidsWithMark, pngSize, rootDir } from '../sidecar.js'
 import { findWords, nearestByWords } from '../tools.js'
 
 /** A CDP session that records what the page asked for and never answers with
@@ -2064,4 +2064,37 @@ test('the watcher closes the browser once the application is gone', async () => 
       }
     }
   }
+})
+
+
+test('a PNG answer is measured from its own header, not from what was asked', () => {
+  const png = (w, h) => {
+    const head = Buffer.alloc(24)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0)
+    head.writeUInt32BE(w, 16)
+    head.writeUInt32BE(h, 20)
+    return head.toString('base64')
+  }
+  assert.deepEqual(pngSize(png(464, 900)), { width: 464, height: 900 })
+  assert.equal(pngSize(png(0, 0)).width, 0, 'the header is the truth even when the page lied')
+  assert.equal(pngSize('not a picture at all, just text that is long enough'), null)
+  assert.equal(pngSize(''), null)
+})
+
+test('every character a person can type names its own key and code', () => {
+  const a = charSpec('a')
+  assert.equal(a.key, 'a')
+  assert.equal(a.code, 'KeyA')
+  assert.equal(a.keyCode, 65)
+  assert.equal(a.modifiers, 0)
+  const upper = charSpec('A')
+  assert.equal(upper.key, 'A')
+  assert.equal(upper.code, 'KeyA')
+  assert.equal(upper.modifiers, 8, 'a capital is the same key with shift held')
+  assert.equal(charSpec('1').keyCode, 49)
+  assert.equal(charSpec(' ').code, 'Space')
+  assert.equal(charSpec('-').keyCode, 189)
+  assert.equal(charSpec('?').modifiers, 8)
+  assert.equal(charSpec('中'), null, 'a character no key can make is not invented')
+  assert.equal(charSpec('😀'), null)
 })
