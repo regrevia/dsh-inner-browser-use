@@ -2599,7 +2599,11 @@ export class SidecarPage {
     const probe = `(() => {
       const seen = []
       const blind = []
-      const walk = (doc) => {
+      /* A picture inside a frame is placed in that frame's own coordinates,
+         so the frame's own place on the page has to be added: clipping the
+         frame-local rectangle watched a still patch of the outer page and
+         called an animating chart settled. */
+      const walk = (doc, ox, oy) => {
         for (const one of doc.querySelectorAll('canvas, video')) {
           try {
             const w = Math.round(one.width || one.clientWidth || 0)
@@ -2619,23 +2623,28 @@ export class SidecarPage {
             const box = one.getBoundingClientRect()
             if (box.width >= 8 && box.height >= 8) {
               const view = doc.defaultView
-              blind.push([Math.round(box.left + (view ? view.scrollX : 0)), Math.round(box.top + (view ? view.scrollY : 0)), Math.round(box.width), Math.round(box.height)])
+              blind.push([Math.round(ox + box.left + (view ? view.scrollX : 0)), Math.round(oy + box.top + (view ? view.scrollY : 0)), Math.round(box.width), Math.round(box.height)])
             } else seen.push('unreadable')
           }
         }
         for (const frame of doc.querySelectorAll('iframe')) {
-          try { if (frame.contentDocument) walk(frame.contentDocument) } catch (error) { /* another origin */ }
+          try {
+            if (!frame.contentDocument) continue
+            const where = frame.getBoundingClientRect()
+            const view = doc.defaultView
+            walk(frame.contentDocument, ox + where.left + (view ? view.scrollX : 0) + frame.clientLeft, oy + where.top + (view ? view.scrollY : 0) + frame.clientTop)
+          } catch (error) { /* another origin */ }
         }
       }
-      walk(document)
+      walk(document, 0, 0)
       return JSON.stringify({ seen: seen, blind: blind })
     })()`
     const started = Date.now()
     /* A surface that toggles can look still for one sample: a picture counts as
        settled only after it held the same fingerprint for a quarter of a second,
        sampled often enough to see a flicker of a tenth of a second. */
-    const SAMPLE_MS = 150
-    const QUIET_MS = 400
+    const SAMPLE_MS = 180
+    const QUIET_MS = 900
     let last = ''
     let since = started
     let surfaces = 0
@@ -2672,7 +2681,10 @@ export class SidecarPage {
       } else if (Date.now() - since >= QUIET_MS) {
         return { settled: true, surfaces, fromScreen, ms: Date.now() - started }
       }
-      await wait(SAMPLE_MS)
+      /* Fixed sampling locks onto an animation whose period divides the
+         interval: samples keep landing on the same colour and a moving picture
+         looks still. A little jitter breaks that phase lock. */
+      await wait(SAMPLE_MS + Math.floor(Math.random() * 40))
     }
     return { settled: false, surfaces, fromScreen, ms: Date.now() - started }
   }

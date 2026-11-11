@@ -4031,10 +4031,17 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           const done = await page.pictureSettled(timeout)
           if (done.surfaces === 0) return 'the page shows no picture to wait for'
           if (done.settled !== true) return `the picture kept changing for ${timeout} ms`
-          /* A surface read from the screen is still a surface that stopped
-             changing, but saying which ones came from the screen keeps the
-             claim checkable. */
-          return `the picture settled: ${done.surfaces} surface(s) stopped changing${done.fromScreen > 0 ? ` (${done.fromScreen} of them read from the screen)` : ''}`
+          /* Screen frames are the only evidence for a picture whose pixels the
+             page hides, and a headless window repeats them while the picture
+             moves: a canvas repainted twelve times inside one wait and eight
+             screenshots came back byte-identical. So a screen-read surface is
+             reported as unwatched, never as settled. */
+          if (done.fromScreen > 0) {
+            const readable = done.surfaces - done.fromScreen
+            const screen = `${done.fromScreen} picture(s) can only be watched from the screen, which does not prove they stopped changing`
+            return readable > 0 ? `${readable} picture(s) the page can read stopped changing; ${screen}` : screen
+          }
+          return `the picture settled: ${done.surfaces} surface(s) stopped changing`
         }
         if (typeof args?.text === 'string' && args.text !== '') {
           const seen = await until(page, `document.body !== null && document.body.innerText.includes(${JSON.stringify(String(args.text))})`, timeout)

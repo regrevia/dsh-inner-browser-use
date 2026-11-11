@@ -226,8 +226,26 @@ test('the wait tool asks the page for its pictures instead of trusting a blind h
   const tool = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
   const side = readFileSync(new URL('../sidecar.js', import.meta.url), 'utf8')
   assert.match(tool, /const done = await page\.pictureSettled\(timeout\)/)
-  assert.ok(tool.includes('read from the screen'), 'a screen-read surface should say so')
+  assert.ok(tool.includes('does not prove they stopped changing'), 'a screen-read surface is not called settled')
+  assert.equal(tool.includes('the picture settled: ${done.surfaces} surface(s) stopped changing${done.fromScreen'), false, 'the settled sentence must not absorb a screen-read surface')
   assert.match(side, /Page\.captureScreenshot/, 'the screen is the fallback for a surface the page hides')
-  assert.ok(side.includes('const QUIET_MS = 400'), 'one equal sample is not a still picture')
+  assert.ok(side.includes('const QUIET_MS = 900'), 'one equal sample is not a still picture')
   assert.equal(/const signature = `/.test(tool), false, 'the blind inline signature is gone')
+})
+
+test('a picture inside a frame is watched where the frame sits on the page', () => {
+  const side = readFileSync(new URL('../sidecar.js', import.meta.url), 'utf8')
+  /* A frame-local rectangle clips a still patch of the outer page, so an
+     animating chart in an iframe used to look settled after 1.1 s. */
+  assert.ok(side.includes('const walk = (doc, ox, oy) => {'), 'the walk carries a frame offset')
+  assert.ok(side.includes('ox + box.left'), 'a blind rectangle is moved into page coordinates')
+  assert.ok(side.includes('frame.clientLeft'), 'the frame border is part of where the picture sits')
+  assert.ok(side.includes('walk(document, 0, 0)'), 'the outer document starts at zero offset')
+})
+
+test('a screen-read picture is never reported as settled by the wait tool', () => {
+  const tool = readFileSync(new URL('../tools.js', import.meta.url), 'utf8')
+  const branch = tool.slice(tool.indexOf('if (done.fromScreen > 0)'), tool.indexOf('return `the picture settled'))
+  assert.ok(branch.includes('does not prove they stopped changing'), 'the honest sentence is used')
+  assert.equal(/settled: \$\{done\.surfaces\} surface\(s\) stopped changing\$\{done\.fromScreen/.test(tool), false)
 })

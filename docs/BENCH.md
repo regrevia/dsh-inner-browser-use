@@ -1,3 +1,17 @@
+## 框里的图：坐标要按框在页面上的位置算 — 0.47.84
+
+探针 `/tmp/frame84.mjs`：本机 HTTP 服务给外壳页 `/outer.html`，页面上方 380 px 静态内容，下面一个 400×240 的同源 `<iframe>`；框内 `/inner.html` 用同端口 `localhost` 的 SVG 图片污染画布，然后每 120 ms 红蓝重绘。第一段直接调 `pictureSettled(1600)`，第二段把 `sidecar.js` 里发货的那段探针原样取出来在页面里执行，读出它交给 `Page.captureScreenshot` 的盲区矩形。PRE 跑 0.47.83 的提交。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 盲区矩形 | `[0,0,320,200]`（框内坐标） | `[0,412,320,200]`（页面坐标） |
+| 动画画布 | `settled`，1110 ms（谎报） | `kept changing`，1432–1645 ms |
+| 静止画布（对照） | `settled`，585 ms | `settled`，582 ms |
+| 纯文字页（对照） | `1–3 ms` | `1–2 ms` |
+| 屏幕帧会不会重复 | — | 会：框内重绘 12 次，同矩形 8 张截图逐字节相同 |
+| 只能看屏幕的画面怎么说 | `(1 of them read from the screen)`，算等到了 | `which does not prove they stopped changing`，不算等到了 |
+| 全量单测 | 424 | 426 |
+
 ## 读不到的画：从屏幕等，不从字符串等 — 0.47.83
 
 探针 `/tmp/wait83.mjs`：本机 HTTP 服务，页面在 `127.0.0.1`，图片走 `localhost`（同端口、不同主机 → 不同源），`drawImage` 后画布被污染，然后每 120 ms 在红蓝之间 `fillRect` 重绘；另有 `/still.html`（只画一次）和 `/empty.html`（纯文字，没有 canvas/video）。PRE 直接重放 0.47.82 `tools.js` 里那段内联签名（逐字复制），POST 调 0.47.83 新增的 `SidecarPage#pictureSettled`。

@@ -1,3 +1,28 @@
+## 0.47.84 — 框里的图，按框在页面上的位置看
+
+0.47.83 修好了「读不到的画从屏幕读」，但屏幕读的位置算错了：页内探针走进同源 iframe 时，把框内画布**在自己文档里**的坐标 `[0,0,320,200]` 直接当成整页坐标去截图。这张演示页在 iframe 上方有 380 px 内容，于是截图截的是页面顶部的静态背景——每次哈希都一样。探针实测：框内画布每 120 ms 红蓝重绘，`browser_wait {picture:true}` 在 **1110 ms** 就回 `the picture settled: 1 surface(s) stopped changing`。
+
+原因是递归没有累加偏移。现在 `walk(doc, ox, oy)` 每进一层框就把 `frame.getBoundingClientRect()` 加框自身的 `clientLeft/clientTop` 累进坐标，页面内边距、页面滚动、框边框都算进去。同一探针的盲区矩形从 `[0,0,320,200]` 变成 `[0,412,320,200]`，正好落在 iframe 里的画布上；同一张动画画布从「1110 ms 谎报停了」变成「1600 ms 内一直在变」。
+
+修这条时又量到一个必须说清的限制：headless 窗口里 `Page.captureScreenshot` 会**重复上一帧**。同一页面，框内画布在一次等待中重绘 **12 次**（页内 `setInterval` 计数），同一矩形连拍 8 张截图却**逐字节相同**（`clip` / 无 `clip` / `captureBeyondViewport` / PNG 全试过）。采样间隔与静止判定窗从 150/400 ms 调到 **180/900 ms** 只能降低、不能消除误判——所以 0.47.83 的 `(1 of them read from the screen)` 这句话不再算「等到了」：
+
+- 页内读得懂的画面停住 → `the picture settled: N surface(s) stopped changing`（不变）
+- 有读不到、只能看屏幕的画面 → `... can only be watched from the screen, which does not prove they stopped changing`
+
+宁可说「证明不了」，也不把重复帧当成静止。
+
+PRE/POST（真 Chrome，探针 `/tmp/frame84.mjs`：`127.0.0.1` 外壳页，iframe 上方 380 px 内容，框内画布用同端口 `localhost` 图片污染后每 120 ms 重绘；PRE 跑 0.47.83 提交 `f6210ed`）：
+
+| 项 | PRE 0.47.83 | POST 0.47.84 |
+| --- | --- | --- |
+| 交给截图函数的盲区矩形 | `[0,0,320,200]`（框内坐标，截到的是静止背景） | `[0,412,320,200]`（页面坐标，框真正的位置） |
+| 动画中的污染画布 | `settled`，**1110 ms**（谎报） | `kept changing`，1600 ms 预算内跑满 1432–1645 ms |
+| 同一页的静止画布（回归对照） | `settled`，585 ms | `settled`，582 ms |
+| 纯文字页（回归对照） | `no picture to wait for`，1–3 ms | `no picture to wait for`，1–2 ms |
+| 只能看屏幕的画面，工具话术 | `(1 of them read from the screen)` → 算「等到了」 | `which does not prove they stopped changing` → 不算「等到了」 |
+| 采样间隔 / 静止判定窗 | 150 ms / 400 ms | 180 ms / 900 ms |
+| 单元测试 | 424 | 426 |
+
 ## 0.47.83 — 「等图不动」不许把读不到的画当成不动
 
 `browser_wait {picture:true}` 的手法是：每 250 ms 取一次画布指纹，两次一样就算「停了」。可画布一旦被另一个站点的像素污染（图表库、地图、验证码的常态），`getImageData` 必然抛异常，旧代码 `catch { out.push('unreadable') }` 把异常变成一个固定字符串——**每次都一样**。于是同一页上，画布每 120 ms 在红蓝之间重绘，截图哈希每次都不同，这个工具却在 **263 ms** 就宣布 `the picture settled: 1 surface(s) stopped changing`。agent 据此认为图表加载完了，读到的是一帧随机颜色。
