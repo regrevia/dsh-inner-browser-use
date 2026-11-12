@@ -1,3 +1,25 @@
+## 0.47.86 — 死了就别再等那十五秒
+
+0.47.85 让浏览器早死时留下退出码和 stderr，但**等端口的那段代码根本不看它**：`spawnChrome` 拿 `DevToolsActivePort` 的循环只认「文件出现」和「十五秒到点」，中间不看子进程是不是已经没了。于是 Chrome 123 ms 就 exit 21，工具却要空等到 15085 ms 才回一句 `sidecar: Chrome did not open a debugging port`——人在等页面，等的是十五秒的必然失败，而原因（`Failed to create a ProcessSingleton`）早在日志里躺着。
+
+现在 spawn 时记 `this.childGone = null`，退出处理器在清 child 之前写下 `{ code, signal, ms, err }`；端口循环每轮先问一句 `portWaitFailure(this.childGone)`，有答案就立刻抛，抛的是真原因：
+
+```
+sidecar: Chrome ended before it opened a debugging port
+  (exit code 21 after 123 ms — Failed to create a ProcessSingleton for your profile directory…)
+```
+
+stderr 压成一行、从尾部截 240 字（尾部才是点名原因的那半句）。`portWaitFailure` 是导出的纯函数，单测直接喂各种死法。浏览器活着、正在写端口的时候它返回空串，冷启动一步不多等。
+
+PRE/POST（PRE 跑 0.47.85 提交 `3696e0e`；探针 `/tmp/pre86.mjs`：把 `chrome/probe89/SingletonLock` 做成目录，逼真 Chrome 启动即 exit 21）：
+
+| 项 | PRE 0.47.85 | POST 0.47.86 |
+| --- | --- | --- |
+| 从调用到报错 | **15085 ms** | **150–151 ms** |
+| 报错内容 | `Chrome did not open a debugging port`（无原因） | `Chrome ended before it opened a debugging port (exit code 21 after 123 ms — Failed to create a ProcessSingleton…)` |
+| 正常冷启动 | 1042 ms | 1042 ms（同样一次真启动，未被拖慢） |
+| 单元测试 | 432 通过 | **433 通过**，9356 ms |
+
 ## 0.47.85 — 浏览器停了就说到停，别说页面读到了
 
 有人报了一个必须当错误处理的现象：右栏的浏览器起不来，`browser_open` 却照样回一整页文字，`browser_state` 同时说 `stopped`，接下来的 `browser_click` / `browser_do` 一律回 `The sidecar browser is not running`。整页文字是真的——那是**已经停掉的那次运行留下的**一版页面，读的时候浏览器还活着，交给模型的时候已经不在了。这类「成功」比报错更贵：模型拿着过期页面继续点，每一步都失败。

@@ -9,7 +9,7 @@ import test from 'node:test'
 const dir = mkdtempSync(join(tmpdir(), 'dshib-gone-'))
 process.env.DSH_INNER_BROWSER_STATE_DIR = dir
 
-const { deathNote, noteDeath } = await import('../sidecar.js')
+const { deathNote, noteDeath, portWaitFailure } = await import('../sidecar.js')
 const { goneMidRead, sidecarTools } = await import('../tools.js')
 
 const SNAP = { url: 'http://x/dense', title: 'Dense', text: 'words that were true a moment ago', controls: [], frames: [], cursor: '', bytes: 12 }
@@ -84,4 +84,18 @@ test('a death that was asked for is still not a death', () => {
   noteDeath({ pid: 2, code: 0, signal: null, profile: 'default', fast: true, ms: 700, err: 'Trying to load the allocator multiple times' }, dir)
   const text = readFileSync(log, 'utf8')
   assert.match(text, /pid 2 profile default exit code 0 signal none after ms 700 stderr Trying to load/)
+})
+
+test('a browser that ends before its port is not waited for until the deadline', () => {
+  assert.equal(portWaitFailure(null), '')
+  const said = portWaitFailure({ code: 21, signal: null, ms: 123, err: 'Failed to create a ProcessSingleton\nfor your profile directory.\n' })
+  assert.match(said, /exit code 21/)
+  assert.match(said, /after 123 ms/)
+  assert.match(said, /Failed to create a ProcessSingleton for your profile directory\./)
+  assert.doesNotMatch(said, /\n/)
+  assert.match(portWaitFailure({ code: null, signal: 'SIGKILL', ms: 40 }), /signal SIGKILL/)
+  /* Long stderr is cut, and cut from the front: the end is what names the cause. */
+  const long = portWaitFailure({ code: 1, signal: null, ms: 9, err: 'x'.repeat(400) + 'THE CAUSE' })
+  assert.match(long, /THE CAUSE/)
+  assert.ok(long.length < 400)
 })

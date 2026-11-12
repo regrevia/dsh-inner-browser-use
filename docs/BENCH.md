@@ -1,3 +1,15 @@
+## 死了就别再等那十五秒 — 0.47.86
+
+PRE 跑 0.47.85 提交 `3696e0e`。探针 `/tmp/pre86.mjs`：`~/.dsh/inner-browser-use/chrome/probe89/SingletonLock` 做成目录，真 Chrome 启动 123 ms 后 exit 21；POST 用同一探针，只换发版代码。
+
+| 项 | PRE | POST |
+| --- | --- | --- |
+| 调用到报错 | 15085 ms | 150–151 ms |
+| 报错带退出码 | 否 | 是（`exit code 21`） |
+| 报错带 stderr | 否 | 是（轴尾 240 字） |
+| 冷启动（健康 profile） | 1042 ms | 1042 ms |
+| 套件 | 432 | 433 |
+
 ## 停了的浏览器不许交页面 — 0.47.85
 
 PRE 跑 0.47.84 提交 `5748d24`。三组探针：A `/tmp/pre85.mjs` 直接调发版的 `noteDeath`（模拟 Chrome 启动 900 ms 后 exit 0）；B 用假 page + 可切换的 `sidecar.alive` 直接驱动发版的 `browser_view` / `browser_open`，页面固定回 `hello from the tab` / `# Dense`；C 真 Chrome，把 `~/.dsh/inner-browser-use/chrome/probe88/SingletonLock` 做成目录，让 Chrome 启动即退出。

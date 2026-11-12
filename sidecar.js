@@ -629,6 +629,18 @@ export function pidsWithMark(psOutput, mark) {
   return found
 }
 
+/** What to say when a browser ended before it opened a debugging port: the exit
+ *  code is the fact, and its own last words are the explanation. Nothing here
+ *  is worth saying while it is still starting, so a running browser gets ''.
+ * @param {null | { code: number | null, signal: string | null, ms: number, err?: string }} gone - how it ended.
+ * @returns {string} the sentence, or '' when there is nothing to report. */
+export function portWaitFailure(gone) {
+  if (gone === null || gone === undefined) return ''
+  const said = String(gone.err ?? '').replace(/\s+/g, ' ').trim().slice(-240)
+  const how = gone.signal != null ? `signal ${gone.signal}` : `exit code ${gone.code}`
+  return `sidecar: Chrome ended before it opened a debugging port (${how} after ${gone.ms} ms${said === '' ? '' : ` — ${said}`})`
+}
+
 export function deathNote(gone) {
   const at = new Date().toISOString()
   const code = gone.code === null || gone.code === undefined ? 'none' : String(gone.code)
@@ -3287,6 +3299,7 @@ export class Sidecar {
     this.logger = options.logger
     this.child = null
     this.owns = false
+    this.childGone = null
     this.stopping = false
     this.cdp = null
     this.page = null
@@ -4228,6 +4241,10 @@ export class Sidecar {
     }
     const child = spawn(binary, args, { detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', errFd], env: flashEnv })
     const born = Date.now()
+    /* Waiting for a port a dead process will never write costs the whole
+       fifteen seconds, and the person waiting for that page pays it. What the
+       browser said on its way out is the answer, so keep it here. */
+    this.childGone = null
     child.on('exit', (code, signal) => {
       /* A browser that ends without being asked is the one case nobody can see,
          and a browser that ends within a few seconds of starting is that same
@@ -4249,6 +4266,7 @@ export class Sidecar {
       }
       noteDeath({ pid: child.pid, code, signal, profile: this.profile, asked: this.stopping === true || this.closing !== null, fast: ms < 3000, ms, err })
       if (this.child === child) {
+        this.childGone = { code, signal, ms, err }
         this.child = null
         this.cdp?.close()
         this.cdp = null
@@ -4292,6 +4310,9 @@ export class Sidecar {
         const port = Number(String(readFileSync(file, 'utf8')).split('\n')[0] ?? 0) // ui-copy-ignore
         if (Number.isFinite(port) && port > 0) return port // ui-copy-ignore
       }
+      /* Nothing is coming: say why now instead of at the deadline. */
+      const late = portWaitFailure(this.childGone)
+      if (late !== '') throw new Error(late) // ui-copy-ignore
       if (Date.now() >= deadline) break
       await wait(tick)
       tick = tick < 40 ? tick + 5 : 100
