@@ -2407,6 +2407,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
    */
   const findAgain = async (page, ref) => {
     const spot = await locate(page, ref)
+    /* A control that scrolled out of reach is still the one the caller named:
+       hunting for it by its words would hand back a different control that
+       happens to say the same thing. Only a real absence is followed. */
+    if (spot.off === true) return { gone: true, why: `${String(spot.name ?? '') === '' ? 'the control' : `"${String(spot.name).slice(0, 60)}"`} is off screen: scroll it into view, or click the middle of what shows.` } // ui-copy-ignore
     const known = (refsFor().refs ?? []).find((control) => Number(control.ref) === Number(ref))
     if (spot.gone !== true) {
       const drift = differs(known, spot)

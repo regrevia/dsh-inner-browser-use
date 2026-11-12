@@ -1,3 +1,26 @@
+## 0.47.87 — 按下之前先看清它在哪
+
+命中检测里有三处「报成功但页面没收到」，都是同一类错误：坐标不是控件真实所在的位置。
+
+一是**滚动**。`resolve()` 与 `resolveFirst()` 在控件出屏时调 `scrollIntoView`，但没写 `behavior`。页面一旦设了 `html{scroll-behavior:smooth}`，这次滚动是动画，紧接着读的 `getBoundingClientRect()` 拿到的是**滚动前**的矩形——报回来的点还在四千像素之外。补上 `behavior:'instant'`，六处滚动一并改，动画被确定性跳过。
+
+二是**裁剪**。滚完之后仍然可能不在屏幕上：折叠区里的控件、固定高度面板、滚完又重绘的页面。原来直接把 `after.left + width/2` 交出去，视口外的点会被浏览器夹到边缘、落到别的东西上。现在只取控件与视口相交的那部分，取它的中点；完全不相交时报 `off`，`tools.js` 的 `findAgain` 会区分「不在屏幕上」和「页面重绘没了」——前者按名字去找会找到另一个同名控件，所以直接拒绝并说明。
+
+三是**遮挡**。`covering()` 原来把 `top.contains(el)`（祖先）也算作没被盖住。`body` 包含所有控件，于是任何被 `body` 盖住的控件都报告「无遮挡」。收缩成只认控件本身和它的后代：按下落在子节点上会冒泡回控件，落在祖先上则页面收不到。
+
+PRE/POST 用同一段假页面跑 `read.js` 发出的真实表达式（`/tmp/prefix2.mjs`）：
+
+| 项 | PRE 0.47.86 | POST 0.47.87 |
+| --- | --- | --- |
+| 平滑滚动页上的坐标 | `y:4010`（视口 900） | 先滚到可见，再取可见部分中点 |
+| 滚动选项 | `{block,inline}` 无 `behavior` | `{block,inline,behavior:'instant'}` |
+| body 盖住的控件 | `""`（报告无遮挡） | `{"tag":"body",…}` |
+| 控件自己的子节点接管按下 | `""` | `""`（不变，冒泡回来） |
+| 完全出屏的控件 | 交出视口外的坐标 | `off:true` + 点名，拒绝按下 |
+| 单测 | 433 | 439 |
+
+新增 `test/hittest.test.mjs` 六条，直接把 `resolve()`/`covering()` 的表达式灌进假页面跑，不需要浏览器。
+
 ## 0.47.86 — 死了就别再等那十五秒
 
 0.47.85 让浏览器早死时留下退出码和 stderr，但**等端口的那段代码根本不看它**：`spawnChrome` 拿 `DevToolsActivePort` 的循环只认「文件出现」和「十五秒到点」，中间不看子进程是不是已经没了。于是 Chrome 123 ms 就 exit 21，工具却要空等到 15085 ms 才回一句 `sidecar: Chrome did not open a debugging port`——人在等页面，等的是十五秒的必然失败，而原因（`Failed to create a ProcessSingleton`）早在日志里躺着。

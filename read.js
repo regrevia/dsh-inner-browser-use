@@ -491,10 +491,22 @@ export function resolve(ref) {
     }
     return false
   }
-  if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center' })
+  if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
   const after = el.getBoundingClientRect()
+  /* Scrolling into view is a request, not a promise: a panel with a fixed
+     height, a control inside a collapsed section, or a page that re-renders
+     can leave it off screen. A point outside the window is not where the
+     control is, and pressing there would land on something else. */
+  const seenLeft = Math.max(after.left, 0)
+  const seenTop = Math.max(after.top, 0)
+  const seenRight = Math.min(after.right, innerWidth)
+  const seenBottom = Math.min(after.bottom, innerHeight)
   const s = getComputedStyle(el)
-  return JSON.stringify({ gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true })
+  const named = { gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true }
+  if (seenRight - seenLeft < 2 || seenBottom - seenTop < 2) return JSON.stringify({ gone: true, off: true, name: named.name })
+  /* The press goes to the middle of the part that is really on screen, which
+     is the middle of the whole control whenever it fits. */
+  return JSON.stringify({ ...named, x: Math.round(seenLeft + (seenRight - seenLeft) / 2), y: Math.round(seenTop + (seenBottom - seenTop) / 2) })
 })()`
 }
 
@@ -526,7 +538,7 @@ export function resolveFirst(refs, wanted) {
       }
       return false
     }
-    if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center' })
+    if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
     const after = el.getBoundingClientRect()
     return { x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2) }
   }
@@ -575,7 +587,7 @@ export function clickInDom(ref, options = {}) {
   if (!hit) return JSON.stringify({ ok: false, gone: true })
   const el = hit.el
   const name = String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 60)
-  try { el.scrollIntoView({ block: 'center', inline: 'center' }) } catch { /* a detached node has no place */ }
+  try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }) } catch { /* a detached node has no place */ }
   try { el.focus({ preventScroll: true }) } catch { /* not every node takes focus */ }
   const send = (type, button) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button, buttons: type === 'mousedown' || type === 'pointerdown' ? (button === 2 ? 2 : 1) : 0 }))
   if (${right}) {
@@ -644,7 +656,7 @@ export function bounds(ref) {
   const hit = reg.find(${Number(ref)})
   if (!hit) return JSON.stringify({ gone: true })
   const el = hit.el
-  if (el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'center' })
+  if (el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
   const b = el.getBoundingClientRect()
   if (b.width < 2 || b.height < 2) return JSON.stringify({ gone: true, off: true })
   return JSON.stringify({ gone: false, x: b.left, y: b.top, width: b.width, height: b.height })
@@ -815,7 +827,10 @@ export function covering(ref) {
   const y = Math.round(b.top + b.height / 2)
   if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return ''
   const top = document.elementFromPoint(x, y)
-  if (top === null || top === el || el.contains(top) || top.contains(el)) return ''
+  /* The control and whatever it is made of count: a press on a child bubbles
+     back up. An ancestor does not — body holds every control, and an element
+     painted under its parent is not the one the caller asked for. */
+  if (top === null || top === el || el.contains(top)) return ''
   const raw = String(top.innerText ?? top.value ?? top.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 80)
   /* The thing in the way usually carries its own way out, and taking it is the
      step the agent would take next anyway. Find that control while the overlay
@@ -2141,7 +2156,7 @@ export function labelSpot(words) {
   }
   if (best === null || box === null) return JSON.stringify({})
   if (editable(best.el) !== true) return JSON.stringify({})
-  best.el.scrollIntoView({ block: 'center', inline: 'nearest' })
+  best.el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
   const fresh = boxOf(best.el) ?? box
   return JSON.stringify({ x: Math.round(fresh.left + fresh.width / 2), y: Math.round(fresh.top + fresh.height / 2), name: best.name, score: best.score, behind })
 })()`
