@@ -4045,14 +4045,21 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
       /** @param {any} args - arguments. @returns {Promise<{text: string}>} what happened. */
       execute: async (args) => withRawPage(async (page) => {
         let start = { x: Number(args?.x ?? NaN), y: Number(args?.y ?? NaN) }
+        let note = ''
         if (args?.from !== undefined) {
           const spot = await findAgain(page, Number(args.from))
           if (spot.gone === true) return spot.why ?? REF_GONE
+          /* A drag starts with a press exactly where a click does, so an
+             overlay over the handle swallows it the same way: the moves run,
+             nothing moves, and the call would say it dragged. */
+          if (spot.covered !== undefined) return refusedUnder(String(spot.covered), String(spot.name ?? '') || 'the control', 'dragged')
           start = { x: Number(spot.x), y: Number(spot.y) }
+          note = String(spot.name ?? '')
         }
         const end = { x: Number(args?.to_x ?? NaN), y: Number(args?.to_y ?? NaN) }
         if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return 'Give from (or x and y) and to_x and to_y.'
         const count = Math.max(2, Math.min(40, Number(args?.steps ?? 12)))
+        const before = await pageMark(page)
         await page.mouse('mouseMoved', start)
         await page.mouse('mousePressed', start)
         for (let index = 1; index <= count; index += 1) {
@@ -4063,7 +4070,10 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
         }
         await page.mouse('mouseReleased', end)
         await settle(page, 3000)
-        return acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), `drag ${start.x},${start.y} → ${end.x},${end.y}`)
+        const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2000 }), `drag ${start.x},${start.y} → ${end.x},${end.y}`)
+        /* The moves were sent whether or not anything took them: say what
+           changed, so "ok" is not the only word for a drag that did nothing. */
+        return said + (note === '' ? '' : ` (${note})`) + (await outcome(page, before))
       }),
     },
     {

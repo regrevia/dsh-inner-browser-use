@@ -58,6 +58,13 @@ test("typing into a field asks where it landed before asking what is on top", ()
   );
 });
 
+test("a drag is not started on a control something covers", () => {
+  /* A press that lands on the overlay makes the moves do nothing, and the call
+     used to say it dragged. */
+  const drag = TOOLS.slice(TOOLS.indexOf("name: 'browser_drag'"), TOOLS.indexOf("name: 'browser_check'"));
+  assert.match(drag, /if \(spot\.covered !== undefined\) return refusedUnder\(String\(spot\.covered\)/);
+});
+
 test("a place found by its words is not handed back while something covers it", () => {
   /* findWords() answers with the point a control held when it was read. The
      two places it hands that point back are the two places a cover has to be

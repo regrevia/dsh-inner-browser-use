@@ -1,3 +1,15 @@
+## 0.47.91 — 拖拽也是从一次按下开始的
+
+`browser_drag` 用 `from` 起手时直接拿坐标就按下去了，没问那块地方现在归谁。上面压着东西的时候，按下被浮层吃掉，后面的移动照样发了一遍，最后回一句 `ok drag 282,222 → 432,222`，滑杆一动不动。
+
+现在起手点先过遮挡检查：被整块盖住就拒绝，说清是什么盖着（`an overlay covers it: Tune the volume — the click would land beneath it` / `Not dragged: nothing of "the control" is reachable…`），1 ms 结束，不再白跑八步移动。
+
+顺手把拖拽的结果也改成按变化说话：之前无条件回 `ok drag …`，现在接在 `acted` 后面带上 `outcome`，没变化就写没变化，而不是把"发过鼠标事件"当成"拖成功"。
+
+实测（`/tmp/probe89/drag.mjs`，滑杆上方压一层 `div#sheet`）：PRE 142 ms、`ok drag 282,222 → 432,222`、`value` 仍是 `10`；POST 1 ms、拒绝并点名 `Tune the volume`、`value` 仍是 `10`，但不再假装拖过。没有遮挡时照旧：138 ms、`value` 10 → 89。
+
+套件 454（新增 `test/order.test.mjs` 里一条）。
+
 ## 0.47.90 — 还有两处会把被盖住的坐标交出去
 
 0.47.89 让按名字找控件的路径会拒绝、会点名遮挡物。但 `findWords` 有两条**更早**的返回：输入框命中时直接返回它当初的坐标，还没找到输入框时返回目标控件记下的坐标。这两条都在遮挡判断之前，被盖住的点照样交出去——0.47.89 只是给其中一条分支加了判断，另一条漏了。
