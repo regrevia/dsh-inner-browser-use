@@ -1703,6 +1703,7 @@ async function fieldByName(page, words, known) {
   const lead = blocked !== null || hit === null ? '' : await coverLead(page, hit.ref)
   if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
     const spot = await locate(page, hit.ref)
+    if (spot.gone !== true && spot.covered !== undefined) return { blocked: String(spot.covered), name: String(hit.name) }
     if (spot.gone !== true) return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead, ref: Number(hit.ref) }
   }
   const field = await fieldSpot(page, words)
@@ -1711,6 +1712,9 @@ async function fieldByName(page, words, known) {
   if (hit === null) return null
   const spot = await locate(page, hit.ref)
   if (spot.gone === true) return null
+  /* The place it held when the page was last read is under something now, and
+     a press there would be credited to whatever is painted on top. */
+  if (spot.covered !== undefined) return { blocked: String(spot.covered), name: String(hit.name), ref: Number(hit.ref) }
   return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead, ref: Number(hit.ref) }
 }
 

@@ -58,6 +58,18 @@ test("typing into a field asks where it landed before asking what is on top", ()
   );
 });
 
+test("a place found by its words is not handed back while something covers it", () => {
+  /* findWords() answers with the point a control held when it was read. The
+     two places it hands that point back are the two places a cover has to be
+     looked at first, or the press lands on whatever is painted there. */
+  const found = TOOLS.slice(TOOLS.indexOf("async function findWords"));
+  assert.match(
+    found,
+    /if \(spot\.covered !== undefined\) return \{ blocked: String\(spot\.covered\)/,
+    "the tail of findWords refuses instead of answering with a covered point",
+  );
+});
+
 test("a control found by its words is checked for a cover before it is pressed", () => {
   /* The same gate the numbered control gets, because the press lands on the
      page either way: a banner over a control the caller named is exactly as
