@@ -732,7 +732,12 @@ test('a click stops waiting once the caret is in the field it landed on', async 
   const page = { cdp: { send: async (_method, params) => { asked.push(params.expression); return { result: { value: asked.length > 2 } } } } }
   assert.equal(await focusedAt(page, { x: 40, y: 96 }, 400), true)
   assert.equal(asked.length, 3)
-  assert.match(asked[0], /elementFromPoint\(40, 96\)/)
+  assert.match(asked[0], /const baseX = 40/)
+  assert.match(asked[0], /const baseY = 96/)
+  /* The caret belongs to one control, and the page decides which: a press
+     near the edge still lands inside it, so a handful of points around the
+     press is asked, and an ancestor is never accepted as the field. */
+  assert.equal(asked[0].includes('a.contains(el)'), false, 'body holds every field, so an ancestor proves nothing')
   /* A page that never puts the caret there still gets its budget, then typing
      goes ahead exactly as it did before the poll existed. */
   const blind = { cdp: { send: async () => ({ result: { value: false } }) } }

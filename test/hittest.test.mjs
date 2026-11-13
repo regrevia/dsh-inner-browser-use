@@ -74,3 +74,40 @@ test('the control own child taking the press is not a cover', () => {
   const el = control(box(10, 10), { contains: (node) => node === child })
   assert.equal(run(covering(4), { el, at: () => child }), '', 'the press bubbles back to the control')
 })
+
+test('a banner is found under a control that was below the fold', () => {
+  /* A pinned banner covers the same strip at every scroll position, so a
+     control far down the page is under it too. Looking up the raw rectangle
+     would answer about a place the control is not. */
+  let rect = box(100, 4000)
+  const el = control(rect, {
+    scrollIntoView() {
+      rect = box(100, 400)
+    },
+    getBoundingClientRect: () => rect,
+  })
+  const banner = { tagName: 'DIV', innerText: 'We use cookies', getAttribute: () => null, parentElement: null, querySelectorAll: () => [], getBoundingClientRect: () => box(0, 0, 1280, 600), contains: () => true }
+  const said = JSON.parse(run(covering(4), { el, at: () => banner }))
+  assert.equal(said.tag, 'div', 'the probe asks about where the press would land, not where the control was')
+  assert.equal(said.text, 'We use cookies')
+})
+
+test('a control half under a banner is pressed on the part that shows', () => {
+  /* The banner covers the top half. The middle of the control would send the
+     press into the banner, so the point that the page hands back has to be
+     the one below it — that is the difference between "refused although it
+     was clickable" and "clicked where it shows". */
+  const el = control(box(100, 100, 100, 100))
+  const banner = { tagName: 'DIV', innerText: 'banner', getAttribute: () => null, parentElement: null, contains: () => true }
+  const said = JSON.parse(run(resolve(4), { el, at: (_x, y) => (y < 160 ? banner : el) }))
+  assert.notEqual(said.gone, true)
+  assert.equal(said.y, 170, 'the lower part of the control, which the page agrees is reachable')
+})
+
+test('a control covered everywhere keeps its middle, and the cover probe refuses it', () => {
+  const el = control(box(100, 100))
+  const banner = { tagName: 'DIV', innerText: 'We use cookies', getAttribute: () => null, parentElement: null, querySelectorAll: () => [], getBoundingClientRect: () => box(0, 0, 1280, 900), contains: () => true }
+  const at = () => banner
+  assert.deepEqual([JSON.parse(run(resolve(4), { el, at })).x, JSON.parse(run(resolve(4), { el, at })).y], [150, 110])
+  assert.equal(JSON.parse(run(covering(4), { el, at })).tag, 'div', 'the same question, asked twice, agrees')
+})

@@ -1789,10 +1789,19 @@ export async function focusedAt(page, point, capMs = 80) {
   for (;;) {
     const said = await page.cdp.send('Runtime.evaluate', {
       expression: `(() => {
-        const el = document.elementFromPoint(${Number(point.x)}, ${Number(point.y)})
+        /* The press lands somewhere in the control, not always in its exact
+           middle, so ask about the same handful of points the press could
+           use. An ancestor never counts: body holds every field, and an
+           element painted under its parent is not the one that took it. */
         const a = document.activeElement
-        if (el === null || a === null) return false
-        if (!(a === el || el.contains(a) || a.contains(el))) return false
+        if (a === null) return false
+        const baseX = ${Number(point.x)}
+        const baseY = ${Number(point.y)}
+        const seen = [[0,0],[0.5,0],[1,0],[0,0.5],[1,0.5],[0.5,0.5],[0,1],[0.5,1],[1,1]].some(([fx, fy]) => {
+          const over = document.elementFromPoint(baseX - 8 + fx * 16, baseY - 8 + fy * 16)
+          return over !== null && (over === a || a.contains(over))
+        })
+        if (!seen) return false
         const tag = String(a.tagName ?? '')
         return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || a.isContentEditable === true
       })()`,
@@ -2545,7 +2554,10 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
             if (!seen) {
               /* A surface below the fold is not where the person is looking, and
                  a click at its coordinate would land somewhere else. */
-              el.scrollIntoView({ block: 'center', inline: 'center' })
+              el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+              /* Measured after the scroll, not before: a page that animates
+                 would otherwise be answered with the rectangle it is leaving,
+                 and the click would be aimed at where the surface was. */
               return { tag, src: String(el.getAttribute('src') ?? ''), ...box(el), scrolled: true }
             }
             return { tag, src: String(el.getAttribute('src') ?? ''), ...first }
@@ -3067,15 +3079,24 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           return called + cover + ` (typed into "${target.name.slice(0, 50)}")` // ui-copy-ignore
         }
         if (args?.ref !== undefined) {
+          /* Scrolled into view first, for the same reason a click is: the
+             overlay is asked about where the field will be, not where it was
+             when the page last drew. */
+          const spot = await findAgain(page, Number(args.ref))
+          if (spot.gone === true) return spot.why ?? REF_GONE + cover
+          if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — typed where it is now`
+          let point = { x: Number(spot.x), y: Number(spot.y) }
           const gate = await clearCover(page, Number(args.ref))
           cover = gate.note
           if (gate.cleared !== true) {
             return `${cover.trim()}\nNot typed into: the field is still covered. Call browser_view and handle the overlay first.`
           }
-          const spot = await findAgain(page, Number(args.ref))
-          if (spot.gone === true) return spot.why ?? REF_GONE + cover
-          if (spot.followed === true) followed = `the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — typed where it is now`
-          const point = { x: Number(spot.x), y: Number(spot.y) }
+          /* Dismissing a banner moves the page, so the field is asked again
+             rather than typed at the coordinate it used to have. */
+          if (gate.cleared && cover !== '') {
+            const again = await locate(page, Number(args.ref))
+            if (again.gone !== true) point = { x: Number(again.x), y: Number(again.y) }
+          }
           await page.mouse('mouseMoved', point)
           await page.mouse('mousePressed', { ...point, clickCount: 1 })
           await page.mouse('mouseReleased', { ...point, clickCount: 1 })

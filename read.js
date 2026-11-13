@@ -504,9 +504,25 @@ export function resolve(ref) {
   const s = getComputedStyle(el)
   const named = { gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true }
   if (seenRight - seenLeft < 2 || seenBottom - seenTop < 2) return JSON.stringify({ gone: true, off: true, name: named.name })
-  /* The press goes to the middle of the part that is really on screen, which
-     is the middle of the whole control whenever it fits. */
-  return JSON.stringify({ ...named, x: Math.round(seenLeft + (seenRight - seenLeft) / 2), y: Math.round(seenTop + (seenBottom - seenTop) / 2) })
+  /* Where the press will land is a fact about the page, not about the
+     control: a control can be on screen and still have something painted
+     over it. Ask the page about the points the press could use, middle
+     first, so a control half under a banner is still clickable on the part
+     that shows and a control fully under one is reported instead of being
+     pressed through. */
+  const span = (from, to, fraction) => Math.round(from + (to - from) * fraction)
+  const probes = [[0.5, 0.5], [0.3, 0.5], [0.7, 0.5], [0.5, 0.3], [0.5, 0.7]].map(([fx, fy]) => [Math.min(Math.max(span(seenLeft, seenRight, fx), seenLeft + 1), seenRight - 1), Math.min(Math.max(span(seenTop, seenBottom, fy), seenTop + 1), seenBottom - 1)])
+  let pressed = null
+  for (const [x, y] of probes) {
+    const over = document.elementFromPoint(x, y)
+    if (over === null || over === el || el.contains(over)) { pressed = [x, y]; break }
+  }
+  /* Nothing reachable: keep the middle, and let the cover probe, which asks
+     the same question, name what is in the way and refuse the press. */
+  if (pressed === null) pressed = [Math.round(seenLeft + (seenRight - seenLeft) / 2), Math.round(seenTop + (seenBottom - seenTop) / 2)]
+  /* The point that takes the press is the one the page agreed is reachable,
+     which is the middle of the whole control whenever it fits and is free. */
+  return JSON.stringify({ ...named, x: pressed[0], y: pressed[1] })
 })()`
 }
 
@@ -823,10 +839,42 @@ export function covering(ref) {
   if (!hit) return ''
   const el = hit.el
   const b = el.getBoundingClientRect()
-  const x = Math.round(b.left + b.width / 2)
-  const y = Math.round(b.top + b.height / 2)
-  if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return ''
-  const top = document.elementFromPoint(x, y)
+  /* A banner pinned to the window covers the same strip at every scroll
+     position, so a control below the fold is still underneath it. Scroll it
+     into view first, without the animation, and then ask where the press
+     could land: the raw rectangle of a control that never came on screen is
+     not a place, and answering "nothing is over it" about a place that is
+     not the control is the quiet failure this probe exists to catch. */
+  const clipped = () => {
+    const me = el.getBoundingClientRect()
+    for (let up = el.parentElement; up; up = up.parentElement) {
+      const css = getComputedStyle(up)
+      if (!/auto|scroll|hidden|clip/.test(css.overflowX + ' ' + css.overflowY)) continue
+      const frame = up.getBoundingClientRect()
+      if (me.top < frame.top - 1 || me.bottom > frame.bottom + 1 || me.left < frame.left - 1 || me.right > frame.right + 1) return true
+    }
+    return false
+  }
+  if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  const after = el.getBoundingClientRect()
+  const seenLeft = Math.max(after.left, 0)
+  const seenTop = Math.max(after.top, 0)
+  const seenRight = Math.min(after.right, innerWidth)
+  const seenBottom = Math.min(after.bottom, innerHeight)
+  /* Nothing of it is on screen even after scrolling: there is no press to
+     guard, and the action itself reports that instead of this probe. */
+  if (seenRight - seenLeft < 2 || seenBottom - seenTop < 2) return ''
+  const span = (from, to, fraction) => Math.round(from + (to - from) * fraction)
+  let top = null
+  for (const [fx, fy] of [[0.5, 0.5], [0.3, 0.5], [0.7, 0.5], [0.5, 0.3], [0.5, 0.7]]) {
+    const x = Math.min(Math.max(span(seenLeft, seenRight, fx), seenLeft + 1), seenRight - 1)
+    const y = Math.min(Math.max(span(seenTop, seenBottom, fy), seenTop + 1), seenBottom - 1)
+    const over = document.elementFromPoint(x, y)
+    /* One reachable point is enough: the action presses where the page
+       agrees it can be reached, so this probe must use the same question. */
+    if (over === null || over === el || el.contains(over)) return ''
+    if (top === null) top = over
+  }
   /* The control and whatever it is made of count: a press on a child bubbles
      back up. An ancestor does not — body holds every control, and an element
      painted under its parent is not the one the caller asked for. */
