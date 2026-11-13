@@ -1589,6 +1589,21 @@ export function nearestByWords(controls, words) {
   return { ...best.control, ref: Number(best.control.ref) }
 }
 
+/**
+ * The refusal when the words are right but nothing of the control can be
+ * pressed. Said in the same shape as a covered click, so the caller learns one
+ * thing whether the answer came from a number or from a name.
+ * @param {string} over - what is on top of it.
+ * @param {string} name - the control the caller asked for.
+ * @param {string} verb - `clicked`, `typed into`.
+ * @returns {string} the message.
+ */
+function refusedUnder(over, name, verb) {
+  const what = over === '' ? 'something covers it' : `an overlay covers it: ${over}`
+  return `${what} — the ${verb === 'typed into' ? 'typing' : 'click'} would land beneath it
+Not ${verb}: nothing of "${String(name).slice(0, 60)}" is reachable. Call browser_view and handle the overlay first.` // ui-copy-ignore
+}
+
 export async function findWords(page, words, known) {
   /* The words a caller used usually came from a read that already happened, so
      look among those numbers first: one position check is a single evaluate,
@@ -1612,6 +1627,12 @@ export async function findWords(page, words, known) {
   const plain = order.map((control) => Number(control.ref)).filter((ref) => Number.isFinite(ref) && ref < FRAME_BASE)
   if (plain.length > 0) {
     const any = await locateFirst(page, plain, wantedFirst)
+    /* The page answers with what is in the way when the words are right but
+       nothing of the control can be pressed, and that answer has to survive
+       the fallback below: a fresh read finds the same covered control again
+       and would otherwise be pressed in its middle, on top of the overlay,
+       and reported as a click that landed. */
+    if (any?.gone !== true && any?.covered !== undefined) return { blocked: String(any.covered), name: String(any.name ?? ''), ref: Number(any.ref) }
     if (any?.gone !== true && Number.isFinite(Number(any?.x))) {
       const byRef = order.find((control) => Number(control.ref) === Number(any.ref)) ?? { ref: Number(any.ref) }
       return { ...byRef, ref: Number(any.ref), name: String(any.name ?? byRef.name ?? ''), x: Number(any.x), y: Number(any.y) }
@@ -1675,13 +1696,18 @@ async function fieldSpot(page, words) {
  */
 async function fieldByName(page, words, known) {
   const hit = await findWords(page, words, known)
-  const lead = hit === null ? '' : await coverLead(page, hit.ref)
+  /* The words are on a control that nothing of can be pressed. A field found
+     by its own label may still be free, so that is asked first, and only then
+     is the answer the overlay. */
+  const blocked = hit !== null && hit.blocked !== undefined ? hit : null
+  const lead = blocked !== null || hit === null ? '' : await coverLead(page, hit.ref)
   if (hit !== null && EDITABLE_KINDS.includes(String(hit.kind))) {
     const spot = await locate(page, hit.ref)
     if (spot.gone !== true) return { x: Number(spot.x), y: Number(spot.y), name: String(hit.name), lead, ref: Number(hit.ref) }
   }
   const field = await fieldSpot(page, words)
   if (field !== null) return { ...field, lead }
+  if (blocked !== null) return { blocked: String(blocked.blocked), name: String(blocked.name) }
   if (hit === null) return null
   const spot = await locate(page, hit.ref)
   if (spot.gone === true) return null
@@ -1927,6 +1953,7 @@ async function runStep(page, step, known) {
   if (step.tap !== undefined && !/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(step.tap))) {
     const hit = await findWords(page, String(step.tap), known)
     if (hit === null) return stuck(`no control says ${JSON.stringify(String(step.tap))}`)
+    if (hit.blocked !== undefined) return stuck(refusedUnder(String(hit.blocked), String(hit.name), 'clicked'))
     const lead = await coverLead(page, hit.ref)
     const spot = await locate(page, hit.ref)
     if (spot.gone === true) return stuck(`ref ${String(hit.ref)}: ${REF_GONE}`)
@@ -2978,6 +3005,28 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         } else if (String(args?.text ?? '') !== '') {
           const hit = await findWords(page, String(args.text), refsFor().refs)
           if (hit === null) return `No control says ${JSON.stringify(String(args.text))}. Call browser_view to see what is there.`
+          /* The words matched a control nothing of can be pressed, and the
+             press would land on whatever is painted over it, which the click
+             would then be credited with. Refuse, and name the overlay. */
+          if (hit.blocked !== undefined) return refusedUnder(String(hit.blocked), String(hit.name), 'clicked')
+          /* Found by name, so the same clearing a numbered control gets: a
+             banner is asked about where the control is now, dismissed the way
+             a person would, and the point is taken again afterwards. */
+          if (Number.isFinite(Number(hit.ref))) {
+            const gate = await clearCover(page, Number(hit.ref))
+            /* The probe already wrote the line naming what covers it; keep that
+               line and add the refusal, rather than saying "something" when it
+               knows which overlay and why the clearing did not work. */
+            if (gate.cleared !== true) return gate.note.trim() === '' ? refusedUnder(gate.name, String(hit.name), 'clicked') : `${gate.note.trim()}
+Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call browser_view and handle the overlay first.` // ui-copy-ignore
+            if (gate.cleared && gate.note !== '') {
+              const again = await locate(page, Number(hit.ref))
+              if (again.gone !== true) {
+                hit.x = Number(again.x)
+                hit.y = Number(again.y)
+              }
+            }
+          }
           point = { x: hit.x, y: hit.y }
           label = `"${hit.name.slice(0, 60)}"`
         }
@@ -3056,6 +3105,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
           if (target === undefined && args?.field !== undefined) {
             const found = await fieldByName(page, String(args.field), refsFor().refs)
             if (found === null) return `${String(args.field)}: ${REF_GONE}`
+            if (found.blocked !== undefined) return refusedUnder(String(found.blocked), String(found.name), 'typed into')
             if (!Number.isInteger(found.ref)) return `${String(args.field)}: read the page and pass its number, since a field found by its label has none.`
             target = Number(found.ref)
             cover = found.lead
@@ -3071,6 +3121,7 @@ export function sidecarTools(sidecar, refs, host = {}) { // ui-copy-ignore
         if (args?.field !== undefined && args?.ref === undefined) {
           const target = await fieldByName(page, String(args.field), refsFor().refs)
           if (target === null) return `${String(args.field)}: ${REF_GONE}`
+          if (target.blocked !== undefined) return refusedUnder(String(target.blocked), String(target.name), 'typed into')
           cover = target.lead
           const dated = await writeAt(page, { x: target.x, y: target.y }, String(args?.text ?? ''), { clear: args?.clear, submit: args?.submit === true, hint: target.name })
           if (dated !== '') return dated + cover

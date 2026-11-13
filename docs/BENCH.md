@@ -1,3 +1,17 @@
+## 按名字点的点击：24 ms 的假成功，还是 10 ms 的拒绝 — 0.47.89
+
+PRE 是提交 `07e8003`（0.47.88），独立工作区 `/tmp/dsh-pre89`。探针 `/tmp/probe89/full.mjs`：一段 `data:text/html` 假页面，600×120 的 `#pay` 按钮，同一块位置盖着一张三便签宽的 `#note`；按钮的 `onclick` 只做一件事，把 `document.title` 改成 `paid`。跑完读 `title` 就知道按下去的是不是按钮本身。
+
+| 项 | PRE 0.47.88 | POST 0.47.89 |
+| --- | --- | --- |
+| 按名字点的耗时 | 24 ms | 10 ms |
+| 工具怎么说 | `ok click "Continue"` | `an overlay covers it: Delivery note — the click would land beneath it` |
+| `title` 变成 `paid` | 否 | 否 |
+| 半遮挡的同一个按钮 | `ok click "Continue"` · `paid` | `ok click "Continue"` · `paid` |
+| 套件 | 447 | 452 |
+
+PRE 那 24 ms 比失败更贵：Agent 拿到成功回执，往下走，然后在某个后面几步上莫名其妙地卡住，人只看到「它点了但没反应」。拒绝多花的 0 ms 是省下来的。
+
 ## 被挡住一半的按钮：2 ms 的拒绝，还是 30 ms 的按下 — 0.47.88
 
 PRE 是提交 `f511740`（0.47.87），独立工作区 `/tmp/dsh-pre`。探针 `/tmp/probe88/run.mjs`：一段 `data:text/html` 假页面，600×120 的 `#pay` 按钮，左半边压着一张 460 宽的便签；另一段页面上 600 px 高的固定横幅，横幅下面 1422 px 处才是输入框。同一台机器、真 Chrome、真鼠标键盘，两侧各跑一遍。

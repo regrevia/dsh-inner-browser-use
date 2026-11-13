@@ -6,7 +6,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolve, covering } from '../read.js'
+import { resolve, covering, resolveFirst } from '../read.js'
 
 /** Run one of read.js's page expressions against a fake page. */
 function run(expression, page) {
@@ -110,4 +110,53 @@ test('a control covered everywhere keeps its middle, and the cover probe refuses
   const at = () => banner
   assert.deepEqual([JSON.parse(run(resolve(4), { el, at })).x, JSON.parse(run(resolve(4), { el, at })).y], [150, 110])
   assert.equal(JSON.parse(run(covering(4), { el, at })).tag, 'div', 'the same question, asked twice, agrees')
+})
+
+test('a control nothing of can be pressed says what is on top of it', () => {
+  const el = control(box(100, 200, 600, 120))
+  const banner = { innerText: 'Delivery note', tagName: 'DIV', getAttribute: () => null }
+  const said = JSON.parse(run(resolve(4), { el, at: () => banner }))
+  assert.equal(said.gone, false, 'it is there, and a caller asking only where still gets a point')
+  assert.equal(said.covered, 'Delivery note', 'the answer names the thing in the way')
+  assert.equal(said.y, 260, 'the point it offers is still the middle, for callers that only locate')
+})
+
+test('a control that is free everywhere is not reported as covered', () => {
+  const el = control(box(100, 200, 600, 120))
+  const said = JSON.parse(run(resolve(4), { el }))
+  assert.equal(said.covered, undefined, 'a clear page says nothing about a cover')
+})
+
+/**
+ * Run resolveFirst against a page whose numbers map to given controls. The
+ * words arrive squeezed, which is how findWords calls it.
+ */
+function runFirst(expression, byRef, page) {
+  return new Function('window', 'document', 'getComputedStyle', 'innerHeight', 'innerWidth', `return ${expression}`)(
+    { __dshRead: { find: (ref) => byRef[ref] } },
+    { elementFromPoint: page.at ?? (() => null) },
+    () => ({ overflowX: 'visible', overflowY: 'visible' }),
+    page.height ?? 900,
+    page.width ?? 1280,
+  )
+}
+
+test('a name found by its words is pressed on a free part of a half covered control', () => {
+  const el = control(box(100, 200, 600, 120))
+  const banner = { innerText: 'Delivery note', tagName: 'DIV', getAttribute: () => null }
+  /* The banner covers the middle and the right, but not the left third. */
+  const said = JSON.parse(runFirst(resolveFirst([4], 'go'), { 4: { el } }, { el, at: (x) => (x > 300 ? banner : el) }))
+  assert.equal(said.gone, false)
+  assert.equal(said.covered, undefined, 'the free part is used instead of refusing')
+  assert.ok(said.x < 300, `pressed at ${said.x}, on the part that shows`)
+})
+
+test('a name whose every candidate is covered answers with the name of the cover', () => {
+  const one = control(box(100, 200, 600, 120))
+  const two = control(box(100, 400, 600, 120))
+  const banner = { innerText: 'Delivery note', tagName: 'DIV', getAttribute: () => null }
+  const said = JSON.parse(runFirst(resolveFirst([4, 5], 'go'), { 4: { el: one }, 5: { el: two } }, { el: one, at: () => banner }))
+  assert.equal(said.gone, false, 'refusing is not the same as the control being gone')
+  assert.equal(said.covered, 'Delivery note')
+  assert.equal(said.ref, 4, 'the first candidate is the one named')
 })

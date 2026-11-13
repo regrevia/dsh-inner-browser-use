@@ -58,6 +58,16 @@ test("typing into a field asks where it landed before asking what is on top", ()
   );
 });
 
+test("a control found by its words is checked for a cover before it is pressed", () => {
+  /* The same gate the numbered control gets, because the press lands on the
+     page either way: a banner over a control the caller named is exactly as
+     harmful as one over a control the caller numbered. */
+  const click = body("browser_click", "browser_hover");
+  before(click, "if (hit.blocked !== undefined) return refusedUnder(", "await clearCover(page, Number(hit.ref))");
+  before(click, "await clearCover(page, Number(hit.ref))", "point = { x: hit.x, y: hit.y }");
+  assert.match(click, /Not clicked: nothing of "\$\{String\(hit\.name\)\.slice\(0, 60\)\}" is reachable/, "the refusal says what was not reachable");
+});
+
 test("a field still covered is refused before anything is typed into it", () => {
   const type = body("browser_type", "browser_ask");
   before(

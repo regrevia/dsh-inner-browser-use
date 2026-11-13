@@ -513,16 +513,20 @@ export function resolve(ref) {
   const span = (from, to, fraction) => Math.round(from + (to - from) * fraction)
   const probes = [[0.5, 0.5], [0.3, 0.5], [0.7, 0.5], [0.5, 0.3], [0.5, 0.7]].map(([fx, fy]) => [Math.min(Math.max(span(seenLeft, seenRight, fx), seenLeft + 1), seenRight - 1), Math.min(Math.max(span(seenTop, seenBottom, fy), seenTop + 1), seenBottom - 1)])
   let pressed = null
+  let cover = ''
   for (const [x, y] of probes) {
     const over = document.elementFromPoint(x, y)
     if (over === null || over === el || el.contains(over)) { pressed = [x, y]; break }
+    if (cover === '') cover = String(over.innerText ?? over.value ?? over.getAttribute?.('aria-label') ?? over.tagName ?? '').trim().replace(/\s+/g, ' ').slice(0, 60)
   }
-  /* Nothing reachable: keep the middle, and let the cover probe, which asks
-     the same question, name what is in the way and refuse the press. */
+  /* Nothing reachable: keep the middle, and say what is on top of it. A caller
+     that only asked "where is it" still gets a point, and a caller about to
+     press can refuse with the name of the thing in the way instead of pressing
+     it and reporting the press as if it had landed. */
   if (pressed === null) pressed = [Math.round(seenLeft + (seenRight - seenLeft) / 2), Math.round(seenTop + (seenBottom - seenTop) / 2)]
   /* The point that takes the press is the one the page agreed is reachable,
      which is the middle of the whole control whenever it fits and is free. */
-  return JSON.stringify({ ...named, x: pressed[0], y: pressed[1] })
+  return JSON.stringify(cover === '' ? { ...named, x: pressed[0], y: pressed[1] } : { ...named, x: pressed[0], y: pressed[1], covered: cover })
 })()`
 }
 
@@ -556,8 +560,29 @@ export function resolveFirst(refs, wanted) {
     }
     if (b.top < 0 || b.left < 0 || b.bottom > innerHeight || b.right > innerWidth || clipped()) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
     const after = el.getBoundingClientRect()
-    return { x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2) }
+    const seenLeft = Math.max(after.left, 0)
+    const seenTop = Math.max(after.top, 0)
+    const seenRight = Math.min(after.right, innerWidth)
+    const seenBottom = Math.min(after.bottom, innerHeight)
+    if (seenRight - seenLeft < 2 || seenBottom - seenTop < 2) return null
+    /* Same five points resolve() asks about, and for the same reason: the
+       middle of a control can be under a banner while the rest of it is free,
+       and a press sent to the middle lands on the banner. The middle is tried
+       first, so a control that is free everywhere is still pressed there. */
+    const span = (from, to, fraction) => Math.round(from + (to - from) * fraction)
+    const probes = [[0.5, 0.5], [0.3, 0.5], [0.7, 0.5], [0.5, 0.3], [0.5, 0.7]].map(([fx, fy]) => [Math.min(Math.max(span(seenLeft, seenRight, fx), seenLeft + 1), seenRight - 1), Math.min(Math.max(span(seenTop, seenBottom, fy), seenTop + 1), seenBottom - 1)])
+    let blocked = null
+    for (const [x, y] of probes) {
+      const over = document.elementFromPoint(x, y)
+      if (over === null || over === el || el.contains(over)) return { x, y }
+      if (blocked === null) blocked = String(over.innerText ?? over.value ?? over.getAttribute?.('aria-label') ?? over.tagName ?? '').trim().replace(/\s+/g, ' ').slice(0, 60)
+    }
+    /* Nothing of it is reachable. Answering with its middle anyway would press
+       whatever is on top of it and call that a click; the name of what is in
+       the way is the only answer worth giving. */
+    return { blocked }
   }
+  let blocked = null
   for (const ref of ${JSON.stringify(order)}) {
     const hit = reg.find(ref)
     if (!hit) continue
@@ -566,8 +591,17 @@ export function resolveFirst(refs, wanted) {
     if (want !== '' && !squeeze(name).includes(want)) continue
     const spot = spotOf(el)
     if (spot === null) continue
+    if (spot.blocked !== undefined) {
+      /* A later candidate is worth trying before giving up: one banner over a
+         list can cover the first row and leave the next one free. The first
+         blocked candidate is kept so the answer names what is really on top
+         when nothing in the list is reachable. */
+      if (blocked === null) blocked = { ref, name, over: spot.blocked }
+      continue
+    }
     return JSON.stringify({ gone: false, ref, name, x: spot.x, y: spot.y })
   }
+  if (blocked !== null) return JSON.stringify({ gone: false, ref: blocked.ref, name: blocked.name, covered: blocked.over })
   return JSON.stringify({ gone: true })
 })()`
 }
@@ -577,7 +611,7 @@ export function resolveFirst(refs, wanted) {
  * @param {any} page - sidecar page.
  * @param {number[]} refs - numbers to try, in order.
  * @param {string} wanted - the words said by the caller.
- * @returns {Promise<{gone: boolean, ref?: number, name?: string, x?: number, y?: number}>} the first live one.
+ * @returns {Promise<{gone: boolean, ref?: number, name?: string, x?: number, y?: number, covered?: string}>} the first live one, or the first covered one when none is reachable.
  */
 export async function locateFirst(page, refs, wanted) {
   const said = await evaluateIn(page, resolveFirst(refs, wanted)).catch(() => undefined)
