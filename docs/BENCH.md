@@ -1,3 +1,15 @@
+## 勾选框被浮层吃掉：说「已打开」的 16 ms，还是 2 ms 的拒绝 — 0.47.93
+
+PRE `b394ae6`，探针 `/tmp/probe89/check.mjs`。页面：`input#tos` 上面盖一层 `div#sheet`。
+
+| | PRE 0.47.92 | POST 0.47.93 |
+|---|---|---|
+| 耗时 | 16 ms | 2 ms |
+| 回话 | `I agree is now on` | `an overlay covers it: Cookie choices …` + `Not changed: the control is still covered…` |
+| 实际 `checked` | `false` | `false` |
+
+补的第二个洞不是遮挡，是回话本身：按完再读一次真实状态，没变就直说 `is still off: the press did not change it.`。没遮挡时两者一致：18 ms、`checked` `true`。
+
 ## 悬停被浮层吃掉：406 ms 的空等，还是 2 ms 的拒绝 — 0.47.92
 
 PRE `563d855`，探针 `/tmp/probe89/hover.mjs`。页面：`button#more` 靠 `mouseover` 开 `#menu`，上面盖一层 `div#sheet`。
