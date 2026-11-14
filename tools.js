@@ -4113,15 +4113,38 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
         if (checkRoute?.contextId !== undefined) checkParams.contextId = checkRoute.contextId
         const probe = await page.cdp.send('Runtime.evaluate', checkParams, checkRoute?.sessionId)
         const now = probe.result?.value
-        if (now === null || now === undefined) return spot.why ?? REF_GONE
+        if (now === null || now === undefined) return REF_GONE
         const want = args?.checked === undefined ? !Boolean(now.checked) : args.checked === true
+        let cover = ''
         if (Boolean(now.checked) !== want) {
           const spot = await findAgain(page, Number(args.ref))
           if (spot.gone === true) return spot.why ?? REF_GONE
-          await page.mouse('mouseMoved', { x: Number(spot.x), y: Number(spot.y) })
-          await page.mouse('mousePressed', { x: Number(spot.x), y: Number(spot.y) })
-          await page.mouse('mouseReleased', { x: Number(spot.x), y: Number(spot.y) })
+          /* The press is the same press a click makes, so it is stopped the same
+             way: over an overlay the box never sees it. */
+          const gate = await clearCover(page, Number(args.ref))
+          cover = String(gate.note ?? '')
+          if (gate.cleared !== true) {
+            return `${cover.trim()}\nNot changed: the control is still covered. Call browser_view and handle the overlay first.`
+          }
+          let at = spot
+          if (cover !== '') {
+            const again = await locate(page, Number(args.ref))
+            if (again.gone !== true) at = again
+          }
+          await page.mouse('mouseMoved', { x: Number(at.x), y: Number(at.y) })
+          await page.mouse('mousePressed', { x: Number(at.x), y: Number(at.y) })
+          await page.mouse('mouseReleased', { x: Number(at.x), y: Number(at.y) })
           await settle(page, 3000)
+          /* Say what the control holds now, not what was asked for: a press that
+             nothing took used to report the wanted state as if it had won. */
+          const after = await page.cdp.send('Runtime.evaluate', { ...checkParams, expression: checkParams.expression }, checkRoute?.sessionId).catch(() => null)
+          const real = after?.result?.value
+          if (real !== null && real !== undefined) {
+            if (Boolean(real.checked) !== want) {
+              return `${String(real.name || now.name)} is still ${Boolean(real.checked) ? 'on' : 'off'}: the press did not change it.` + `\n` + cover
+            }
+            now.checked = real.checked
+          }
         }
         const line = `${now.name} is now ${want ? 'on' : 'off'}`
         if (args?.read === true) return `${line}\n${await look(page, { mode: 'text', maxChars: 2000 })}`

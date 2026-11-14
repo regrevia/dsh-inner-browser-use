@@ -1,3 +1,16 @@
+## 0.47.93 — 勾选框没变，就不要说它变了
+
+`browser_check` 先读一次状态、算出想要的值，然后按下那一格、`settle` 一下，最后直接回一句 `I agree is now on`——那句话是**想要**的状态，不是读过之后的实际状态。上面盖着东西时按下被浮层吃掉，框还是空的，回话照样说已经打开。
+
+两处修：
+
+1. 和点击、悬停、拖拽同一条 `clearCover`：清不掉就拒绝（`Not changed: the control is still covered.`），不再隔着浮层按一下。
+2. 按完再读一次真实状态，对不上就说 `I agree is still off: the press did not change it.`，而不是把口头目标当成结果。
+
+实测（`/tmp/probe89/check.mjs`，`input#tos` 上方压一层 `div#sheet`）：PRE 16 ms、`I agree is now on`、`checked` 实际 `false`；POST 2 ms、拒绝并点名 `Cookie choices`、`checked` 仍 `false`。没遮挡时照旧：18 ms、`checked` 变 `true`。
+
+套件 456（新增一条）。
+
 ## 0.47.92 — 悬停也会被浮层吃掉
 
 `browser_hover` 拿 `findAgain` 的坐标直接移过去。控件上面压着东西时，指针落在浮层上，控件自己的 `mouseover` 根本不会触发——要等的菜单一直 `display:none`，回话却是 `ok hover 1 · auto`。

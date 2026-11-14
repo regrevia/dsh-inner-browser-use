@@ -58,6 +58,14 @@ test("typing into a field asks where it landed before asking what is on top", ()
   );
 });
 
+test("a checkbox under an overlay is not reported as changed", () => {
+  /* The press is the same press a click makes: over an overlay the box never
+     sees it, and the call used to report the state it only asked for. */
+  const check = TOOLS.slice(TOOLS.indexOf("name: 'browser_check'"), TOOLS.indexOf("name: 'browser_wait'"));
+  assert.match(check, /Not changed: the control is still covered\./);
+  assert.match(check, /is still \$\{Boolean\(real\.checked\) \? 'on' : 'off'\}: the press did not change it\./);
+});
+
 test("a hover is not sent to a control something covers", () => {
   /* The pointer would land on the overlay, so the menu the model is waiting
      for never opens while the call says it hovered. */
