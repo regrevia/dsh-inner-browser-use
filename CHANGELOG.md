@@ -1,3 +1,13 @@
+## 0.47.95 — 下拉框：遮罩拒绝、读回真实值、按选中的那一项叫它名字
+
+- `browser_select` 按 ref 选择时先问「有没有东西盖着它」，和 click/type/hover/check 走同一道闸。盖着不点，回答「an overlay covers it: …」，被盖住的 12 ms 变成 2 ms 的拒绝，页面 `value` 保持 `free`（0.47.94 是 12 ms 说「chose Pro」而值真的被改了）。
+- 按名字找下拉框的那条路补上读回：`selectSpot` 只写不读，页面把旧选项放回去时它照样说「chose Pro」。现在 `settle` 之后再问一次控件自己，79 ms 说出「the dropdown did not keep "Pro"」。
+- 同一个读回在 ref 那条路上改成比 `{value, text}` 而不是比一个字符串，页面用 `value="plan_pro"` 配文字「Pro」时不再误报「没有留住」。
+- `covering()` 找「点掉横幅的那个按钮」时不再把遮罩容器本身当按钮：全屏遮罩的整段文字正好是「Accept all」时，它会把遮罩正中当成按钮位置点下去（720,450），点了个寂寞；现在点的是按钮真实位置，遮罩真的消失，`browser_select` 133 ms 完成「先点掉再选中」。
+- 同一次读回还让「按名字叫它」不再认错控件：`resolve()` 用 `selectedOptions[0].textContent` 给 `<select>` 取名，`innerText` 会把所有选项拼成「Free Pro」，让 `value` 和标签不同的下拉框被报成「那个编号现在指的是别的控件」。
+
+套件 461（新增四条）。
+
 ## 0.47.94 — 下拉框没留住，就不要说「已选择」
 
 `browser_select` 把 `value` 设上去、派发 `change`、`settle` 一下，回一句 `chose Pro`。可有些页面的值归它自己管：收到 `change` 之后隔一拍把旧选项设回去。于是「已选择」只是我们设过，不是页面现在的样子。

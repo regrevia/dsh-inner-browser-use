@@ -112,6 +112,26 @@ test('a control covered everywhere keeps its middle, and the cover probe refuses
   assert.equal(JSON.parse(run(covering(4), { el, at })).tag, 'div', 'the same question, asked twice, agrees')
 })
 
+test('a banner is dismissed by its own button, not by its middle', () => {
+  const el = control(box(100, 100))
+  const button = {
+    tagName: 'BUTTON', innerText: 'Accept all', getAttribute: () => null, parentElement: null,
+    getBoundingClientRect: () => box(60, 300, 120, 40), contains: () => false,
+  }
+  const banner = {
+    tagName: 'DIV', innerText: 'Accept all', getAttribute: () => null, parentElement: null,
+    querySelectorAll: () => [button], getBoundingClientRect: () => box(0, 0, 1280, 900), contains: () => true,
+  }
+  const said = JSON.parse(run(covering(4), { el, at: () => banner }))
+  assert.deepEqual([said.dismiss.x, said.dismiss.y], [120, 320], 'the button, not the middle of the sheet')
+  assert.equal(said.dismiss.name, 'Accept all')
+  const plain = {
+    tagName: 'DIV', innerText: 'Accept all', getAttribute: () => null, parentElement: null,
+    querySelectorAll: () => [], getBoundingClientRect: () => box(0, 0, 1280, 900), contains: () => true,
+  }
+  assert.equal(JSON.parse(run(covering(4), { el, at: () => plain })).dismiss, null, 'a sheet that only says the words offers no way out')
+})
+
 test('a control nothing of can be pressed says what is on top of it', () => {
   const el = control(box(100, 200, 600, 120))
   const banner = { innerText: 'Delivery note', tagName: 'DIV', getAttribute: () => null }

@@ -502,7 +502,11 @@ export function resolve(ref) {
   const seenRight = Math.min(after.right, innerWidth)
   const seenBottom = Math.min(after.bottom, innerHeight)
   const s = getComputedStyle(el)
-  const named = { gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true }
+  /* A dropdown's innerText is every option it offers, not the one it shows:
+     "Free Pro Pro Plus" names nothing a person would recognise. What it shows
+     is the selected option, which is also what the read puts beside it. */
+  const shows = el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions[0] ? el.selectedOptions[0].textContent : null
+  const named = { gone: false, x: Math.round(after.left + after.width / 2), y: Math.round(after.top + after.height / 2), name: String(shows ?? el.innerText ?? el.value ?? el.getAttribute?.('aria-label') ?? '').trim().slice(0, 80), kind: String(el.tagName).toLowerCase(), hidden: s.visibility === 'hidden' || s.display === 'none', disabled: el.disabled === true }
   if (seenRight - seenLeft < 2 || seenBottom - seenTop < 2) return JSON.stringify({ gone: true, off: true, name: named.name })
   /* Where the press will land is a fact about the page, not about the
      control: a control can be on screen and still have something painted
@@ -932,7 +936,17 @@ export function covering(ref) {
   let dismiss = null
   if (wide && !risky) {
     const cands = scope.querySelectorAll('button,[role=button],a,input[type=button],input[type=submit]')
-    for (const node of [scope, ...cands]) {
+    /* The scope itself only counts when it is the control: a full-screen sheet
+       whose whole text reads "Accept all" would otherwise be pressed in its own
+       middle, which is the page behind the banner, not the button on it. */
+    const isButton = (node) => {
+      const tag = String(node.tagName ?? '').toLowerCase()
+      const role = String(node.getAttribute?.('role') ?? '').toLowerCase()
+      if (tag === 'button' || tag === 'a' || role === 'button') return true
+      return tag === 'input' && /^(button|submit)$/i.test(String(node.getAttribute?.('type') ?? node.type ?? 'button'))
+    }
+    const itself = isButton(scope) ? [scope] : []
+    for (const node of [...itself, ...cands]) {
       if (node === el || el.contains(node) || node.contains(el)) continue
       const name = String(node.innerText ?? node.value ?? node.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 40)
       if (name === '' || !words.test(name)) continue
@@ -1872,6 +1886,12 @@ export function blindSpots(said, read) {
  */
 export function differs(known, spot) {
   if (known === undefined || known === null || spot === undefined || spot === null) return ''
+  /* A dropdown says what it holds, so choosing an option changes the words on
+     an element that is still the same dropdown. Reading that as "this number
+     now points at something else" refused the very change that had just been
+     made; the option list, not the shown one, is what would make it another
+     control. */
+  if (String(known.kind ?? '').toLowerCase() === 'select' && String(spot.kind ?? '').toLowerCase() === 'select') return ''
   const before = String(known.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
   const now = String(spot.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
   if (before === '' || now === '' || before === now) return ''
@@ -2267,5 +2287,32 @@ export function selectSpot(words, value) {
   select.dispatchEvent(new Event('input', { bubbles: true }))
   select.dispatchEvent(new Event('change', { bubbles: true }))
   return 'chose ' + option.text.trim() + ' in ' + best.name
+})()`
+}
+
+/**
+ * What the dropdown the words belong to holds now.
+ *
+ * Choosing by name goes through a separate lookup from choosing by number, and
+ * a page that puts the old option back does it either way: the answer has to be
+ * read off the dropdown, not taken from the request having been made.
+ * @param {string} words - what the dropdown is called on screen.
+ * @param {string} value - option label or value that was asked for.
+ * @returns {string} an expression that reports the value and the text it shows.
+ */
+export function selectHolds(words, value) {
+  const wanted = JSON.stringify(String(words ?? '').toLowerCase())
+  const wanted2 = JSON.stringify(String(value ?? ''))
+  return `(() => {
+  const want = ${wanted}
+  const wanted = ${wanted2}
+  if (want === '') return JSON.stringify({ found: false })
+  ${NAME_PRELUDE}
+  const best = bestOf('select', want)
+  if (best === null) return JSON.stringify({ found: false })
+  const select = best.el
+  const option = Array.from(select.options).find((item) => item.value === wanted || item.text.trim() === wanted || item.text.trim().toLowerCase() === wanted.toLowerCase())
+  const says = select.selectedOptions && select.selectedOptions[0] ? String(select.selectedOptions[0].textContent).trim() : ''
+  return JSON.stringify({ found: true, value: String(select.value), text: says, want: option ? String(option.value) : '' })
 })()`
 }

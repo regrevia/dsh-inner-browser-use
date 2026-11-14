@@ -1,3 +1,34 @@
+## 下拉框：盖着的、会回退的、value 不等于标签的 — 0.47.95
+
+四个页面，同一个 `browser_select`，PRE 树 `b394ae6`。每条都带自己唯一特有的那句回答，因为页面状态本身会变，光看耗时或者光看「说了什么」都可能看错。
+
+| 页面 | PRE | POST |
+| --- | --- | --- |
+| `<select>` 被全屏遮罩盖住 | 12 ms `chose Pro`，\`value: "pro"\` | 2 ms \`an overlay covers it: Accept cookies\`，\`value: "free"\` |
+| \`aria-label="Plan"\` 的下拉框 60 ms 后自己改回 \`free\` | 17 ms \`chose Pro in Plan\`，\`value: "free"\` | 79 ms \`the dropdown did not keep "Pro"\`，\`value: "free"\` |
+| \`<option value="plan_pro">Pro\`＋\`aria-label\` | 1 ms 拒绝对控件：\`that number now points at "Free Pro" instead of "Plan"\` | 91 ms \`chose Pro\`，\`value: "plan_pro"\` |
+| 同上但页面没有 \`aria-label\` | 2 ms 误报 \`the dropdown did not keep "Pro"\`，\`value: "plan_pro"\` | 93 ms \`chose Pro\`，\`value: "plan_pro"\` |
+
+三件必须仍然正常的事，同一次测量：
+
+| 页面 | POST |
+| --- | --- |
+| 有 `aria-label` 的普通下拉框 | 81 ms \`chose Pro in Plan\`，\`value: "plan_pro"\` |
+| 盖着但横幅能被点掉 | 133 ms \`chose Pro\`，\`value: "pro"\`，遮罩消失 |
+| 既没遮罩也没回退的下拉框 | 91 ms \`chose Pro\`，\`value: "pro"\` |
+
+复现：
+
+```
+node /tmp/probe89/selcover.mjs <repo> pre|post
+node /tmp/probe89/selfield.mjs <repo> pre|post
+node /tmp/probe89/selval.mjs <repo> pre|post
+node /tmp/probe89/selval2.mjs <repo> pre|post
+node /tmp/probe89/selok.mjs <repo> post
+```
+
+顺带修掉的一个 bug 不在下拉框里，在第 4 条路径上游：`covering()` 挑「点掉横幅的那个按钮」时把遮罩容器本身也算成按钮候选。全屏遮罩的 `innerText` 正好是「Accept all」时，它返回的落点是遮罩正中 `(720,450)`——点的是横幅背后那片页面。修复后落点变成按钮真实位置 `(117,331)`，遮罩从 `<div id="sheet">` 真的消失。这一条影响 click / type / hover / check 全部走 `clearCover` 的路径。
+
 ## 下拉框没留住：11 ms 的「已选择」，还是 73 ms 的实话 — 0.47.94
 
 PRE `b394ae6`，探针 `/tmp/probe89/select.mjs`。页面：`select#plan` 的 `change` 处理里 60 ms 后把 `value` 设回 `free`。

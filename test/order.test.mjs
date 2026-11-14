@@ -66,6 +66,35 @@ test("a dropdown that changes the value back is not reported as chosen", () => {
   assert.match(select, /const heldNow = async \(\) => \{/);
 });
 
+test("a dropdown under an overlay is not reported as chosen", () => {
+  /* browser_select used to write the value without asking whether anything of
+     the control could be seen: the page changed, the person saw nothing, and
+     the call said "chose Pro". */
+  const select = TOOLS.slice(TOOLS.indexOf("name: 'browser_select'"), TOOLS.indexOf("name: 'browser_upload'"));
+  assert.match(select, /Not chosen: the control is still covered\./);
+  assert.match(select, /await clearCover\(page, Number\(use\.ref\)\)/);
+});
+
+test("a dropdown found by name is read back after the page settles", () => {
+  /* selectSpot writes and describes; it never reads again, so a page that
+     reverts the value a moment later was reported as chosen. */
+  const select = TOOLS.slice(TOOLS.indexOf("name: 'browser_select'"), TOOLS.indexOf("name: 'browser_upload'"));
+  assert.match(select, /saidHolds/);
+  assert.match(select, /const holdsIt = /);
+  assert.match(select, /the dropdown did not keep /);
+});
+
+test("a dropdown is named by the option it shows, not by every option it offers", () => {
+  /* innerText of a <select> is all of its options at once, so a dropdown asked
+     for by name read as "Free Pro Pro Plus" and the ref check called it a
+     different control. */
+  const read = readFileSync(join(ROOT, "read.js"), "utf8");
+  const at = read.indexOf('export function resolve(');
+  const resolve = read.slice(at, read.indexOf('export function ', at + 10));
+  assert.match(resolve, /selectedOptions\[0\]\.textContent/);
+  assert.match(read, /export function selectHolds\(/);
+});
+
 test("a checkbox under an overlay is not reported as changed", () => {
   /* The press is the same press a click makes: over an overlay the box never
      sees it, and the call used to report the state it only asked for. */

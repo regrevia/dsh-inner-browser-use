@@ -18,7 +18,7 @@ import { planOf, gather, sizeText, coreRows } from './media.js?m=2'
 import { around, decodePng, diffGrid, gridOf } from './pixels.js?v=1'
 import { dropLogin, listLogins, readLogin, saveLogin, signInsFor, vaultState } from './vault.js'
 import { readBrowserCookies, siteOf } from './chromecookies.js'
-import { readPage, renderPage, readArticle, readRelevant, readTabs, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
+import { readPage, renderPage, readArticle, readRelevant, readTabs, findOnPage, locate, locateFirst, FRAME_BASE, covering, contextFor, identityOf, sameThing, differs, labelSpot, selectSpot, selectHolds, bounds, pictures, clickInDom, writeInDom, REF_GONE } from './read.js?v=1'
 import { brief as askBrief, recordRound, lastRoundNote, lastRound, markRound, MARK_STATUS } from './review.js?v=1'
 
 /**
@@ -3623,17 +3623,62 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
           else if (drops.length > 1) return `which dropdown: ${drops.slice(0, 5).map((one) => `${String(one.name).slice(0, 30)} (${String(one.ref)})`).join(' · ')}`
           else return 'the page has no dropdown to choose in.' // ui-copy-ignore
         }
+        /* Read the dropdown back after the page has settled, whichever way it
+           was found: a page that puts the old option back does it by name too. */
+        const saidHolds = async (which, value, chosen) => {
+          const saidNow = String(chosen ?? '')
+          if (!saidNow.startsWith('chose ')) return ''
+          const at = saidNow.lastIndexOf(' in ')
+          if (at < 0) return ''
+          const readHeld = async () => {
+            const held = await evaluate(page, selectHolds(saidNow.slice(at + 4), String(value ?? '')))
+            try {
+              const now = JSON.parse(typeof held === 'string' ? held : '{"found":false}')
+              return now !== null && now.found === true ? now : null
+            } catch (error) {
+              return null
+            }
+          }
+          const want = String(value ?? '').toLowerCase()
+          const label = saidNow.slice(6, at).toLowerCase()
+          const holdsIt = (now) => now === null || [now.value, now.text].some((one) => {
+            const got = String(one ?? '').toLowerCase()
+            return got === want || got === label || (String(now.want ?? '') !== '' && got === String(now.want).toLowerCase())
+          })
+          let now = await readHeld()
+          for (let look = 0; look < 3 && holdsIt(now) && now !== null; look += 1) {
+            await wait(20)
+            now = await readHeld()
+          }
+          if (holdsIt(now)) return ''
+          return `the dropdown did not keep "${String(value ?? '')}": the page changes it back, so read it to see what it holds now.`
+        }
         if (use?.ref === undefined) {
           const field = String(use.field)
           const chosen = await evaluate(page, selectSpot(field, String(use?.value ?? '')))
           const said = typeof chosen === 'string' ? chosen : chosen?.error === undefined ? '' : String(chosen.error)
           if (said === '' || said.startsWith('no dropdown')) return said === '' ? 'the page did not answer; read it and try again.' : said // ui-copy-ignore
           await settle(page, 3000)
+          /* Naming the dropdown instead of numbering it is a way to find it, not
+             a reason to skip the check: the same page that puts the old option
+             back after being told by number puts it back after being told by
+             name. Read what it holds now. */
+          const fallback = await saidHolds(page, String(use.value), said)
+          if (fallback !== '') return fallback + (use?.read === true ? `\n${await look(page, { mode: 'text', maxChars: 2000 })}` : '')
           if (use?.read === true) return `${said}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
           return `${said} · ${await brief(page)}`
         }
         const spot = await findAgain(page, Number(use?.ref))
         if (spot.gone === true) return spot.why ?? REF_GONE
+        /* Choosing writes the value straight into the element, so an overlay
+           cannot stop it — and that is the problem: it succeeds at something
+           the person could not have done, and reports the page as though they
+           had. Refuse it the same way a press over one is refused. */
+        const gate = await clearCover(page, Number(use.ref))
+        const cover = String(gate.note ?? '')
+        if (gate.cleared !== true) {
+          return `${cover.trim()}\nNot chosen: the control is still covered. Call browser_view and handle the overlay first.` // ui-copy-ignore
+        }
         const wanted = JSON.stringify(String(use?.value ?? ''))
         const route = await contextFor(page, Number(use?.ref))
         const local = route?.local ?? Number(use?.ref)
@@ -3658,23 +3703,35 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
           const held = await evaluate(page, `(() => {
   const reg = window.__dshRead
   const hit = reg && reg.find(${local})
-  if (!hit || hit.el.tagName !== 'SELECT') return null
-  return String(hit.el.value)
+  if (!hit || hit.el.tagName !== 'SELECT') return ''
+  const select = hit.el
+  const shown = select.selectedOptions && select.selectedOptions[0] ? String(select.selectedOptions[0].textContent).trim() : ''
+  return JSON.stringify({ value: String(select.value), text: shown })
 })()`, route)
-          return typeof held === 'string' ? held : ''
+          if (typeof held !== 'string' || held === '') return null
+          try {
+            const now = JSON.parse(held)
+            return now === null ? null : now
+          } catch (error) {
+            return null
+          }
         }
         const wants = String(use?.value ?? '').toLowerCase()
-        const kept = (value) => {
-          const got = String(value).toLowerCase()
+        /* An option's value is not always its label: "Pro" is often stored as
+           "plan_pro". Comparing only the value turned a dropdown that had kept
+           the choice into one that had thrown it away, so compare the label it
+           shows as well. */
+        const kept = (now) => now === null || [now.value, now.text].some((one) => {
+          const got = String(one ?? '').toLowerCase()
           return got === wants || (typeof said === 'string' && got === said.slice(6).toLowerCase())
-        }
+        })
         let after = await heldNow()
         const chose = typeof said === 'string' && said.startsWith('chose ')
-        for (let look = 0; look < 4 && chose && after !== '' && kept(after); look += 1) {
+        for (let look = 0; look < 4 && chose && kept(after) && after !== null; look += 1) {
           await wait(20)
           after = await heldNow()
         }
-        if (chose && after !== '' && !kept(after)) {
+        if (chose && !kept(after)) {
           return `the dropdown did not keep "${String(use?.value ?? '')}": the page changes it back, so read it to see what it holds now.` + (use?.read === true ? `\n${await look(page, { mode: 'text', maxChars: 2000 })}` : '')
         }
         if (use?.read === true) return `${String(said)}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
