@@ -1,3 +1,15 @@
+## 悬停被浮层吃掉：406 ms 的空等，还是 2 ms 的拒绝 — 0.47.92
+
+PRE `563d855`，探针 `/tmp/probe89/hover.mjs`。页面：`button#more` 靠 `mouseover` 开 `#menu`，上面盖一层 `div#sheet`。
+
+| | PRE 0.47.91 | POST 0.47.92 |
+|---|---|---|
+| 耗时 | 406 ms | 2 ms |
+| 回话 | `ok hover 1 · auto` | `an overlay covers it: Cookie choices …` + `Not hovered: the control is still covered…` |
+| 菜单 | `none` | `none`（但不再说悬停过） |
+
+没有遮挡时两者一致：408 ms、`menu` `none` → `block`。改的只是「指针会被别人接住」的那一处，正常悬停一点没慢。
+
 ## 按 ref 起手的拖拽：142 ms 的空转，还是 1 ms 的拒绝 — 0.47.91
 
 PRE `a65951b`，workspace `/tmp/dsh-pre91`，探针 `/tmp/probe89/drag.mjs`。页面：一条滑杆 + 盖在它上面的一层 `div#sheet`。
