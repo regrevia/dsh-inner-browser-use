@@ -58,6 +58,14 @@ test("typing into a field asks where it landed before asking what is on top", ()
   );
 });
 
+test("a hover is not sent to a control something covers", () => {
+  /* The pointer would land on the overlay, so the menu the model is waiting
+     for never opens while the call says it hovered. */
+  const hover = TOOLS.slice(TOOLS.indexOf("name: 'browser_hover'"), TOOLS.indexOf("name: 'browser_nav'"));
+  assert.match(hover, /const gate = await clearCover\(page, Number\(args\?\.ref\)\)/);
+  assert.match(hover, /Not hovered: the control is still covered\./);
+});
+
 test("a drag is not started on a control something covers", () => {
   /* A press that lands on the overlay makes the moves do nothing, and the call
      used to say it dragged. */

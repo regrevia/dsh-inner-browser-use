@@ -1,3 +1,14 @@
+## 0.47.92 — 悬停也会被浮层吃掉
+
+`browser_hover` 拿 `findAgain` 的坐标直接移过去。控件上面压着东西时，指针落在浮层上，控件自己的 `mouseover` 根本不会触发——要等的菜单一直 `display:none`，回话却是 `ok hover 1 · auto`。
+
+现在走和点击同一条 `clearCover`：先看那块地方归谁，能清的通知清掉、重新取一次坐标（浮层关掉会把页面挪位），清不掉就拒绝，写清是谁盖着：
+
+- 有遮挡：`an overlay covers it: Cookie choices — the click would land beneath it` / `Not hovered: the control is still covered. Call browser_view and handle the overlay first.`，**2 ms** 结束（原来 406 ms 白等 400 ms）
+- 没遮挡：408 ms，`menu` 从 `none` 变 `block`，照旧能开菜单
+
+套件 455（新增一条）。
+
 ## 0.47.91 — 拖拽也是从一次按下开始的
 
 `browser_drag` 用 `from` 起手时直接拿坐标就按下去了，没问那块地方现在归谁。上面压着东西的时候，按下被浮层吃掉，后面的移动照样发了一遍，最后回一句 `ok drag 282,222 → 432,222`，滑杆一动不动。

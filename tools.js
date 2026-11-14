@@ -3382,10 +3382,21 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
       execute: async (args) => withPage(async (page) => {
         const spot = await findAgain(page, Number(args?.ref))
         if (spot.gone === true) return spot.why ?? REF_GONE
-        const cursor = await page.hover({ x: Number(spot.x), y: Number(spot.y) })
+        /* A hover that lands on the overlay opens the overlay's own tooltip, or
+           nothing: the control never sees the pointer and its menu stays shut. */
+        const gate = await clearCover(page, Number(args?.ref))
+        let at = spot
+        if (gate.cleared !== true) {
+          return `${String(gate.note ?? '').trim()}\nNot hovered: the control is still covered. Call browser_view and handle the overlay first.`
+        }
+        if (String(gate.note ?? '') !== '') {
+          const again = await locate(page, Number(args?.ref))
+          if (again.gone !== true) at = again
+        }
+        const cursor = await page.hover({ x: Number(at.x), y: Number(at.y) })
         await wait(400)
         const said = await acted(page, args, () => look(page, { mode: 'text', maxChars: 2500 }), `hover ${String(args?.ref)} · ${cursor}`)
-        return said + (spot.followed === true ? ` (the page redrew, so "${String(spot.was).slice(0, 50)}" has a new number — hovered where it is now)` : '')
+        return said + String(gate.note ?? '') + (at.followed === true ? ` (the page redrew, so "${String(at.was).slice(0, 50)}" has a new number — hovered where it is now)` : '')
       }),
     },
     {
