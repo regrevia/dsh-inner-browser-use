@@ -1,3 +1,15 @@
+## 按 ref 起手的拖拽：142 ms 的空转，还是 1 ms 的拒绝 — 0.47.91
+
+PRE `a65951b`，workspace `/tmp/dsh-pre91`，探针 `/tmp/probe89/drag.mjs`。页面：一条滑杆 + 盖在它上面的一层 `div#sheet`。
+
+| | PRE 0.47.90 | POST 0.47.91 |
+|---|---|---|
+| 耗时 | 142 ms | 1 ms |
+| 回话 | `ok drag 282,222 → 432,222` | `an overlay covers it: Tune the volume — the click would land beneath it` + `Not dragged: nothing of "the control" is reachable…` |
+| 滑杆值 | `10`（没动） | `10`（没动，但不再说拖过） |
+
+没有被盖住时两者一致：138 ms、`value` `10` → `89`。也就是说这次改动只在「按下会被别人吃掉」的地方变快并变得诚实，正常拖拽一步没多走。
+
 ## 按名字点的点击：24 ms 的假成功，还是 10 ms 的拒绝 — 0.47.89
 
 PRE 是提交 `07e8003`（0.47.88），独立工作区 `/tmp/dsh-pre89`。探针 `/tmp/probe89/full.mjs`：一段 `data:text/html` 假页面，600×120 的 `#pay` 按钮，同一块位置盖着一张三便签宽的 `#note`；按钮的 `onclick` 只做一件事，把 `document.title` 改成 `paid`。跑完读 `title` 就知道按下去的是不是按钮本身。
