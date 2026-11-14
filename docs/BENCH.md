@@ -1,3 +1,28 @@
+## 下拉框没留住：11 ms 的「已选择」，还是 73 ms 的实话 — 0.47.94
+
+PRE `b394ae6`，探针 `/tmp/probe89/select.mjs`。页面：`select#plan` 的 `change` 处理里 60 ms 后把 `value` 设回 `free`。
+
+| | PRE 0.47.93 | POST 0.47.94 |
+|---|---|---|
+| 耗时 | 11 ms | 73 ms |
+| 回话 | `chose Pro · data:text/html,…` | `the dropdown did not keep "Pro": the page changes it back…` |
+| 实际 `value` | `free` | `free` |
+
+第二行才是重点：两次都设上去过，差别只在说不说实话。普通下拉不变慢也照样成功：184 ms、`chose Pro`、`value` 变 `pro`。
+
+## 被整个盖住的按钮：说「点了」，还是 8 ms 的拒绝 — 0.47.90
+
+PRE `caa5226`，探针 `/tmp/probe89/full.mjs`。页面：`button#buy` 被 `div#sheet` 整个盖住。
+
+| | PRE 0.47.89 | POST 0.47.90 |
+|---|---|---|
+| 耗时 | 9 ms | 8 ms |
+| 回话 | `ok click 1 · auto` | `an overlay covers it: … 
+Not clicked: the control is still covered.` |
+| `landed` | `""` | `""` |
+
+半盖住的情形两版都能点中（`landed: "paid"`）：中心探测被挡住时，五点里露出来的那一块仍然算数，拒绝只留给完全点不到的情况。
+
 ## 勾选框被浮层吃掉：说「已打开」的 16 ms，还是 2 ms 的拒绝 — 0.47.93
 
 PRE `b394ae6`，探针 `/tmp/probe89/check.mjs`。页面：`input#tos` 上面盖一层 `div#sheet`。
