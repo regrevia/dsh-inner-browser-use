@@ -58,6 +58,14 @@ test("typing into a field asks where it landed before asking what is on top", ()
   );
 });
 
+test("a dropdown that changes the value back is not reported as chosen", () => {
+  /* Some pages own the value and put the old option back a moment after the
+     change event; "chose Pro" then describes the attempt, not the state. */
+  const select = TOOLS.slice(TOOLS.indexOf("name: 'browser_select'"), TOOLS.indexOf("name: 'browser_upload'"));
+  assert.match(select, /the dropdown did not keep /);
+  assert.match(select, /const heldNow = async \(\) => \{/);
+});
+
 test("a checkbox under an overlay is not reported as changed", () => {
   /* The press is the same press a click makes: over an overlay the box never
      sees it, and the call used to report the state it only asked for. */

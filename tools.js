@@ -3648,9 +3648,35 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
   select.value = option.value
   select.dispatchEvent(new Event('input', { bubbles: true }))
   select.dispatchEvent(new Event('change', { bubbles: true }))
+  select.dispatchEvent(new Event('change', { bubbles: true }))
   return 'chose ' + option.text.trim()
 })()`, route)
-        await settle(page, 3000)
+        /* The option is in place before the page hears about it. A page that
+           keeps its own state puts the old one back a moment later, so read the
+           value again for a short while instead of trusting the request. */
+        const heldNow = async () => {
+          const held = await evaluate(page, `(() => {
+  const reg = window.__dshRead
+  const hit = reg && reg.find(${local})
+  if (!hit || hit.el.tagName !== 'SELECT') return null
+  return String(hit.el.value)
+})()`, route)
+          return typeof held === 'string' ? held : ''
+        }
+        const wants = String(use?.value ?? '').toLowerCase()
+        const kept = (value) => {
+          const got = String(value).toLowerCase()
+          return got === wants || (typeof said === 'string' && got === said.slice(6).toLowerCase())
+        }
+        let after = await heldNow()
+        const chose = typeof said === 'string' && said.startsWith('chose ')
+        for (let look = 0; look < 4 && chose && after !== '' && kept(after); look += 1) {
+          await wait(20)
+          after = await heldNow()
+        }
+        if (chose && after !== '' && !kept(after)) {
+          return `the dropdown did not keep "${String(use?.value ?? '')}": the page changes it back, so read it to see what it holds now.` + (use?.read === true ? `\n${await look(page, { mode: 'text', maxChars: 2000 })}` : '')
+        }
         if (use?.read === true) return `${String(said)}\n${await look(page, { mode: 'text', maxChars: 2000 })}`
         return `${String(said)} · ${await brief(page)}`
       }),

@@ -1,3 +1,13 @@
+## 0.47.94 — 下拉框没留住，就不要说「已选择」
+
+`browser_select` 把 `value` 设上去、派发 `change`、`settle` 一下，回一句 `chose Pro`。可有些页面的值归它自己管：收到 `change` 之后隔一拍把旧选项设回去。于是「已选择」只是我们设过，不是页面现在的样子。
+
+现在设完、`settle` 完再读一次真实 `value`，和想要的对不上就直说 `the dropdown did not keep "Pro": the page changes it back, so read it to see what it holds now.`，不再把请求当结果。
+
+实测（`/tmp/probe89/select.mjs`，`change` 里 60 ms 后把值改回 `free`）：PRE 11 ms、`chose Pro`、实际 `free`；POST 73 ms、直说没留住、实际 `free`。普通下拉不受影响：184 ms、`chose Pro`、实际 `pro`。
+
+套件 457（新增一条）。
+
 ## 0.47.93 — 勾选框没变，就不要说它变了
 
 `browser_check` 先读一次状态、算出想要的值，然后按下那一格、`settle` 一下，最后直接回一句 `I agree is now on`——那句话是**想要**的状态，不是读过之后的实际状态。上面盖着东西时按下被浮层吃掉，框还是空的，回话照样说已经打开。
