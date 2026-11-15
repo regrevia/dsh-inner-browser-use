@@ -1600,7 +1600,8 @@ export function nearestByWords(controls, words) {
  */
 function refusedUnder(over, name, verb) {
   const what = over === '' ? 'something covers it' : `an overlay covers it: ${over}`
-  return `${what} — the ${verb === 'typed into' ? 'typing' : 'click'} would land beneath it
+  const act = verb === 'typed into' ? 'typing' : verb === 'dragged' ? 'drag' : 'click'
+  return `${what} — the ${act} would land beneath it
 Not ${verb}: nothing of "${String(name).slice(0, 60)}" is reachable. Call browser_view and handle the overlay first.` // ui-copy-ignore
 }
 
@@ -4145,8 +4146,26 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
           if (spot.gone === true) return spot.why ?? REF_GONE
           /* A drag starts with a press exactly where a click does, so an
              overlay over the handle swallows it the same way: the moves run,
-             nothing moves, and the call would say it dragged. */
-          if (spot.covered !== undefined) return refusedUnder(String(spot.covered), String(spot.name ?? '') || 'the control', 'dragged')
+             nothing moves, and the call would say it dragged. Ask first, and
+             take the overlay away the way a click does instead of only
+             refusing: a banner the tool knows how to dismiss is not a reason
+             to hand the work back. */
+          if (spot.covered !== undefined || spot.dismiss !== undefined) {
+            const gate = await clearCover(page, Number(args.from))
+            if (gate.cleared !== true) {
+              return gate.note.trim() === ''
+                ? refusedUnder(gate.name, String(spot.name ?? '') || 'the control', 'dragged')
+                : `${gate.note.trim()}
+Not dragged: nothing of "${String(spot.name ?? '') || 'the control'}" is reachable. Call browser_view and handle the overlay first.` // ui-copy-ignore
+            }
+            if (gate.note !== '') {
+              const again = await locate(page, Number(args.from))
+              if (again.gone !== true) {
+                spot.x = Number(again.x)
+                spot.y = Number(again.y)
+              }
+            }
+          }
           start = { x: Number(spot.x), y: Number(spot.y) }
           note = String(spot.name ?? '')
         }

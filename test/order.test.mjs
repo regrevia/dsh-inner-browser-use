@@ -95,6 +95,20 @@ test("a dropdown is named by the option it shows, not by every option it offers"
   assert.match(read, /export function selectHolds\(/);
 });
 
+test("a drag under an overlay is cleared the way a click is", () => {
+  /* browser_drag refused to move anything when an overlay covered the handle,
+     even when the page offered a button that takes the overlay away. */
+  const drag = TOOLS.slice(TOOLS.indexOf("name: 'browser_drag'"), TOOLS.indexOf("name: 'browser_check'"));
+  assert.match(drag, /await clearCover\(page, Number\(args\.from\)\)/);
+  assert.match(drag, /Not dragged: nothing of /);
+});
+
+test("a refused drag says drag, not click", () => {
+  const at = TOOLS.indexOf('function refusedUnder(');
+  const said = TOOLS.slice(at, TOOLS.indexOf('export async function findWords', at));
+  assert.match(said, /verb === 'dragged' \? 'drag'/);
+});
+
 test("a checkbox under an overlay is not reported as changed", () => {
   /* The press is the same press a click makes: over an overlay the box never
      sees it, and the call used to report the state it only asked for. */
@@ -115,7 +129,8 @@ test("a drag is not started on a control something covers", () => {
   /* A press that lands on the overlay makes the moves do nothing, and the call
      used to say it dragged. */
   const drag = TOOLS.slice(TOOLS.indexOf("name: 'browser_drag'"), TOOLS.indexOf("name: 'browser_check'"));
-  assert.match(drag, /if \(spot\.covered !== undefined\) return refusedUnder\(String\(spot\.covered\)/);
+  assert.match(drag, /if \(spot\.covered !== undefined \|\| spot\.dismiss !== undefined\) \{/);
+  assert.match(drag, /const gate = await clearCover\(page, Number\(args\.from\)\)/);
 });
 
 test("a place found by its words is not handed back while something covers it", () => {
