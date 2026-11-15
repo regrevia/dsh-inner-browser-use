@@ -932,7 +932,14 @@ export function covering(ref) {
   const wide = box.width >= innerWidth * 0.6 && box.height >= innerHeight * 0.5
   const claimed = String(scope.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 400)
   const risky = /(delete|remove|purchase|payment|pay now|buy now|sign out|log out|transfer|删除|支付|购买|付款|注销|退出登录|转账)/i.test(claimed)
-  const words = /^(accept|accept all|agree|allow|allow all|ok|okay|got it|close|dismiss|i agree|接受|同意|允许|允许全部|关闭|确定|知道了|好的)$/i
+  /* What it says has to be the way out, and the way out is usually a phrase:
+     "Accept cookies", "Allow all cookies", "Close and continue". An exact
+     list of names missed every banner that varies the words after the verb,
+     so those pages were reported as covered with no way out. The verb has to
+     lead and end as a word, and anything mentioning money, deletion, or
+     signing out is still never pressed. */
+  const words = /^(accept|agree|allow|ok|okay|got it|close|dismiss|i agree|接受|同意|允许|关闭|确定|知道了|好的)(?=$|[^a-z0-9])/i
+  const never = /(delete|remove|purchase|payment|pay|buy|order|sign out|log out|transfer|删除|支付|购买|付款|下单|注销|退出登录|转账)/i
   let dismiss = null
   if (wide && !risky) {
     const cands = scope.querySelectorAll('button,[role=button],a,input[type=button],input[type=submit]')
@@ -949,7 +956,7 @@ export function covering(ref) {
     for (const node of [...itself, ...cands]) {
       if (node === el || el.contains(node) || node.contains(el)) continue
       const name = String(node.innerText ?? node.value ?? node.getAttribute?.('aria-label') ?? '').replace(/\\s+/g, ' ').trim().slice(0, 40)
-      if (name === '' || !words.test(name)) continue
+      if (name === '' || !words.test(name) || never.test(name)) continue
       const r = node.getBoundingClientRect()
       if (r.width < 2 || r.height < 2) continue
       if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) continue

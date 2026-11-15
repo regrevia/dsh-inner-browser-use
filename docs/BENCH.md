@@ -1,3 +1,23 @@
+## 横幅的出路是短语时 — 0.47.97
+
+被盖住的是 `Save changes`（`left:80px;top:120px`），横幅全屏，横幅上只有一个按钮，五种文案各跑一次。
+
+| 横幅按钮文字 | PRE（`2f39a33`） | POST |
+| --- | --- | --- |
+| `Accept cookies` | 2 ms 拒绝，下面的按钮仍 `waiting` | **23 ms** 点掉横幅后点到，`done` |
+| `Accept all cookies` | 1 ms 拒绝，`waiting` | **20 ms**，`done` |
+| `Close and continue` | 2 ms 拒绝，`waiting` | **24 ms**，`done` |
+| `Pay now` | 2 ms 拒绝，`waiting` | 1 ms 拒绝，`waiting`（不该代点的仍然不点） |
+| `Buy the premium plan` | 2 ms 拒绝，`waiting` | 2 ms 拒绝，`waiting` |
+
+复现：
+
+```
+node /tmp/probe89/cookie.mjs <repo> pre|post
+```
+
+第一行到第三行是这一版的全部意义：三种写法指的完全是同一件事，而旧实现只认其中一种形态。第四、五行是必须保持的对照组——放宽匹配不能放宽到替人付钱。
+
 ## 拖着滑杆，横幅盖在上面 — 0.47.96
 
 滑杆在 `left:80px;top:200px;width:400px`，全屏横幅盖住整页，横幅自己带一个能关掉它的按钮。三种页面，同一次测量。

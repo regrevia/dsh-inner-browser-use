@@ -132,6 +132,36 @@ test('a banner is dismissed by its own button, not by its middle', () => {
   assert.equal(JSON.parse(run(covering(4), { el, at: () => plain })).dismiss, null, 'a sheet that only says the words offers no way out')
 })
 
+test('a banner whose way out is a phrase is still a way out', () => {
+  /* Every real cookie banner varies the words after the verb: an exact list of
+     names turned "Accept cookies" into an overlay with no way out, so the
+     agent was handed work the tool could do itself. */
+  const el = control(box(100, 100))
+  const press = (label) => {
+    const button = {
+      tagName: 'BUTTON', innerText: label, getAttribute: () => null, parentElement: null,
+      getBoundingClientRect: () => box(60, 300, 120, 40), contains: () => false,
+    }
+    const banner = {
+      tagName: 'DIV', innerText: label, getAttribute: () => null, parentElement: null,
+      querySelectorAll: () => [button], getBoundingClientRect: () => box(0, 0, 1280, 900), contains: () => true,
+    }
+    return JSON.parse(run(covering(4), { el, at: () => banner })).dismiss
+  }
+  assert.equal(press('Accept cookies')?.name, 'Accept cookies')
+  assert.equal(press('Accept all cookies')?.name, 'Accept all cookies')
+  assert.equal(press('Close and continue')?.name, 'Close and continue')
+  assert.equal(press('Got it, thanks')?.name, 'Got it, thanks')
+  assert.equal(press('同意')?.name, '同意')
+  /* Money, deletion and signing out are never pressed on the person's behalf. */
+  assert.equal(press('Pay now'), null)
+  assert.equal(press('Buy the premium plan'), null)
+  assert.equal(press('Accept and pay'), null)
+  /* A word that merely starts with a verb is not that verb. */
+  assert.equal(press('Acceptance policy'), null)
+  assert.equal(press('Okay-dokey delete'), null)
+})
+
 test('a control nothing of can be pressed says what is on top of it', () => {
   const el = control(box(100, 200, 600, 120))
   const banner = { innerText: 'Delivery note', tagName: 'DIV', getAttribute: () => null }
