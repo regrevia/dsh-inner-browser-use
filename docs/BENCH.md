@@ -1,3 +1,19 @@
+## 页面延迟把选项改回去 — 0.47.100
+
+下拉 `Plan` 改选 `Pro`，页面在 `onchange` 里用 `setTimeout` 之后把 `value` 写回 `free`。
+
+| 延迟 | PRE（`a843fce`） | POST |
+| --- | --- | --- |
+| 0 ms | 3 ms，正确判失败 | 706 ms，正确判失败 |
+| 150 ms | 89 ms，假成功 `chose Pro`，页面实际 `free` | **864 ms**，判失败 |
+| 300 ms | 89 ms，假成功，同上 | **1031 ms**，判失败 |
+
+正常下拉（不写回）POST 394 ms、371 ms，PRE 是 82 ms——多出来的是「值站住 320 毫秒」的代价。复现：
+
+```
+node /tmp/probe99/revert.mjs <repo> post
+```
+
 ## 横幅用 CSS 过渡淡出 — 0.47.99
 
 被盖住的是 `Save changes`，整块横幅点击后加 `.away` 类开始淡出，`transitionend` 才 `remove()`。

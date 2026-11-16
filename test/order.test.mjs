@@ -64,6 +64,7 @@ test("a dropdown that changes the value back is not reported as chosen", () => {
   const select = TOOLS.slice(TOOLS.indexOf("name: 'browser_select'"), TOOLS.indexOf("name: 'browser_upload'"));
   assert.match(select, /the dropdown did not keep /);
   assert.match(select, /const heldNow = async \(\) => \{/);
+  assert.match(select, /if \(unmoved >= 320\) break/, 'the value has to stand still on its own before it is called kept');
 });
 
 test("a dropdown under an overlay is not reported as chosen", () => {

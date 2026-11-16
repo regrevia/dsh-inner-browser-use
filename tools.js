@@ -3737,11 +3737,28 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
           const got = String(one ?? '').toLowerCase()
           return got === wants || (typeof said === 'string' && got === said.slice(6).toLowerCase())
         })
+        /* A page that reverts the choice does it on its next render, which can
+           land well after the change event this call dispatched: four looks at
+           20ms reported "chose Pro" ninety milliseconds after the page had
+           already gone back to "free". Watch until the value has stood still on
+           its own, and stop the moment it moves. The window is sized to the
+           revert seen on a real page (300ms), so a slower one is still read
+           back by the caller's next look rather than claimed here. */
         let after = await heldNow()
         const chose = typeof said === 'string' && said.startsWith('chose ')
-        for (let look = 0; look < 4 && chose && kept(after) && after !== null; look += 1) {
+        const still = async () => {
+          const now = await heldNow()
+          const same = JSON.stringify(now) === JSON.stringify(after)
+          after = now
+          return same
+        }
+        const until = Date.now() + 900
+        let unmoved = 0
+        while (chose && kept(after) && after !== null && Date.now() < until) {
           await wait(20)
-          after = await heldNow()
+          if (await still()) unmoved += 20
+          else unmoved = 0
+          if (unmoved >= 320) break
         }
         if (chose && !kept(after)) {
           return `the dropdown did not keep "${String(use?.value ?? '')}": the page changes it back, so read it to see what it holds now.` + (use?.read === true ? `\n${await look(page, { mode: 'text', maxChars: 2000 })}` : '')
