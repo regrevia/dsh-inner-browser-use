@@ -65,6 +65,7 @@ test("a dropdown that changes the value back is not reported as chosen", () => {
   assert.match(select, /the dropdown did not keep /);
   assert.match(select, /const heldNow = async \(\) => \{/);
   assert.match(select, /if \(unmoved >= 320\) break/, 'the value has to stand still on its own before it is called kept');
+  assert.match(select, /if \(stood >= 320\) break/, 'naming the dropdown waits on the same evidence as numbering it');
 });
 
 test("a dropdown under an overlay is not reported as chosen", () => {

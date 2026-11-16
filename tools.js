@@ -3657,10 +3657,20 @@ Not clicked: nothing of "${String(hit.name).slice(0, 60)}" is reachable. Call br
             const got = String(one ?? '').toLowerCase()
             return got === want || got === label || (String(now.want ?? '') !== '' && got === String(now.want).toLowerCase())
           })
+          /* The same page that reverts a choice made by number reverts one made
+             by name, and it reverts it on its own render: three looks at 20ms
+             reported "chose Pro in Plan" while the page held "free". Wait until
+             the value has stood still on its own, and stop the moment it moves. */
           let now = await readHeld()
-          for (let look = 0; look < 3 && holdsIt(now) && now !== null; look += 1) {
+          let stood = 0
+          const until = Date.now() + 900
+          while (holdsIt(now) && now !== null && Date.now() < until) {
             await wait(20)
-            now = await readHeld()
+            const next = await readHeld()
+            const same = JSON.stringify(next) === JSON.stringify(now)
+            now = next
+            stood = same ? stood + 20 : 0
+            if (stood >= 320) break
           }
           if (holdsIt(now)) return ''
           return `the dropdown did not keep "${String(value ?? '')}": the page changes it back, so read it to see what it holds now.`

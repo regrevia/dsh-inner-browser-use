@@ -1,3 +1,14 @@
+## 按名字选下拉也被改回去 — 0.47.101
+
+同一页面上用 `field: "Plan"` 而不是 ref。
+
+| 改回延迟 | PRE（`2a6a410`） | POST |
+| --- | --- | --- |
+| 150 ms | 786 ms，假成功 `chose Pro in Plan`，页面 `free` | **862 ms**，判失败 |
+| 300 ms | 785 ms，假成功，同上 | **1010 ms**，判失败 |
+
+正常按名字选下拉 POST 363 ms。复现：`node /tmp/probe99/byname.mjs <repo> post`
+
 ## 页面延迟把选项改回去 — 0.47.100
 
 下拉 `Plan` 改选 `Pro`，页面在 `onchange` 里用 `setTimeout` 之后把 `value` 写回 `free`。
