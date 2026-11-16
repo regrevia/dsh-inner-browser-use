@@ -973,7 +973,13 @@ export function covering(ref) {
       break
     }
   }
-  return JSON.stringify({ tag: String(top.tagName).toLowerCase(), text: raw, dismiss })
+  /* A banner that is on its way out is still in the way: a fade keeps the
+     element hit-testable until it is removed, so the caller has to be able to
+     tell "it is going, wait" from "it did nothing, stop waiting". */
+  let fade = 1
+  try { fade = Number(getComputedStyle(top).opacity) } catch { fade = 1 }
+  if (!Number.isFinite(fade)) fade = 1
+  return JSON.stringify({ tag: String(top.tagName).toLowerCase(), text: raw, dismiss, fade: Math.round(fade * 100) / 100 })
 })()`
 }
 

@@ -1110,7 +1110,8 @@ async function coverProbe(page, ref) {
   const dismiss = top.dismiss !== null && typeof top.dismiss === 'object' && Number.isFinite(Number(top.dismiss.x))
     ? { x: Number(top.dismiss.x), y: Number(top.dismiss.y), name: String(top.dismiss.name ?? '') }
     : null
-  return { tag: String(top.tag ?? ''), name: String(top.text ?? ''), dismiss } // ui-copy-ignore
+  const fade = Number(top.fade)
+  return { tag: String(top.tag ?? ''), name: String(top.text ?? ''), dismiss, fade: Number.isFinite(fade) ? fade : 1 } // ui-copy-ignore
 }
 
 /**
@@ -1158,11 +1159,21 @@ async function clearCover(page, ref) {
   await page.mouse('mousePressed', { x: away.x, y: away.y, clickCount: 1 })
   await page.mouse('mouseReleased', { x: away.x, y: away.y, clickCount: 1 })
   /* Prove the banner left instead of guessing a paint delay: poll the same
-     question the refusal would ask, and stop the moment it answers clear. */
+     question the refusal would ask, and stop the moment it answers clear.
+     A banner that is fading out is still hit-testable until it is removed, so
+     the wait follows the fade instead of stopping at a fixed 160ms: while its
+     opacity is still moving there is evidence it will clear, and once it stops
+     moving there is none, which is the only case worth reporting. */
   let again = await coverProbe(page, ref)
-  for (let look = 0; look < 8 && again !== null; look += 1) {
+  let lastFade = again === null ? 1 : Number(again.fade ?? 1)
+  for (let look = 0; look < 35 && again !== null; look += 1) {
     await wait(20)
     again = await coverProbe(page, ref)
+    if (again === null) break
+    const fade = Number(again.fade ?? 1)
+    const going = fade < 0.99 || fade !== lastFade
+    lastFade = fade
+    if (look >= 7 && !going) break
   }
   if (again !== null) return { note: `${note}
 - clicking ${away.name} on it did not clear it`, cleared: false, name: away.name } // ui-copy-ignore

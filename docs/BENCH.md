@@ -1,3 +1,20 @@
+## 横幅用 CSS 过渡淡出 — 0.47.99
+
+被盖住的是 `Save changes`，整块横幅点击后加 `.away` 类开始淡出，`transitionend` 才 `remove()`。
+
+| 过渡时长 | PRE（`c5f4f11`） | POST |
+| --- | --- | --- |
+| 200 ms | 191 ms，`clicking Accept all on it did not clear it`，目标仍 `waiting` | **259 ms**，`done` |
+| 400 ms | 177 ms，同上误报 | **458 ms**，`done` |
+
+等待长度跟着过渡走，不是固定值：200 毫秒过渡等约 240 毫秒，400 毫秒过渡等约 440 毫秒。静止的横幅不受影响（0.47.97 探针仍 24–26 ms）。
+
+复现：
+
+```
+node /tmp/probe98/fade.mjs <repo> pre|post 400
+```
+
 ## 横幅的小字提到了删除账户 — 0.47.98
 
 被盖住的是 `Save changes`（`left:80px;top:120px`），全屏横幅上有一个 `Accept all` 按钮，横幅底部还有一行小字。

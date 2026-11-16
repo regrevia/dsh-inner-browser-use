@@ -13,7 +13,7 @@ function run(expression, page) {
   return new Function('window', 'document', 'getComputedStyle', 'innerHeight', 'innerWidth', `return ${expression}`)(
     { __dshRead: { find: () => ({ el: page.el }) } },
     { elementFromPoint: page.at ?? (() => null) },
-    () => ({ visibility: 'visible', display: 'block' }),
+    () => ({ visibility: 'visible', display: 'block', ...page.style }),
     page.height ?? 900,
     page.width ?? 1280,
   )
@@ -183,6 +183,21 @@ test('small print on a banner is not what the banner offers to do', () => {
   /* A control that really does offer to delete still stops it. */
   assert.equal(press('Privacy policy', 'Delete account'), null)
   assert.equal(press('Privacy policy', 'Sign out'), null)
+})
+
+test('a banner on its way out is not the same as a banner that did not move', () => {
+  /* A fade keeps the element hit-testable until it is removed. Reporting "it
+     did not clear" while its opacity is still falling refuses a press that was
+     about to work; the fade itself is the evidence that it will. */
+  const el = control(box(100, 100))
+  const banner = () => ({
+    tagName: 'DIV', innerText: 'Accept all', getAttribute: () => null, parentElement: null,
+    querySelectorAll: () => [], getBoundingClientRect: () => box(0, 0, 1280, 900), contains: () => true,
+  })
+  const said = (fade) => JSON.parse(run(covering(4), { el, at: banner, style: { opacity: String(fade) } }))
+  assert.equal(said(0.4).fade, 0.4, 'the fade is visible to the caller')
+  assert.equal(said(1).fade, 1, 'a still banner reports no fade')
+  assert.equal(said(0.999).fade, 1, 'rounded, so a settled banner reads as settled')
 })
 
 test('a control nothing of can be pressed says what is on top of it', () => {
