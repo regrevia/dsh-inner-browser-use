@@ -930,8 +930,6 @@ export function covering(ref) {
   }
   const box = scope.getBoundingClientRect()
   const wide = box.width >= innerWidth * 0.6 && box.height >= innerHeight * 0.5
-  const claimed = String(scope.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 400)
-  const risky = /(delete|remove|purchase|payment|pay now|buy now|sign out|log out|transfer|删除|支付|购买|付款|注销|退出登录|转账)/i.test(claimed)
   /* What it says has to be the way out, and the way out is usually a phrase:
      "Accept cookies", "Allow all cookies", "Close and continue". An exact
      list of names missed every banner that varies the words after the verb,
@@ -941,8 +939,19 @@ export function covering(ref) {
   const words = /^(accept|agree|allow|ok|okay|got it|close|dismiss|i agree|接受|同意|允许|关闭|确定|知道了|好的)(?=$|[^a-z0-9])/i
   const never = /(delete|remove|purchase|payment|pay|buy|order|sign out|log out|transfer|删除|支付|购买|付款|下单|注销|退出登录|转账)/i
   let dismiss = null
+  /* What the overlay offers to do is what it would do. A wide sheet's whole
+     text is the page behind it plus its own small print, so judging the sheet
+     by that text refused every banner that happens to mention deleting an
+     account in its footer — a press the tool can make safely was handed back.
+     The words that matter are on the controls: a control that says pay, delete
+     or sign out anywhere on the overlay still stops the dismiss. */
+  const acts = /(delete|remove|purchase|payment|pay now|buy now|sign out|log out|transfer|删除|支付|购买|付款|注销|退出登录|转账)/i
+  const offered = scope.innerText === undefined
+    ? []
+    : [...scope.querySelectorAll('button,[role=button],a,input[type=button],input[type=submit]')]
+  const risky = offered.some((node) => acts.test(String(node.innerText ?? node.value ?? node.getAttribute?.('aria-label') ?? '')))
   if (wide && !risky) {
-    const cands = scope.querySelectorAll('button,[role=button],a,input[type=button],input[type=submit]')
+    const cands = offered
     /* The scope itself only counts when it is the control: a full-screen sheet
        whose whole text reads "Accept all" would otherwise be pressed in its own
        middle, which is the page behind the banner, not the button on it. */

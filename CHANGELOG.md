@@ -1,3 +1,15 @@
+## 0.47.98 — 小字不是横幅要做的事
+
+判断遮罩该不该代点，读的是整块遮罩的文字。宽遮罩的 `innerText` 里既有它自己的小字，也有它盖住的那页正文，于是「你随时可以删除账户」「可在设置里退出所有设备」这类页脚把整块染成危险区，连它上面的 `Accept all` 也不点了——明明能安全关掉，却把活交回模型。
+
+- 危险证据只看**控件名**：遮罩上任何一个写着 pay / delete / sign out 的按钮仍然会挡住代点
+- 页脚小字不再算数，横幅该关就关
+- 三种情况实测：页脚提「delete account」的横幅 PRE 2 ms 拒绝且目标仍 `waiting`、POST 22 ms 点掉后点到 `done`；页脚提「sign out」PRE 1 ms 拒绝、POST 25 ms `done`
+- 保护组没被放宽：真正写着 `Delete account` 的按钮前后都拒绝，PRE 1 ms / POST 2 ms
+- 普通横幅没有被拖慢：PRE 81 ms / POST 68 ms
+
+套件 465（新增一条）。
+
 ## 0.47.97 — 横幅上的出路是个短语，不是那几个词
 
 `covering()` 判定「这个横幅有没有出路」时，要求的是一份精确名单：`accept`、`accept all`、`ok`、`close`……于是真实页面上最常见的三种写法全被判成没有出路——`Accept cookies`、`Accept all cookies`、`Close and continue`。工具明明能点掉它，却把活交回给模型。

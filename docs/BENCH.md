@@ -1,3 +1,22 @@
+## 横幅的小字提到了删除账户 — 0.47.98
+
+被盖住的是 `Save changes`（`left:80px;top:120px`），全屏横幅上有一个 `Accept all` 按钮，横幅底部还有一行小字。
+
+| 场景 | PRE（`ea4871a`） | POST |
+| --- | --- | --- |
+| 横幅底部小字：`You can delete your account at any time.` | 2 ms 拒绝，目标仍 `waiting` | **22 ms** 点掉横幅后点到，`done` |
+| 横幅底部小字：`Sign out of all devices from settings.` | 1 ms 拒绝，`waiting` | **25 ms**，`done` |
+| 横幅按钮就是 `Delete account` | 1 ms 拒绝，`waiting` | 2 ms 拒绝，`waiting` |
+| 横幅底部无小字，按钮 `Accept all` | 81 ms，`done` | 68 ms，`done` |
+
+复现：
+
+```
+node /tmp/probe89/risky.mjs <repo> pre|post
+```
+
+第三行是必须保持的对照组：危险与否看的是遮罩上的按钮，不是它自己或页面的正文。第四行确认这个改动没有让普通横幅变慢。
+
 ## 横幅的出路是短语时 — 0.47.97
 
 被盖住的是 `Save changes`（`left:80px;top:120px`），横幅全屏，横幅上只有一个按钮，五种文案各跑一次。

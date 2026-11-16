@@ -162,6 +162,29 @@ test('a banner whose way out is a phrase is still a way out', () => {
   assert.equal(press('Okay-dokey delete'), null)
 })
 
+test('small print on a banner is not what the banner offers to do', () => {
+  /* A cookie banner that mentions deleting an account in its footer used to be
+     judged by the whole sheet's text, so it was refused as risky and the work
+     was handed back even though its own button said "Accept all". */
+  const el = control(box(100, 100))
+  const press = (footer, label = 'Accept all') => {
+    const button = {
+      tagName: 'BUTTON', innerText: label, getAttribute: () => null, parentElement: null,
+      getBoundingClientRect: () => box(60, 300, 120, 40), contains: () => false,
+    }
+    const banner = {
+      tagName: 'DIV', innerText: footer, getAttribute: () => null, parentElement: null,
+      querySelectorAll: () => [button], getBoundingClientRect: () => box(0, 0, 1280, 900), contains: () => true,
+    }
+    return JSON.parse(run(covering(4), { el, at: () => banner })).dismiss
+  }
+  assert.equal(press('We use cookies. You can delete your account at any time.')?.name, 'Accept all', 'the button, despite the footer')
+  assert.equal(press('Sign out of all devices from settings.')?.name, 'Accept all')
+  /* A control that really does offer to delete still stops it. */
+  assert.equal(press('Privacy policy', 'Delete account'), null)
+  assert.equal(press('Privacy policy', 'Sign out'), null)
+})
+
 test('a control nothing of can be pressed says what is on top of it', () => {
   const el = control(box(100, 200, 600, 120))
   const banner = { innerText: 'Delivery note', tagName: 'DIV', getAttribute: () => null }
